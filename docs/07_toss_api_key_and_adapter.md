@@ -61,7 +61,9 @@ TOSS_API_ENV
 
 공식 문서상 `clientOrderId`는 멱등성 키입니다. 미전달 시 매 요청이 별개 주문으로 처리됩니다. 동일 값 재요청은 이전 주문 결과를 재반환하며, 유효기간은 10분입니다.
 
-타임아웃 또는 네트워크 오류가 발생했을 때 같은 주문을 즉시 새 ID로 재전송하지 않습니다. 같은 `clientOrderId`로 재요청하거나 OPEN/CLOSED 주문 조회로 접수 여부를 확인합니다.
+내부 정책은 더 엄격합니다. 한번 사용한 `clientOrderId`는 Toss의 10분 유효기간이 지나도 재사용하지 않습니다. 모든 ID는 `client_order_id_registry`에 영구 기록하고, 같은 전략 신호를 재시도하더라도 새 주문 의사결정과 새 ID를 발급합니다.
+
+타임아웃 또는 네트워크 오류가 발생했을 때 같은 주문을 즉시 새 ID로 재전송하지 않습니다. 같은 `clientOrderId`로 재요청하거나 OPEN/CLOSED 주문 조회로 접수 여부를 확인합니다. 상태가 확인되기 전 새 ID로 같은 주문을 제출하는 것은 중복 주문 위험으로 간주합니다.
 
 ## Polling Fallback
 
@@ -69,8 +71,11 @@ TOSS_API_ENV
 
 - 폴링 간격: rate limit, 주문 상태 지연, 실제 체결 관측치로 calibration
 - 최대 대기: 주문 상태 불명 리스크와 rate limit을 보고 calibration
-- terminal status: `FILLED`, `REJECTED`, `CANCELED`, `REPLACED`, `CANCEL_REJECTED`, `REPLACE_REJECTED`
+- terminal status: `FILLED`, `REJECTED`, `CANCELED`, `REPLACED`
+- review status: `CANCEL_REJECTED`, `REPLACE_REJECTED`
 - unresolved status: 신규 주문 중단 후 수동 점검
+
+`CANCEL_REJECTED`와 `REPLACE_REJECTED`는 별도 주문 레코드로 생성될 수 있고 원주문이 이전 상태로 복귀할 수 있으므로 terminal로 처리하지 않습니다. 반드시 원주문을 다시 조회해 effective state를 확정합니다.
 
 ## Live Adapter Gate
 
@@ -81,7 +86,7 @@ TOSS_API_ENV
 - `GET /api/v1/holdings` 반복 조회와 내부 포지션 장부 대사
 - 주문 제출, 상태 조회, 취소가 모두 확인됨
 - 부분체결과 종료 주문이 내부 장부에 정확히 반영됨
-- `GET /api/v1/buying-power`의 `cashBuyingPower`와 내부 available cash 정책이 확인됨
+- `GET /api/v1/buying-power`의 `cashBuyingPower` broker constraint와 내부 available cash 정책이 확인됨
 - rate limit 헤더와 429 retry가 처리됨
 - error envelope의 `requestId`, `code`, `message`, `data`가 로그에 남음
 - broker reconciliation이 반복적으로 0 차이를 유지

@@ -11,7 +11,7 @@
 | Single trade max loss | NAV 훼손보다 운영 검증을 우선 |
 | Distribution ETF exposure | ROC/NAV 데이터가 검증되기 전 최소화 |
 | Single live order notional | 초소형 주문으로 시작 |
-| Cash buffer | 실제 `cashBuyingPower`와 내부 장부 차이를 보고 조정 |
+| Cash buffer | 실제 `cashBuyingPower` broker constraint와 내부 장부 차이를 보고 조정 |
 
 ## Kill Switch Conditions
 
@@ -25,7 +25,10 @@
 - Toss holdings와 내부 position ledger 불일치
 - Toss OPEN 주문 목록과 내부 open order ledger 불일치
 - 주문 응답 타임아웃 뒤 주문 상태 확인 전 새 `clientOrderId`로 재전송해야 하는 상황
-- `cashBuyingPower` 조회 실패 또는 내부 available cash와 불일치
+- `cashBuyingPower` broker constraint 조회 실패 또는 내부 available cash와 불일치
+- raw broker snapshot 저장 실패
+- `CANCEL_REJECTED` 또는 `REPLACE_REJECTED` 후 원주문 effective state 미확정
+- rate-limit token bucket이 `ORDER` 또는 `ORDER_HISTORY`에서 degraded 상태
 
 ## Alert Classes
 
@@ -75,6 +78,9 @@ Toss `client_id`, `client_secret`, access token은 코드, 문서, Git, 로그�
 - OAuth2 토큰 발급, accountSeq, holdings, orders, buying power 호출 검증
 - 내부 장부와 Toss holdings/OPEN/CLOSED orders 대사 자동화
 - `clientOrderId` 멱등성과 kill switch 검증
+- `clientOrderId` 내부 영구 재사용 금지 검증
+- raw broker snapshot 저장과 replay 검증
+- rate-limit token bucket 검증
 - 실체결 비용 추정치가 calibrated tolerance 이내
 - 세무 보조장부 필드 검증
 

@@ -38,11 +38,14 @@
 
 1. Toss live MVP는 국내/미국 주식·ETF 현물 주문으로 제한합니다.
 2. 모든 주문 생성에는 `clientOrderId`를 강제합니다.
-3. 주문 상태는 REST 폴링으로 대사합니다.
-4. `cashBuyingPower`, holdings, OPEN/CLOSED orders를 내부 장부와 매번 비교합니다.
-5. 옵션 캐리와 T-bill 담보 엔진은 Toss 단독 live 범위 밖의 연구/외부 브로커 모듈로 둡니다.
-6. ETF 상대가치와 분배형 ETF 필터는 외부 NAV/분배 데이터와 Toss 현물 주문을 결합해 제한적으로 구현합니다.
-7. 실거래 전 단계는 데이터 적합성 -> 시뮬레이션 -> 페이퍼트레이드 -> 초소형 현물 실거래 순서로 고정합니다.
+3. `clientOrderId`는 내부에서 영구 재사용 금지합니다.
+4. 주문 상태는 REST 폴링으로 대사합니다.
+5. `CANCEL_REJECTED`, `REPLACE_REJECTED`는 terminal이 아니라 review 상태로 처리합니다.
+6. `cashBuyingPower`는 현금이 아니라 broker constraint로 저장합니다.
+7. holdings, OPEN/CLOSED orders, raw broker snapshot을 내부 장부와 매번 비교합니다.
+8. 옵션 캐리와 T-bill 담보 엔진은 Toss 단독 live 범위 밖의 연구/외부 브로커 모듈로 둡니다.
+9. ETF 상대가치와 분배형 ETF 필터는 외부 NAV/분배 데이터와 Toss 현물 주문을 결합해 제한적으로 구현합니다.
+10. 실거래 전 단계는 데이터 적합성 -> 시뮬레이션 -> 페이퍼트레이드 -> 초소형 현물 실거래 순서로 고정합니다.
 
 ## 주요 위험
 

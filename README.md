@@ -38,6 +38,8 @@ docs/
   07_toss_api_key_and_adapter.md
   08_account_state_reconciliation.md
   09_toss_official_api_coverage.md
+  10_calibration_policy.md
+  11_rate_limit_token_bucket.md
 schemas/
   trading_ledger.sql
 src/toss_trading/
@@ -59,4 +61,4 @@ src/toss_trading/
 4. `paper` 모드에서 주문 계획, 주문 상태 폴링, 체결 합계 반영, reconciliation을 검증합니다.
 5. 초소형 현물 주문만 live 후보로 올리고, 옵션/T-bill/마진/대차 전략은 Toss 단독 live 범위 밖으로 둡니다.
 
-실거래 전 세금, 브로커 약관, 주문 가능 상품, 장 운영 시간, high-value order 확인, rate limit을 별도로 확인해야 합니다.
+실거래 전 세금, 브로커 약관, 주문 가능 상품, 장 운영 시간, high-value order 확인, rate limit token bucket, raw broker snapshot 저장을 별도로 확인해야 합니다.

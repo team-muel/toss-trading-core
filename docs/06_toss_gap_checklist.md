@@ -66,7 +66,7 @@
 - [ ] CLOSED 주문 페이징 누락 방지
 - [ ] `clientOrderId`를 모든 주문에 강제
 - [ ] 주문 응답 타임아웃 후 중복 주문 방지
-- [ ] `cashBuyingPower`와 내부 available cash 비교
+- [ ] `cashBuyingPower` broker constraint와 내부 available cash 비교
 - [ ] kill switch가 브로커 주문 경로보다 상위에 위치
 - [ ] 429 retry와 선제 감속
 - [ ] 부분체결 처리

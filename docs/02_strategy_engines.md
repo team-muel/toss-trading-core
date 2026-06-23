@@ -12,7 +12,7 @@ Toss live MVP에서는 다음 제약을 둡니다.
 
 - 현물 long-only 또는 현금 보유 전환만 허용합니다.
 - short leg, borrow rate가 필요한 pair는 제외합니다.
-- 주문은 `cashBuyingPower`와 sellable quantity를 통과해야 합니다.
+- 주문은 `cashBuyingPower` broker constraint와 sellable quantity를 통과해야 합니다.
 - OPEN 주문이 남아 있으면 같은 symbol의 반대 주문을 제한합니다.
 
 초기 규칙은 확정 숫자가 아니라 calibration 대상입니다.

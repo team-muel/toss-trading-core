@@ -29,7 +29,7 @@
 - 부분체결 빈도
 - 모델 대비 실체결 슬리피지
 - 종목별 호가 스프레드와 주문 크기별 체결 품질
-- `cashBuyingPower`와 내부 available cash 차이
+- `cashBuyingPower` broker constraint와 내부 available cash 차이
 - 수수료/세금/결제예정일 반영 오차
 - 일별 손익과 drawdown 분포
 
@@ -48,7 +48,7 @@
 - reconciliation 차이 발생
 - 주문 상태 불명
 - `clientOrderId` 없는 live 주문 생성 시도
-- `cashBuyingPower` 조회 실패
+- `cashBuyingPower` broker constraint 조회 실패
 - CLOSED 주문 페이징 누락
 - rate limit 대응 실패
 - unknown error code 반복 발생

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class AccountState:
-    broker_cash_buying_power: float
+    broker_cash_buying_power_constraint: float
     estimated_cash_balance: float
     pending_settlement_cash: float
     reserved_cash_open_orders: float
@@ -16,7 +16,7 @@ class AccountState:
     @property
     def available_cash(self) -> float:
         return (
-            self.broker_cash_buying_power
+            self.broker_cash_buying_power_constraint
             - self.reserved_cash_open_orders
             - self.estimated_fees
             - self.estimated_tax_reserve

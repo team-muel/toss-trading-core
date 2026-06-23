@@ -65,25 +65,39 @@ Toss 공식 API는 옵션체인과 Greeks를 제공하지 않습니다. 이 테�
 | `broker_order_id` | Toss `orderId` |
 | `symbol` | symbol |
 | `side` | buy/sell |
-| `qty` | quantity |
+| `order_basis` | `quantity` or `amount` |
+| `qty` | quantity, null for amount-based order |
+| `order_amount` | amount, null for quantity-based order |
 | `order_amount` | US amount-based market order amount |
 | `limit_px` | limit price |
 | `status` | planned/submitted/filled/rejected/cancelled |
 | `reject_code` | broker reject reason |
 | `source_signal_id` | signal reference |
 
-### fill_log
+### execution_snapshot_log
 
 | Field | Description |
 | --- | --- |
-| `ts` | fill time |
-| `order_id` | order reference |
-| `fill_qty` | filled quantity |
-| `fill_px` | fill price |
-| `fees` | commissions and fees |
-| `tax` | execution tax |
-| `settlement_date` | Toss execution settlementDate |
-| `slippage_vs_model` | realized slippage |
+| `ts` | snapshot time |
+| `order_id` | internal order reference |
+| `broker_order_id` | Toss orderId |
+| `snapshot_seq` | monotonic sequence per order |
+| `order_status` | Toss order status at snapshot |
+| `cumulative_filled_qty` | Toss cumulative filledQuantity |
+| `cumulative_filled_amount` | Toss cumulative filledAmount |
+| `average_filled_price` | Toss averageFilledPrice |
+| `cumulative_commission` | Toss cumulative commission |
+| `cumulative_tax` | Toss cumulative tax |
+| `settlement_date` | Toss settlementDate |
+
+### execution_delta_log
+
+| Field | Description |
+| --- | --- |
+| `delta_filled_qty` | difference between snapshots |
+| `delta_filled_amount` | difference between snapshots |
+| `delta_commission` | difference between snapshots |
+| `delta_tax` | difference between snapshots |
 
 ### position_log
 
@@ -106,7 +120,7 @@ Toss 공식 API는 옵션체인과 Greeks를 제공하지 않습니다. 이 테�
 | `portfolio_nav` | total NAV |
 | `risk_nav` | conservative NAV for sizing |
 | `estimated_cash_balance` | internal reconstructed cash |
-| `broker_cash_buying_power` | Toss cashBuyingPower |
+| `broker_cash_buying_power_constraint` | Toss cashBuyingPower; broker constraint, not cash balance |
 | `pending_settlement_cash` | settlementDate-based estimate |
 | `reserved_cash_open_orders` | cash reserved by open orders |
 | `kill_switch_state` | current kill-switch state |
@@ -115,22 +129,35 @@ Toss 공식 API는 옵션체인과 Greeks를 제공하지 않습니다. 이 테�
 
 ### tax_lot_log
 
+세무 lot은 실제 신고 확정값이 아니라 보조장부입니다. 취득, 처분, 수수료, 세금, FX, ROC/basis adjustment를 분리해 나중에 세무 검토가 가능해야 합니다.
+
 | Field | Description |
 | --- | --- |
 | `ts` | event time |
 | `symbol` | symbol |
 | `lot_id` | tax lot id |
-| `open_fx_rate`, `close_fx_rate` | KRW conversion references |
-| `dividend_gross` | gross dividend/distribution |
-| `withholding` | withheld tax |
-| `roc_adjustment` | return-of-capital adjustment |
+| `acquisition_*` | acquisition date, settlement, qty, price, amount, fees, taxes, FX |
+| `disposal_*` | disposal date, settlement, qty, price, amount, fees, taxes, FX |
+| `remaining_qty` | lot quantity still open |
+| `realized_pnl_*` | native and estimated KRW P&L |
+| `dividend_gross_native`, `withholding_native` | distribution and withholding |
+| `roc_adjustment_native`, `basis_adjustment_native` | basis adjustments |
+| `tax_status` | open, partially_disposed, closed, provisional |
+
+### raw_broker_snapshot
+
+브로커 원본 응답 저장소입니다. 정규화 로직 변경이나 reconciliation 오류 때 원본을 재생하기 위해 모든 핵심 Toss 응답을 저장합니다.
+
+### client_order_id_registry
+
+내부 영구 멱등성 레지스트리입니다. Toss의 10분 멱등성 유효기간과 무관하게 한번 사용한 `clientOrderId`는 재사용하지 않습니다.
 
 ### cash_ledger
 
 | Field | Description |
 | --- | --- |
 | `ts` | cash event time |
-| `account_id` | broker account id |
+| `account_seq` | Toss accountSeq |
 | `currency` | cash currency |
 | `event_type` | separated cash event type |
 | `amount` | signed amount |
@@ -158,7 +185,7 @@ Toss 공식 API는 옵션체인과 Greeks를 제공하지 않습니다. 이 테�
 | Field | Description |
 | --- | --- |
 | `ts` | reconciliation time |
-| `account_id` | broker account id |
+| `account_seq` | Toss accountSeq |
 | `item_type` | cash, position, order, fill, dividend, tax, corporate_action |
 | `broker_value` | broker-reported value |
 | `internal_value` | internally reconstructed value |
@@ -173,9 +200,9 @@ Toss 공식 API는 옵션체인과 Greeks를 제공하지 않습니다. 이 테�
 - 시장 데이터 timestamp가 starter/calibrated 지연 한도를 초과
 - 옵션 chain의 bid/ask가 역전 또는 비정상적으로 넓음
 - NAV/premium 데이터가 전일 이전으로 stale
-- borrow rate가 필요한 포지션인데 값이 없음
+- 해당 엔진에서 borrow rate가 필요한 포지션인데 값이 없음
 - tax/ROC 분류가 필요한 분배형 ETF인데 분배 구성 정보가 없음
 - 브로커 현금/포지션/주문/체결과 내부 장부의 reconciliation이 실패
 - `clientOrderId` 없는 live 주문 생성 시도
-- `cashBuyingPower` 조회 실패
+- `cashBuyingPower` broker constraint 조회 실패
 - OPEN 주문 목록 대사 실패

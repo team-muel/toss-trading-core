@@ -49,6 +49,8 @@
 - `REPLACE_REJECTED`
 - `REPLACED`
 
+운영 정책상 terminal로 바로 처리하는 상태는 `FILLED`, `CANCELED`, `REJECTED`, `REPLACED`입니다. `CANCEL_REJECTED`와 `REPLACE_REJECTED`는 원주문 상태를 다시 조회해야 하는 review 상태입니다.
+
 ## Execution Data Available
 
 주문 상세의 `execution`은 다음 필드를 제공합니다.
@@ -133,7 +135,7 @@ Toss API만으로 가능한 실거래 MVP:
 - 국내/미국 주식·ETF 현물 주문
 - ETF 상대가치 현물 페어 후보의 저회전 운용
 - 분배형 ETF 필터를 적용한 현물 매수 차단/허용
-- USD `cashBuyingPower` 기반 주문 가능 금액 통제
+- USD `cashBuyingPower`를 broker constraint로 사용한 주문 가능 금액 통제
 - REST 폴링 기반 주문 상태 대사
 
 Toss API 단독으로 live 자동화하지 않는 영역:

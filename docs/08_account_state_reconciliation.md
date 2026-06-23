@@ -10,7 +10,7 @@ Toss API 기반 자동매매에서 가장 중요한 모듈은 전략 엔진이 �
 
 ```text
 available_cash =
-  broker_cash_buying_power
+  broker_cash_buying_power_constraint
   - reserved_cash_open_orders
   - estimated_fees
   - estimated_tax_reserve
@@ -29,8 +29,8 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 
 | Variable | Meaning |
 | --- | --- |
-| `broker_cash_buying_power` | `GET /api/v1/buying-power`의 `cashBuyingPower` |
-| `estimated_cash_balance` | internal reconstructed cash |
+| `broker_cash_buying_power_constraint` | `GET /api/v1/buying-power`의 `cashBuyingPower`; 현금 잔고가 아니라 브로커가 허용한 매수 제약값 |
+| `estimated_cash_balance` | 내부 cash ledger로 재구성한 현금 추정값 |
 | `pending_settlement_cash` | order execution settlementDate 기준 미정산 추정 |
 | `reserved_cash_open_orders` | cash reserved by open orders |
 | `available_cash` | internally allowed new order cash |
@@ -42,7 +42,7 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 
 | Item | Tolerance | Action When Exceeded |
 | --- | --- | --- |
-| Buying power difference | starter/calibrated tolerance | block new orders, reload broker snapshot |
+| Buying power constraint drift | starter/calibrated tolerance | block new orders, reload broker snapshot |
 | Position quantity difference | 0 | block new orders, replay orders |
 | Average price difference | small rounding only | recompute realized P&L and lots |
 | Open order mismatch | 0 | manual review before new orders |
@@ -68,6 +68,10 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 - reconciliation snapshot
 
 공식 주문 `execution` 필드의 `commission`, `tax`, `settlementDate`는 `cash_ledger`와 `settlement` 이벤트 생성의 기준으로 사용합니다.
+
+## Raw Snapshot Requirement
+
+계좌, 보유, 주문, buying power, 수수료 응답은 정규화하기 전에 `raw_broker_snapshot`에 저장합니다. 내부 장부가 틀렸을 때 원본 응답을 재생할 수 있어야 하며, request/response hash와 Toss `requestId`를 함께 남깁니다.
 
 ## Live Trading Blockers
 
