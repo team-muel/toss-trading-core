@@ -1,0 +1,87 @@
+runtime:
+  mode: paper
+  base_currency: USD
+  tax_reporting_currency: KRW
+  live_trading_enabled: false
+  broker_base_url: https://openapi.tossinvest.com
+  toss_openapi_version: "1.1.1"
+  live_scope: equity_etf_only
+
+calibration:
+  policy_values_are_market_laws: false
+  report_numbers_are_initial_guardrails_only: true
+  requires_paper_trade_calibration_before_live: true
+  require_manual_approval_for_threshold_changes: true
+  minimum_observations_before_relaxing_limits: null
+  calibration_inputs:
+    - realized_slippage
+    - reject_rate
+    - partial_fill_rate
+    - order_latency
+    - drawdown_distribution
+    - symbol_liquidity
+    - tax_and_fee_drag
+
+starter_guardrails:
+  description: "More conservative than report examples; use only for paper/micro-live until calibrated."
+  max_drawdown_warning_pct: 1.0
+  max_drawdown_kill_switch_pct: 2.0
+  single_trade_max_loss_nav_pct: 0.1
+  single_live_order_notional_nav_pct: 0.1
+  max_open_orders: 1
+  allow_amount_based_market_orders: false
+  allow_high_value_order_confirmation: false
+  block_new_orders_on_any_reconciliation_diff: true
+  block_new_orders_after_any_unknown_order_state: true
+
+portfolio_limits:
+  # Populated only after calibration review. Do not copy report numbers here.
+  max_drawdown_warning_pct: null
+  max_drawdown_kill_switch_pct: null
+  single_trade_max_loss_nav_pct: null
+  single_live_order_notional_nav_pct: null
+  distribution_etf_single_name_cap_nav_pct: null
+  distribution_etf_engine_cap_nav_pct: null
+
+option_carry:
+  enabled: false
+  live_orders_enabled: false
+  disabled_reason: "Toss Open API docs do not provide options chain, Greeks, or options order endpoints."
+  calibration_required: true
+
+etf_relative_value:
+  enabled: true
+  live_orders_enabled: false
+  calibration_required: true
+  lookback_days: null
+  half_life_bounds_days: null
+  exit_zscore_abs: null
+  max_holding_days: null
+  gross_exposure_bounds_nav_pct: null
+  require_borrow_rate_for_short_leg: true
+  live_scope_note: "Toss live MVP allows long-only cash/ETF switching until borrow and short mechanics are verified elsewhere."
+
+distribution_filter:
+  enabled: true
+  calibration_required: true
+  block_dividend_capture_before_ex_date: true
+  nav_premium_warning_pct: null
+  reduce_weight_when_roc_unknown: true
+
+tbill_collateral:
+  enabled: true
+  live_orders_enabled: false
+  disabled_reason: "Toss Open API holdings exclude overseas bonds; T-bill collateral automation is out of official scope."
+  calibration_required: true
+
+data_quality:
+  max_market_data_delay_seconds: null
+  block_when_nav_stale: true
+  block_when_borrow_missing: true
+  block_when_option_quote_crossed: true
+
+alerts:
+  order_reject_rate_kill_switch_pct: null
+  slippage_model_multiple_warning: null
+  slippage_warning_consecutive_days: null
+  engine_pnl_corr_warning: null
