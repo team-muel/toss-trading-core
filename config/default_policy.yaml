@@ -8,6 +8,45 @@ runtime:
   toss_openapi_schema_hash_source: https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
   live_scope: equity_etf_only
 
+external_data:
+  execution_truth_source: toss
+  provider_data_never_overwrites_broker_state: true
+  minimum_stack:
+    massive_rest:
+      enabled: false
+      role:
+        - options_snapshot_research
+        - dividends_splits
+        - indices_futures_proxy
+    fred:
+      enabled: false
+      role:
+        - rate_hurdle
+        - treasury_yield_series
+        - release_calendar
+    sec_edgar:
+      enabled: false
+      role:
+        - official_event_gate
+        - ticker_cik_map
+        - filing_classifier
+    issuer_parser:
+      enabled: false
+      role:
+        - etf_nav
+        - premium_discount
+        - roc_tax_character_audit
+  stage2_optional:
+    massive_websocket:
+      enabled: false
+      requires_source_health: true
+    tradier:
+      enabled: false
+      role:
+        - options_chain_backup
+        - etb_list
+  source_health_required_before_signal: true
+
 calibration:
   policy_values_are_market_laws: false
   report_numbers_are_initial_guardrails_only: true
@@ -22,6 +61,9 @@ calibration:
     - drawdown_distribution
     - symbol_liquidity
     - tax_and_fee_drag
+    - source_stale_rate
+    - fallback_rate
+    - nav_roc_manual_audit_rate
 
 starter_guardrails:
   description: "More conservative than report examples; use only for paper/micro-live until calibrated."
@@ -32,6 +74,7 @@ starter_guardrails:
   max_open_orders: 1
   allow_amount_based_market_orders: false
   allow_high_value_order_confirmation: false
+  allow_stale_external_signal_reuse: false
   block_new_orders_on_any_reconciliation_diff: true
   block_new_orders_after_any_unknown_order_state: true
 
@@ -81,13 +124,20 @@ data_quality:
   global_gates:
     block_on_stale_toss_market_data: true
     block_on_missing_broker_snapshot: true
+    block_on_missing_source_health_for_external_signal: true
   engine_scoped_gates:
     distribution_filter:
       block_when_nav_stale: true
+      block_when_roc_unknown: true
+      block_when_issuer_parser_failed: true
     etf_relative_value:
       block_when_borrow_missing: true
+      require_whitelisted_homogeneous_pair: true
     option_carry:
       block_when_option_quote_crossed: true
+      block_when_option_chain_stale: true
+    opening_gap_fade:
+      block_when_orderbook_trade_timestamp_mismatch: true
 
 alerts:
   order_reject_rate_kill_switch_pct: null

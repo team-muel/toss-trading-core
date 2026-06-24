@@ -2,7 +2,7 @@
 
 ## Why This Comes Before Strategy
 
-Toss API 기반 자동매매에서 가장 중요한 모듈은 전략 엔진이 아니라 계좌 상태 엔진입니다. 공식 API는 `buying-power`, `holdings`, `orders`, 주문별 `execution.settlementDate`를 제공하지만 별도 cashflow/tax lot API는 문서상 제공하지 않습니다.
+Toss API 기반 자동매매에서 가장 중요한 모듈은 전략 엔진이 아니라 계좌 상태 엔진입니다. 공식 API는 buying power, holdings, orders, 주문별 execution summary를 제공하지만 별도 cashflow/tax lot API는 제공하지 않습니다.
 
 따라서 브로커 응답과 내부 이벤트 장부를 결합해 주문 가능 금액, 포지션, 주문 상태, 체결 합계, 수수료, 세금, 결제 예정일을 재현해야 합니다.
 
@@ -17,25 +17,25 @@ available_cash =
   - liquidity_buffer
 ```
 
-`risk_nav`는 현재 NAV를 그대로 쓰지 않습니다. 수익 직후 포지션이 자동 확대되는 것을 막기 위해 보수적으로 계산합니다.
+`broker_cash_buying_power_constraint`는 현금 잔고가 아닙니다. Toss가 현재 주문 가능하다고 판단한 제약값이며, 내부 cash ledger와 별도로 비교합니다.
 
 ```text
 risk_nav = min(current_nav, rolling_20d_avg_nav)
 ```
 
-수익 인식률, 손실 반영률 같은 숫자는 하드코딩하지 않고 calibration policy에서 별도로 승인합니다.
+`risk_nav`는 수익 직후 자동으로 포지션이 커지는 문제를 막기 위한 sizing 기준입니다.
 
 ## Required State Variables
 
 | Variable | Meaning |
 | --- | --- |
-| `broker_cash_buying_power_constraint` | `GET /api/v1/buying-power`의 `cashBuyingPower`; 현금 잔고가 아니라 브로커가 허용한 매수 제약값 |
+| `broker_cash_buying_power_constraint` | Toss `cashBuyingPower`; broker constraint |
 | `estimated_cash_balance` | 내부 cash ledger로 재구성한 현금 추정값 |
-| `pending_settlement_cash` | order execution settlementDate 기준 미정산 추정 |
-| `reserved_cash_open_orders` | cash reserved by open orders |
-| `available_cash` | internally allowed new order cash |
+| `pending_settlement_cash` | execution `settlementDate` 기준 미정산 추정 |
+| `reserved_cash_open_orders` | open order 예약금 |
+| `available_cash` | 내부 주문 허용 현금 |
 | `net_liquidation_value` | holdings market value + internal cash estimate |
-| `risk_nav` | conservative NAV for sizing |
+| `risk_nav` | conservative sizing NAV |
 | `estimated_tax_reserve` | tax and fee reserve |
 
 ## Reconciliation Rules
@@ -44,10 +44,10 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 | --- | --- | --- |
 | Buying power constraint drift | starter/calibrated tolerance | block new orders, reload broker snapshot |
 | Position quantity difference | 0 | block new orders, replay orders |
-| Average price difference | small rounding only | recompute realized P&L and lots |
+| Average price difference | rounding only | recompute P&L and lots |
 | Open order mismatch | 0 | manual review before new orders |
-| Missing closed order | 0 | reload CLOSED order pages and replay ledger |
-| Commission/tax mismatch | 0 | hold P&L as provisional |
+| Missing closed order | 0 | reload CLOSED pages and replay ledger |
+| Commission/tax mismatch | 0 until calibrated | hold P&L as provisional |
 
 ## Replay Principle
 
@@ -67,20 +67,32 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 - settlement completed by policy
 - reconciliation snapshot
 
-공식 주문 `execution` 필드의 `commission`, `tax`, `settlementDate`는 `cash_ledger`와 `settlement` 이벤트 생성의 기준으로 사용합니다.
+주문 상세의 execution summary는 누적 snapshot으로 저장하고, 장부 반영은 snapshot 간 delta로 계산합니다.
 
-## Raw Snapshot Requirement
+## Raw API Response Requirement
 
-계좌, 보유, 주문, buying power, 수수료 응답은 정규화하기 전에 `raw_broker_snapshot`에 저장합니다. 내부 장부가 틀렸을 때 원본 응답을 재생할 수 있어야 하며, request/response hash와 Toss `requestId`를 함께 남깁니다.
+계좌, 보유, 주문, buying power, sellable quantity, 수수료 응답은 정규화하기 전에 `raw_api_response`에 `source_type='broker'`로 저장합니다. 내부 장부가 틀렸을 때 원본 응답을 재생할 수 있어야 하며, request/response hash와 Toss `requestId`를 함께 남깁니다.
 
 ## Live Trading Blockers
 
-다음 중 하나라도 발생하면 `live` 신규 주문을 차단합니다.
+다음 중 하나라도 발생하면 live 신규 주문을 차단합니다.
 
 - 브로커 스냅샷 조회 실패
 - OPEN 주문 상태 불명
 - CLOSED 주문 페이징 누락
 - holdings와 내부 position ledger 불일치
-- `GET /api/v1/buying-power` 조회 실패
+- buying power 조회 실패
 - buying power가 내부 available cash와 정책 허용 범위를 벗어남
-- 주문 타임아웃 뒤 기존 주문 접수 여부 확인 불가
+- 주문 timeout 뒤 기존 주문 접수 여부 확인 불가
+- execution delta가 음수 또는 비정상
+
+## Foundation Completion Evidence
+
+이번 foundation 단계는 다음 증거가 있어야 완료로 봅니다.
+
+- `python -m toss_trading.cli.foundation_snapshot` 성공
+- `python -m toss_trading.cli.foundation_audit`가 `foundation_audit=ok` 반환
+- `runtime/foundation_account_state.sqlite`에 `raw_api_response`와 정규화 snapshot 저장
+- broker 접근 실패 시 `source_health_snapshot`에 `blocked/error`와 운영 action 저장
+- `runtime/foundation_account_state_report.txt`에 holdings count, open orders count, buying power, blockers 출력
+- `blockers=['none']` 또는 명확히 설명 가능한 비거래 blocker만 존재

@@ -1,171 +1,267 @@
-# 데이터 계약과 로그 스키마
+# Data Contracts And Ledger Schema
 
-## 공통 원칙
+이 문서는 정규화된 내부 데이터 계약을 정의합니다. 실제 SQL 초안은 `schemas/trading_ledger.sql`을 기준으로 합니다.
 
-모든 데이터는 다음 필드를 가져야 합니다.
+## Common Fields
 
-- `ts`: 데이터가 의미하는 시장 시각
-- `ingested_at`: 시스템 수집 시각
-- `source`: 데이터 공급자
-- `as_of`: 공시 또는 스냅샷 기준일
-- `quality_flag`: `ok`, `stale`, `missing`, `estimated`, `manual`
+모든 수집 데이터는 가능한 한 아래 필드를 가집니다.
 
-## Core Tables
+| Field | Meaning |
+| --- | --- |
+| `event_time_utc` | 데이터가 의미하는 UTC 시각 |
+| `source_ts` | provider가 준 원본 timestamp |
+| `received_at` | 시스템 수신 시각 |
+| `exchange_local_date` | 해당 거래소 기준 날짜 |
+| `session_label` | regular, premarket, afterhours, close 등 |
+| `source_timezone` | 원본 timestamp의 timezone |
+| `source` | Toss, Massive, FRED, SEC, issuer 등 |
+| `quality_flag` | `ok`, `stale`, `missing`, `estimated`, `manual`, `blocked` |
+
+시간 비교와 event window 계산은 UTC를 기준으로 하고, 주문 가능 여부는 거래소 local session을 함께 봅니다.
+
+## Reference Data
+
+### instrument_master
+
+심볼 매핑은 별도 원장으로 관리합니다. 미국 주식/ETF는 ticker가 단순해 보여도 옵션 OCC symbol, CIK, vendor ticker, Toss stock master가 다를 수 있습니다.
+
+필수 필드:
+
+- `symbol_id`
+- `toss_symbol`
+- `ticker`
+- `vendor_symbol`
+- `occ_symbol`
+- `cik`
+- `asset_class`
+- `currency`
+- `timezone`
+- `mic`
+- `effective_from`
+- `effective_to`
+
+### source_health_snapshot
+
+외부 데이터 피드가 정상인지 판단하는 테이블입니다.
+
+필수 필드:
+
+- `source`
+- `channel`
+- `last_success_at`
+- `max_age_ms`
+- `heartbeat_timeout_ms`
+- `lag_ms`
+- `source_status`
+- `action`
+
+`source_status`가 `stale`, `degraded`, `blocked`이면 해당 피드에 의존하는 신규 신호를 중단합니다.
+
+### raw_api_response
+
+모든 API 원본 응답의 공통 저장소입니다. Toss broker 응답과 외부 vendor 응답을 같은 형식으로 저장합니다.
+
+필수 필드:
+
+- `source`
+- `source_type`: `broker` 또는 `vendor`
+- `account_seq`: broker/account-bound 응답일 때만 값 존재
+- `endpoint`
+- `http_method`
+- `request_hash`
+- `response_hash`
+- `status_code`
+- `body_json`
+
+민감한 API key, token, account identifier는 저장하지 않습니다.
+
+## Market And External Data
 
 ### market_bars
 
-| Field | Description |
-| --- | --- |
-| `ts` | bar timestamp |
-| `symbol` | ticker |
-| `venue` | exchange or broker venue |
-| `open`, `high`, `low`, `close` | price fields |
-| `volume` | traded volume |
-| `source` | data source |
+OHLCV bar 저장소입니다. Toss와 외부 provider 모두 들어올 수 있으므로 `source`와 timestamp metadata가 필수입니다.
 
 ### options_chain_snapshot
 
-Toss 공식 API는 옵션체인과 Greeks를 제공하지 않습니다. 이 테이블은 외부 데이터 또는 연구용입니다.
+Toss 공식 API는 옵션 chain과 Greeks를 제공하지 않습니다. 이 테이블은 research 또는 risk input 전용입니다.
 
-| Field | Description |
-| --- | --- |
-| `ts` | snapshot time |
-| `underlying` | underlying ticker |
-| `expiry` | expiration date |
-| `strike` | strike price |
-| `cp` | call/put |
-| `bid`, `ask`, `mid` | quote prices |
-| `iv`, `delta`, `gamma`, `vega` | option metrics |
-| `oi`, `volume` | liquidity fields |
-| `source` | data source |
+필수 필드:
+
+- `underlying`
+- `expiry`
+- `strike`
+- `cp`
+- `bid`, `ask`, `mid`
+- `iv`, `delta`, `gamma`, `vega`
+- `oi`, `volume`
+- `source`
+- `quality_flag`
+
+### external_event_log
+
+SEC filing, issuer notice, split/dividend event, trading halt 같은 이벤트를 표준화합니다.
+
+필수 필드:
+
+- `source`
+- `source_event_id`
+- `symbol`
+- `cik`
+- `event_type`
+- `event_status`
+- `event_time_utc`
+- `filing_url` 또는 `source_url`
+- `raw_snapshot_ref`
+
+### rate_series_observation
+
+FRED 또는 Treasury 계열 금리 시계열입니다.
+
+필수 필드:
+
+- `series_id`
+- `observation_date`
+- `value`
+- `realtime_start`
+- `realtime_end`
+- `source`
+
+ALFRED 또는 vintage data를 쓰는 백테스트에서는 revision-aware 조회를 사용합니다.
+
+### etf_nav_snapshot
+
+ETF NAV, premium/discount, indicative value를 저장합니다. issuer parser 또는 외부 vendor의 품질을 함께 기록합니다.
+
+### etf_distribution_event
+
+배당, 분배, ROC, 원천징수 보조 정보를 저장합니다.
+
+필수 필드:
+
+- `symbol`
+- `declaration_date`
+- `ex_date`
+- `record_date`
+- `pay_date`
+- `cash_amount`
+- `currency`
+- `distribution_type`
+- `roc_flag`
+- `tax_character_source`
+- `quality_flag`
+
+generic dividend API는 ROC tax character를 완전히 보장하지 않으므로 issuer notice와 SEC filing으로 보강합니다.
+
+### feature_snapshot
+
+feature 계산 결과입니다. feature는 주문 신호가 아닙니다.
+
+필수 필드:
+
+- `symbol`
+- `feature_namespace`
+- `feature_name`
+- `feature_value`
+- `lookback_window`
+- `source`
+- `quality_flag`
+
+## Account And Order Data
+
+### account_snapshot
+
+Toss 계좌 목록 응답을 정규화한 snapshot입니다.
+
+### holding_snapshot
+
+Toss 보유주식 응답을 정규화한 snapshot입니다. 이 테이블은 broker가 보고한 보유 상태이고, 전략별 position은 `position_log`와 분리합니다.
+
+### broker_order_snapshot
+
+Toss 주문 목록/상세 응답을 정규화한 snapshot입니다. 주문 상세의 execution summary는 이 테이블에 누적값으로 저장하고, 장부 반영은 `execution_snapshot_log`와 `execution_delta_log`가 담당합니다.
+
+### buying_power_snapshot
+
+Toss buying power 응답을 정규화한 snapshot입니다. `cash_buying_power`는 현금 잔고가 아니라 broker constraint입니다.
+
+### sellable_quantity_snapshot
+
+Toss sellable quantity 응답을 정규화한 snapshot입니다.
+
+### commission_snapshot
+
+Toss commissions 응답을 정규화한 snapshot입니다. 실제 체결 수수료는 주문 execution snapshot을 우선합니다.
 
 ### signal_log
 
-| Field | Description |
-| --- | --- |
-| `ts` | signal time |
-| `engine` | engine name |
-| `symbol_or_pair` | traded symbol or pair |
-| `regime_tag` | market regime |
-| `raw_score` | engine native score |
-| `adjusted_score` | cost/risk adjusted score |
-| `signal_side` | buy/sell/avoid |
-| `target_weight` | proposed target |
-| `expected_max_loss` | conservative loss estimate |
-| `reason_code` | rule explanation |
+전략 엔진의 후보 신호입니다. 주문 의사결정이 아니라 risk hub 입력입니다.
+
+필수 필드:
+
+- `engine`
+- `symbol_or_pair`
+- `raw_score`
+- `adjusted_score`
+- `signal_side`
+- `target_weight`
+- `reason_code`
+
+### signal_decision_log
+
+ALLOW/REDUCE/BLOCK 계층입니다. feature와 raw signal을 받아 최종적으로 주문 planner에 넘길 수 있는 의사결정만 남깁니다.
+
+필수 필드:
+
+- `engine`
+- `symbol`
+- `decision`: `ALLOW`, `REDUCE`, `BLOCK`
+- `target_weight`
+- `source_signal_id`
+- `source_feature_ids`
+- `gate_reason`
 
 ### order_log
 
-| Field | Description |
-| --- | --- |
-| `ts` | order creation time |
-| `broker` | broker adapter |
-| `mode` | paper/semi_auto/live |
-| `client_order_id` | Toss `clientOrderId`, required for idempotency |
-| `broker_order_id` | Toss `orderId` |
-| `symbol` | symbol |
-| `side` | buy/sell |
-| `order_basis` | `quantity` or `amount` |
-| `qty` | quantity, null for amount-based order |
-| `order_amount` | amount, null for quantity-based order |
-| `order_amount` | US amount-based market order amount |
-| `limit_px` | limit price |
-| `status` | planned/submitted/filled/rejected/cancelled |
-| `reject_code` | broker reject reason |
-| `source_signal_id` | signal reference |
+주문 계획과 broker 주문 ID를 연결합니다.
+
+필수 필드:
+
+- `account_seq`
+- `client_order_id`
+- `broker_order_id`
+- `symbol`
+- `side`
+- `order_basis`: `quantity` 또는 `amount`
+- `qty`: quantity 기반 주문일 때만 값 존재
+- `order_amount`: amount 기반 주문일 때만 값 존재
+- `order_type`
+- `time_in_force`
+- `status`
+- `raw_request_ref`
+- `raw_response_ref`
+
+`qty`와 `order_amount`는 동시에 존재할 수 없습니다. 미국 `orderAmount` 시장가 주문은 별도 제약과 정규장 조건을 둡니다.
 
 ### execution_snapshot_log
 
-| Field | Description |
-| --- | --- |
-| `ts` | snapshot time |
-| `order_id` | internal order reference |
-| `broker_order_id` | Toss orderId |
-| `snapshot_seq` | monotonic sequence per order |
-| `order_status` | Toss order status at snapshot |
-| `cumulative_filled_qty` | Toss cumulative filledQuantity |
-| `cumulative_filled_amount` | Toss cumulative filledAmount |
-| `average_filled_price` | Toss averageFilledPrice |
-| `cumulative_commission` | Toss cumulative commission |
-| `cumulative_tax` | Toss cumulative tax |
-| `settlement_date` | Toss settlementDate |
+Toss 주문 상세의 누적 execution snapshot입니다.
+
+- `cumulative_filled_qty`
+- `cumulative_filled_amount`
+- `average_filled_price`
+- `cumulative_commission`
+- `cumulative_tax`
+- `settlement_date`
 
 ### execution_delta_log
 
-| Field | Description |
-| --- | --- |
-| `delta_filled_qty` | difference between snapshots |
-| `delta_filled_amount` | difference between snapshots |
-| `delta_commission` | difference between snapshots |
-| `delta_tax` | difference between snapshots |
-
-### position_log
-
-| Field | Description |
-| --- | --- |
-| `ts` | snapshot time |
-| `engine` | owning engine |
-| `position_id` | position reference |
-| `net_qty` | net quantity |
-| `delta`, `vega` | risk metrics |
-| `max_loss` | defined or estimated max loss |
-| `collateral_reserved` | reserved collateral |
-| `unrealized_pnl` | mark-to-market P&L |
-
-### risk_snapshot
-
-| Field | Description |
-| --- | --- |
-| `ts` | snapshot time |
-| `portfolio_nav` | total NAV |
-| `risk_nav` | conservative NAV for sizing |
-| `estimated_cash_balance` | internal reconstructed cash |
-| `broker_cash_buying_power_constraint` | Toss cashBuyingPower; broker constraint, not cash balance |
-| `pending_settlement_cash` | settlementDate-based estimate |
-| `reserved_cash_open_orders` | cash reserved by open orders |
-| `kill_switch_state` | current kill-switch state |
-| `engine_pnl_corr_hash` | correlation state fingerprint |
-| `stress_2008`, `stress_2020`, `stress_2022`, `stress_2024` | stress estimates |
-
-### tax_lot_log
-
-세무 lot은 실제 신고 확정값이 아니라 보조장부입니다. 취득, 처분, 수수료, 세금, FX, ROC/basis adjustment를 분리해 나중에 세무 검토가 가능해야 합니다.
-
-| Field | Description |
-| --- | --- |
-| `ts` | event time |
-| `symbol` | symbol |
-| `lot_id` | tax lot id |
-| `acquisition_*` | acquisition date, settlement, qty, price, amount, fees, taxes, FX |
-| `disposal_*` | disposal date, settlement, qty, price, amount, fees, taxes, FX |
-| `remaining_qty` | lot quantity still open |
-| `realized_pnl_*` | native and estimated KRW P&L |
-| `dividend_gross_native`, `withholding_native` | distribution and withholding |
-| `roc_adjustment_native`, `basis_adjustment_native` | basis adjustments |
-| `tax_status` | open, partially_disposed, closed, provisional |
-
-### raw_broker_snapshot
-
-브로커 원본 응답 저장소입니다. 정규화 로직 변경이나 reconciliation 오류 때 원본을 재생하기 위해 모든 핵심 Toss 응답을 저장합니다.
-
-### client_order_id_registry
-
-내부 영구 멱등성 레지스트리입니다. Toss의 10분 멱등성 유효기간과 무관하게 한번 사용한 `clientOrderId`는 재사용하지 않습니다.
+이전 snapshot과 현재 snapshot의 차이입니다. cash ledger와 position replay는 delta를 기준으로 반영합니다.
 
 ### cash_ledger
 
-| Field | Description |
-| --- | --- |
-| `ts` | cash event time |
-| `account_seq` | Toss accountSeq |
-| `currency` | cash currency |
-| `event_type` | separated cash event type |
-| `amount` | signed amount |
-| `settlement_date` | settlement date when applicable |
-| `source_ref` | order, fill, dividend, tax, or broker reference |
-| `tax_relevant` | whether tax ledger needs this event |
+내부 현금 보조장부입니다. Toss `cashBuyingPower`를 현금처럼 저장하지 않습니다.
 
-필수 `event_type`:
+필수 event type:
 
 - `TRADE_PROCEEDS`
 - `TRADE_COST`
@@ -180,29 +276,50 @@ Toss 공식 API는 옵션체인과 Greeks를 제공하지 않습니다. 이 테�
 - `MARGIN_RELEASE`
 - `MARGIN_RESERVE`
 
+### tax_lot_log
+
+세무 신고 확정값이 아니라 보조장부입니다. 취득, 처분, 수수료, 세금, FX, dividend, withholding, ROC/basis adjustment를 분리합니다.
+
+### risk_snapshot
+
+필수 계좌 리스크 변수:
+
+- `portfolio_nav`
+- `risk_nav`
+- `estimated_cash_balance`
+- `broker_cash_buying_power_constraint`
+- `pending_settlement_cash`
+- `reserved_cash_open_orders`
+- `kill_switch_state`
+
 ### broker_reconciliation_log
 
-| Field | Description |
-| --- | --- |
-| `ts` | reconciliation time |
-| `account_seq` | Toss accountSeq |
-| `item_type` | cash, position, order, fill, dividend, tax, corporate_action |
-| `broker_value` | broker-reported value |
-| `internal_value` | internally reconstructed value |
-| `difference` | broker minus internal |
-| `status` | ok, warning, failed |
-| `action_required` | manual action or automated block |
+브로커 스냅샷과 내부 ledger의 차이를 저장합니다. 차이가 있으면 신규 주문을 막습니다.
+
+### client_order_id_registry
+
+Toss의 10분 멱등성 유효기간과 무관하게 한번 사용한 `clientOrderId`는 내부적으로 재사용하지 않습니다.
 
 ## Data Quality Gates
 
-신규 신호 생성은 아래 조건에서 중단합니다.
+Global gate:
 
-- 시장 데이터 timestamp가 starter/calibrated 지연 한도를 초과
-- 옵션 chain의 bid/ask가 역전 또는 비정상적으로 넓음
-- NAV/premium 데이터가 전일 이전으로 stale
-- 해당 엔진에서 borrow rate가 필요한 포지션인데 값이 없음
-- tax/ROC 분류가 필요한 분배형 ETF인데 분배 구성 정보가 없음
-- 브로커 현금/포지션/주문/체결과 내부 장부의 reconciliation이 실패
-- `clientOrderId` 없는 live 주문 생성 시도
-- `cashBuyingPower` broker constraint 조회 실패
-- OPEN 주문 목록 대사 실패
+- Toss broker snapshot 저장 실패
+- Toss holdings/orders와 내부 ledger 불일치
+- 주문 상태 불명
+- `clientOrderId` 없는 live 주문
+- `cashBuyingPower` constraint 조회 실패
+- rate limit degraded 상태에서 신규 주문 시도
+
+Engine-scoped gate:
+
+- Distribution filter: NAV/ROC/issuer notice stale이면 신규 매수 차단
+- ETF relative value: whitelist 밖 pair 또는 borrow 필요한 pair 차단
+- Option research: option quote crossed, stale, missing OI이면 신호 비활성화
+- Gap fade: orderbook/trades timestamp mismatch 또는 latency 초과 시 비활성화
+
+Fallback rule:
+
+- Massive WebSocket 실패 -> Massive REST snapshot -> 해당 feature 비활성화
+- SEC poller 실패 -> nightly archive 보조 -> event gate 보수화
+- issuer parser 실패 -> distribution filter 신규 매수 차단

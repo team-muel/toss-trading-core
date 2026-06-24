@@ -2,7 +2,7 @@
 
 ## Goal
 
-Toss Open API는 client x API group 기준 rate limit을 적용합니다. 주문 시스템은 응답 헤더를 읽어 그룹별 token bucket을 갱신하고, limit에 가까워지면 주문보다 조회를 먼저 감속해야 합니다.
+Toss Open API는 client x API group 기준 rate limit을 적용합니다. 주문 시스템은 응답 헤더를 읽어 그룹별 token bucket을 갱신하고, limit에 가까워지면 신규 주문보다 상태 조회와 취소를 우선합니다.
 
 ## Bucket Key
 
@@ -10,7 +10,7 @@ Toss Open API는 client x API group 기준 rate limit을 적용합니다. 주문
 bucket_key = client_id_hash + ":" + api_group
 ```
 
-API group 예시:
+API group:
 
 - `AUTH`
 - `ACCOUNT`
@@ -36,13 +36,13 @@ API group 예시:
 
 - 요청 전 bucket에 token이 없으면 큐에 넣고 대기합니다.
 - `ORDER`와 `ORDER_INFO`는 장 초반 피크 한도를 별도로 적용합니다.
-- 429 수신 시 `Retry-After`를 우선하고, 그 다음 지수 백오프와 jitter를 적용합니다.
+- 429 수신 시 `Retry-After`를 우선하고, 지수 백오프와 jitter를 적용합니다.
 - 429가 반복되면 해당 API group을 degraded 상태로 표시합니다.
-- `ORDER` group degraded 상태에서는 신규 주문 생성보다 주문 상태 확인을 우선합니다.
+- degraded 상태에서는 신규 주문 생성을 중단하고 상태 조회, 취소, reconciliation을 우선합니다.
 
 ## Priority
 
-높은 우선순위:
+High:
 
 - `orders.get`
 - `orders.list_open`
@@ -50,11 +50,18 @@ API group 예시:
 - `buying_power.get`
 - `orders.cancel`
 
-낮은 우선순위:
+Normal:
 
-- 캔들 백필
-- 대량 현재가 갱신
-- 리서치용 데이터 조회
+- `orders.submit`
+- `orders.modify`
+- `sellable_quantity.get`
+- `commissions.get`
+
+Low:
+
+- candle backfill
+- large quote refresh
+- research data query
 
 ## Persistence
 
@@ -71,3 +78,8 @@ rate limit 이벤트는 운영 분석을 위해 저장합니다.
 - `retry_after_seconds`
 - `request_id`
 - `action`
+- `degraded_state`
+
+## External Vendors
+
+외부 vendor도 각자 rate limit이 있지만 Toss token bucket과 섞지 않습니다. vendor rate limit은 `source_health_snapshot`과 adapter별 scheduler에서 관리하고, source가 degraded이면 해당 feature를 끕니다. Toss 주문 상태 조회를 외부 vendor 요청보다 우선합니다.

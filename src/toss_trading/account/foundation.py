@@ -1,0 +1,131 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from toss_trading.account.ledger import AccountLedger, AccountStateExplanation
+from toss_trading.broker.toss import TossReadOnlyAdapter
+
+
+@dataclass(frozen=True)
+class FoundationSnapshotResult:
+    accounts: int
+    holdings: int
+    open_orders: int
+    closed_orders: int
+    buying_power_rows: int
+    commission_rows: int
+    sellable_quantity_rows: int
+    explanation: AccountStateExplanation
+
+
+class FoundationSnapshotter:
+    """Reads Toss account state, stores raw/normalized snapshots, and explains it."""
+
+    def __init__(self, adapter: TossReadOnlyAdapter, ledger: AccountLedger) -> None:
+        self.adapter = adapter
+        self.ledger = ledger
+
+    def snapshot(
+        self,
+        *,
+        account_seq: str | None = None,
+        include_sellable_quantity: bool = True,
+        buying_power_currency: str = "USD",
+    ) -> FoundationSnapshotResult:
+        accounts_result = self.adapter.get_accounts()
+        accounts = self.ledger.ingest_accounts(
+            accounts_result.body,
+            raw_ref=accounts_result.raw_response_id,
+        )
+        credentials = getattr(self.adapter, "credentials", None)
+        adapter_account_seq = getattr(credentials, "account_seq", None)
+        resolved_account_seq = account_seq or adapter_account_seq
+        if not resolved_account_seq:
+            rows = self.ledger.conn.execute(
+                """
+                SELECT DISTINCT account_seq
+                FROM account_snapshot
+                ORDER BY account_seq
+                """
+            ).fetchall()
+            if len(rows) != 1:
+                raise RuntimeError(
+                    "TOSS_ACCOUNT_SEQ is required when accounts list is empty or ambiguous"
+                )
+            resolved_account_seq = str(rows[0]["account_seq"])
+
+        if credentials is not None and getattr(credentials, "account_seq", None) is None:
+            object.__setattr__(credentials, "account_seq", resolved_account_seq)
+
+        holdings_result = self.adapter.get_holdings()
+        holdings = self.ledger.ingest_holdings(
+            holdings_result.body,
+            account_seq=resolved_account_seq,
+            raw_ref=holdings_result.raw_response_id,
+        )
+
+        open_orders_result = self.adapter.get_orders(status="OPEN")
+        open_orders = self.ledger.ingest_orders(
+            open_orders_result.body,
+            account_seq=resolved_account_seq,
+            raw_ref=open_orders_result.raw_response_id,
+        )
+
+        closed_orders_result = self.adapter.get_orders(status="CLOSED")
+        closed_orders = self.ledger.ingest_orders(
+            closed_orders_result.body,
+            account_seq=resolved_account_seq,
+            raw_ref=closed_orders_result.raw_response_id,
+        )
+
+        buying_power_result = self.adapter.get_buying_power(currency=buying_power_currency)
+        buying_power_rows = self.ledger.ingest_buying_power(
+            buying_power_result.body,
+            account_seq=resolved_account_seq,
+            raw_ref=buying_power_result.raw_response_id,
+        )
+
+        commissions_result = self.adapter.get_commissions()
+        commission_rows = self.ledger.ingest_commissions(
+            commissions_result.body,
+            account_seq=resolved_account_seq,
+            raw_ref=commissions_result.raw_response_id,
+        )
+
+        sellable_quantity_rows = 0
+        if include_sellable_quantity:
+            symbols = [
+                row["symbol"]
+                for row in self.ledger.conn.execute(
+                    """
+                    SELECT symbol
+                    FROM holding_snapshot
+                    WHERE account_seq = ?
+                      AND ts = (
+                        SELECT MAX(ts) FROM holding_snapshot WHERE account_seq = ?
+                      )
+                    ORDER BY symbol
+                    """,
+                    (resolved_account_seq, resolved_account_seq),
+                ).fetchall()
+            ]
+            for symbol in symbols:
+                result = self.adapter.get_sellable_quantity(symbol=symbol)
+                sellable_quantity_rows += self.ledger.ingest_sellable_quantity(
+                    result.body,
+                    account_seq=resolved_account_seq,
+                    raw_ref=result.raw_response_id,
+                    fallback_symbol=symbol,
+                )
+
+        explanation = self.ledger.explain_account_state(resolved_account_seq)
+        return FoundationSnapshotResult(
+            accounts=accounts,
+            holdings=holdings,
+            open_orders=open_orders,
+            closed_orders=closed_orders,
+            buying_power_rows=buying_power_rows,
+            commission_rows=commission_rows,
+            sellable_quantity_rows=sellable_quantity_rows,
+            explanation=explanation,
+        )

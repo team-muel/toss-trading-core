@@ -8,7 +8,7 @@ class TossCredentials:
     base_url: str
     client_id: str
     client_secret: str
-    account_seq: str
+    account_seq: str | None
     api_env: str = "unknown"
 
 
@@ -42,9 +42,7 @@ def load_toss_credentials_from_env() -> TossCredentials:
     _load_local_dotenv()
 
     missing = [
-        name
-        for name in ("TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET", "TOSS_ACCOUNT_SEQ")
-        if not os.environ.get(name)
+        name for name in ("TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET") if not os.environ.get(name)
     ]
     if missing:
         joined = ", ".join(missing)
@@ -54,6 +52,6 @@ def load_toss_credentials_from_env() -> TossCredentials:
         base_url=os.environ.get("TOSS_BROKER_BASE_URL", "https://openapi.tossinvest.com"),
         client_id=os.environ["TOSS_CLIENT_ID"],
         client_secret=os.environ["TOSS_CLIENT_SECRET"],
-        account_seq=os.environ["TOSS_ACCOUNT_SEQ"],
+        account_seq=os.environ.get("TOSS_ACCOUNT_SEQ") or None,
         api_env=os.environ.get("TOSS_API_ENV", "unknown"),
     )

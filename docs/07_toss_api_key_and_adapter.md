@@ -1,10 +1,8 @@
 # Toss API Key And Adapter Plan
 
-## 핵심 판단
+## Purpose
 
-공식 Toss Invest Open API는 OAuth2 Client Credentials Grant 방식입니다. 실거래 가능 여부는 `client_id/client_secret`으로 토큰을 받고, `accountSeq`를 계좌 헤더에 넣어 계좌/주문 API를 안정적으로 호출할 수 있는지로 판단합니다.
-
-공식 문서 기준으로 현물 주식/ETF 자동매매에 필요한 핵심 API는 제공됩니다. 옵션, 채권/T-bill, margin breakdown, webhook/stream, 세무 cashflow 이벤트는 제공 범위가 아니므로 별도 모듈로 분리합니다.
+이 문서는 Toss 연결과 broker adapter 계약만 다룹니다. Toss가 제공하는 전체 기능 목록은 `docs/09_toss_official_api_coverage.md`를 기준으로 합니다.
 
 ## Secret Handling
 
@@ -15,16 +13,10 @@
 - 코드 상수
 - 로그
 - 스크린샷
-- `.env` 파일
 
-권장 방식:
+로컬 단일 사용자 개발에서는 Git에 올라가지 않는 `.env`를 임시로 사용할 수 있습니다. 운영 환경은 OS credential manager, KMS, Vault, Secrets Manager 같은 secret store를 사용합니다.
 
-- 운영 환경: KMS, Vault, Secrets Manager, 또는 브로커/클라우드 secret store
-- 로컬 개발: OS credential manager 또는 세션 환경 변수
-- 로컬 단일 사용자 개발에서는 Git에 올라가지 않는 `.env`를 임시로 사용할 수 있습니다.
-- 테스트: 가능하다면 조회 전용 환경을 먼저 사용하고, trade 권한은 별도 승인 뒤 사용
-
-필수 환경 변수 이름은 아래처럼 표준화합니다. 값은 secret store에서 주입합니다.
+표준 환경 변수:
 
 ```text
 TOSS_BROKER_BASE_URL
@@ -36,59 +28,88 @@ TOSS_API_ENV
 
 `TOSS_BROKER_BASE_URL` 기본값은 `https://openapi.tossinvest.com`입니다.
 
-로컬 워크스페이스에는 `.env.example`과 Git 무시 대상인 `.env`를 둘 수 있습니다. 코드에서는 프로세스 환경 변수를 우선하고, 비어 있으면 로컬 `.env`를 읽습니다.
+## Adapter Contract
 
-## Official Adapter Contract
-
-| Internal Interface | Official Endpoint | Required Return Fields |
+| Internal Interface | Official Endpoint | Required Behavior |
 | --- | --- | --- |
-| `auth.refresh()` | `POST /oauth2/token` | `access_token`, expiry metadata if returned |
-| `accounts.list()` | `GET /api/v1/accounts` | `accountSeq`, `accountNo`, `accountType` |
-| `positions.list()` | `GET /api/v1/holdings` | `symbol`, `quantity`, `lastPrice`, `averagePurchasePrice`, `marketValue`, `profitLoss`, `cost` |
-| `orders.submit()` | `POST /api/v1/orders` | `clientOrderId`, `orderId`, `status` |
-| `orders.list_open()` | `GET /api/v1/orders?status=OPEN` | all open orders |
-| `orders.list_closed()` | `GET /api/v1/orders?status=CLOSED` | paged closed orders |
-| `orders.get()` | `GET /api/v1/orders/{orderId}` | `status`, `execution`, `orderedAt`, `canceledAt` |
-| `orders.modify()` | `POST /api/v1/orders/{orderId}/modify` | replacement/cancel state |
-| `orders.cancel()` | `POST /api/v1/orders/{orderId}/cancel` | cancellation state |
-| `buying_power.get()` | `GET /api/v1/buying-power` | `currency`, `cashBuyingPower` |
-| `sellable_quantity.get()` | `GET /api/v1/sellable-quantity` | sellable quantity |
-| `commissions.get()` | `GET /api/v1/commissions` | KR/US commission rates |
+| `auth.refresh()` | `POST /oauth2/token` | token 발급, 만료 전 갱신 |
+| `accounts.list()` | `GET /api/v1/accounts` | `accountSeq` 확인 |
+| `positions.list()` | `GET /api/v1/holdings` | 보유수량, 평균단가, 평가금액 수집 |
+| `orders.submit()` | `POST /api/v1/orders` | `clientOrderId` 필수, raw request/response 저장 |
+| `orders.modify()` | `POST /api/v1/orders/{orderId}/modify` | review 상태 처리 |
+| `orders.cancel()` | `POST /api/v1/orders/{orderId}/cancel` | review 상태 처리 |
+| `orders.list_open()` | `GET /api/v1/orders` | OPEN 주문 대사 |
+| `orders.list_closed()` | `GET /api/v1/orders` | CLOSED 주문 페이징 누락 방지 |
+| `orders.get()` | `GET /api/v1/orders/{orderId}` | execution 누적 snapshot 생성 |
+| `buying_power.get()` | `GET /api/v1/buying-power` | `cashBuyingPower`를 broker constraint로 저장 |
+| `sellable_quantity.get()` | `GET /api/v1/sellable-quantity` | 매도 가능 수량 gate |
+| `commissions.get()` | `GET /api/v1/commissions` | 비용 모델과 실비 비교 |
 
 ## Idempotency Rule
 
 모든 주문 생성은 `clientOrderId`가 필수입니다.
 
-공식 문서상 `clientOrderId`는 멱등성 키입니다. 미전달 시 매 요청이 별개 주문으로 처리됩니다. 동일 값 재요청은 이전 주문 결과를 재반환하며, 유효기간은 10분입니다.
+공식 문서상 `clientOrderId`는 멱등성 키이며 동일 값 재요청은 일정 시간 동안 이전 주문 결과를 재반환합니다. 내부 정책은 더 엄격합니다. 한번 사용한 `clientOrderId`는 유효기간이 지나도 재사용하지 않습니다.
 
-내부 정책은 더 엄격합니다. 한번 사용한 `clientOrderId`는 Toss의 10분 유효기간이 지나도 재사용하지 않습니다. 모든 ID는 `client_order_id_registry`에 영구 기록하고, 같은 전략 신호를 재시도하더라도 새 주문 의사결정과 새 ID를 발급합니다.
+타임아웃 또는 네트워크 오류가 발생했을 때 같은 주문을 즉시 새 ID로 재전송하지 않습니다.
 
-타임아웃 또는 네트워크 오류가 발생했을 때 같은 주문을 즉시 새 ID로 재전송하지 않습니다. 같은 `clientOrderId`로 재요청하거나 OPEN/CLOSED 주문 조회로 접수 여부를 확인합니다. 상태가 확인되기 전 새 ID로 같은 주문을 제출하는 것은 중복 주문 위험으로 간주합니다.
+허용 순서:
 
-## Polling Fallback
+1. 같은 `clientOrderId`로 결과 재조회 또는 재요청
+2. OPEN/CLOSED 주문 조회
+3. 주문 상세 조회
+4. 상태 확정 후 새 의사결정과 새 `clientOrderId` 발급
 
-공식 문서 기준 Open API는 REST only입니다. active order 구간에서는 폴링을 사용합니다.
+상태가 확인되기 전 새 ID로 같은 주문을 제출하는 것은 중복 주문 위험으로 간주합니다.
 
-- 폴링 간격: rate limit, 주문 상태 지연, 실제 체결 관측치로 calibration
-- 최대 대기: 주문 상태 불명 리스크와 rate limit을 보고 calibration
-- terminal status: `FILLED`, `REJECTED`, `CANCELED`, `REPLACED`
-- review status: `CANCEL_REJECTED`, `REPLACE_REJECTED`
-- unresolved status: 신규 주문 중단 후 수동 점검
+## Order Status Policy
 
-`CANCEL_REJECTED`와 `REPLACE_REJECTED`는 별도 주문 레코드로 생성될 수 있고 원주문이 이전 상태로 복귀할 수 있으므로 terminal로 처리하지 않습니다. 반드시 원주문을 다시 조회해 effective state를 확정합니다.
+Terminal status:
+
+- `FILLED`
+- `REJECTED`
+- `CANCELED`
+- `REPLACED`
+
+Review status:
+
+- `CANCEL_REJECTED`
+- `REPLACE_REJECTED`
+
+Review status는 terminal로 처리하지 않습니다. 원주문을 다시 조회해 effective state를 확정해야 합니다.
+
+Unknown enum:
+
+- 저장
+- 신규 주문 중단
+- 수동 검토 또는 adapter update
+
+## Polling Policy
+
+Toss 주문 상태는 REST polling으로 관리합니다.
+
+- create 직후 detail/list polling
+- OPEN 주문 주기 대사
+- CLOSED 주문 페이징 대사
+- rate-limit header 기반 cadence 조정
+- 429 발생 시 `Retry-After` 우선
+
+폴링 숫자는 코드에 고정하지 않고 `docs/10_calibration_policy.md`와 실제 관측치로 조정합니다.
 
 ## Live Adapter Gate
 
-아래 조건을 모두 충족해야 `live` 어댑터를 켤 수 있습니다.
+아래 조건을 모두 충족해야 live adapter를 켤 수 있습니다.
 
 - OAuth2 토큰 발급 성공
-- `GET /api/v1/accounts`로 `accountSeq` 확인
-- `GET /api/v1/holdings` 반복 조회와 내부 포지션 장부 대사
-- 주문 제출, 상태 조회, 취소가 모두 확인됨
-- 부분체결과 종료 주문이 내부 장부에 정확히 반영됨
-- `GET /api/v1/buying-power`의 `cashBuyingPower` broker constraint와 내부 available cash 정책이 확인됨
-- rate limit 헤더와 429 retry가 처리됨
-- error envelope의 `requestId`, `code`, `message`, `data`가 로그에 남음
-- broker reconciliation이 반복적으로 0 차이를 유지
+- Open API 허용 IP 등록 완료
+- `accountSeq` 확인
+- holdings 반복 조회와 내부 position 대사
+- 주문 제출, 상세 조회, 취소 흐름 확인
+- 부분체결과 종료 주문 replay 확인
+- `cashBuyingPower` constraint와 내부 available cash 정책 확인
+- raw broker snapshot 저장 확인
+- rate-limit header와 429 retry 처리 확인
+- error envelope의 `requestId`, `code`, `message`, `data` 기록
+- broker reconciliation이 반복적으로 허용 오차 이내
 
 하나라도 빠지면 `paper` 또는 `semi_auto` 모드를 유지합니다.

@@ -1,68 +1,71 @@
-# 보고서 기반 설계 요약
+# Report Digest
 
-## 핵심 결론
+이 문서는 지금까지 작성한 전략, Toss API, USD 현물 퀀트, 외부 데이터 피드 보고서의 결론만 모은 운영 기준입니다. 상세 endpoint 목록은 `docs/09_toss_official_api_coverage.md`, 외부 피드 설계는 `docs/12_external_data_feeds.md`를 기준으로 합니다.
 
-기존 보고서의 전략 결론은 유지하되, Toss API 전제는 공식 문서 확인 결과에 맞게 수정합니다.
+## 결정된 원칙
 
-전략 자체는 숨겨진 무위험 수익을 찾는 구조가 아니라, 여러 리스크 프리미엄을 분해하고 공통 꼬리위험을 제한하는 멀티엔진 시스템입니다. 다만 Toss Open API만으로 바로 자동화할 수 있는 범위는 국내/미국 주식·ETF 현물 주문입니다.
+1. Toss Open API는 실행·계좌·보유·주문 상태의 기준원장입니다.
+2. 외부 데이터는 신호, 필터, 리스크 판단을 보강할 뿐 계좌 상태를 덮어쓰지 않습니다.
+3. live MVP는 국내/미국 주식 및 ETF 현물 주문으로 제한합니다.
+4. 옵션, 숏/대차, 직접 T-bill ladder, 마진 전략은 Toss 단독 live 범위가 아닙니다.
+5. 전략 신호보다 계좌 상태 엔진, 장부, 체결 대사, rate limit 처리가 먼저입니다.
+6. 보고서의 숫자는 초기 운용 가드레일이며 코드에 시장 법칙처럼 박아 넣지 않습니다.
+7. `clientOrderId`는 모든 live 주문에 필수이고 내부적으로 영구 재사용하지 않습니다.
+8. `cashBuyingPower`는 현금 잔고가 아니라 브로커가 반환한 주문 제약값입니다.
+9. `CANCEL_REJECTED`, `REPLACE_REJECTED`는 terminal 상태가 아니라 원주문 재조회가 필요한 review 상태입니다.
+10. `raw_api_response` 없이는 broker/vendor 장애를 재현할 수 없습니다.
 
-## 공식 Toss API 확인 결과
+## Live MVP 범위
 
-공식 문서 기준으로 제공되는 기능:
+허용 후보:
 
-- OAuth2 Client Credentials Grant
-- 계좌 목록 조회
-- 국내/미국 주식 보유 현황 조회
-- 국내/미국 주식 시세, 호가, 체결, 캔들, 상하한가
-- 종목 기본 정보와 매수 유의사항
-- 환율과 국내/미국 장 운영 시간
-- 주문 생성, 정정, 취소
-- 주문 목록, 주문 상세
-- 매수 가능 금액, 매도 가능 수량, 수수료
-- `clientOrderId` 기반 주문 멱등성
-- 주문 execution의 체결수량, 평균체결가, 체결금액, 수수료, 세금, 최종체결시각, 결제예정일
+- 광역 ETF 듀얼모멘텀 + 현금 또는 현금성 ETF 오버레이
+- 동질 ETF 대체군 평균회귀 long-only
+- 분배형 ETF 신규진입 차단 필터
+- 계좌 상태 기반 주문 가능 금액, 포지션, open order 관리
 
-공식 문서 기준으로 제공 범위 밖인 기능:
+초기 제외:
 
-- 해외 옵션 주문
-- 옵션체인, IV, Greeks
-- 채권/T-bill 직접 보유 또는 담보 API
-- margin requirement breakdown
-- borrow rate, short availability
-- webhook/websocket
-- tax lot/cost basis API
-- 배당/원천징수/corporate action cashflow 이벤트 API
-- ETF NAV, premium/discount, ROC 분배 구성
+- 해외 옵션 주문 및 옵션 캐리 live 자동화
+- short leg 또는 borrow rate가 필요한 pair
+- 직접 T-bill/채권 ladder 자동화
+- NAV arbitrage처럼 실시간 NAV/iNAV 품질이 필요한 전략
+- headline sentiment 기반 고빈도 이벤트 매매
 
-## 자동매매 설계 원칙
+## 외부 피드 최소 스택
 
-1. Toss live MVP는 국내/미국 주식·ETF 현물 주문으로 제한합니다.
-2. 모든 주문 생성에는 `clientOrderId`를 강제합니다.
-3. `clientOrderId`는 내부에서 영구 재사용 금지합니다.
-4. 주문 상태는 REST 폴링으로 대사합니다.
-5. `CANCEL_REJECTED`, `REPLACE_REJECTED`는 terminal이 아니라 review 상태로 처리합니다.
-6. `cashBuyingPower`는 현금이 아니라 broker constraint로 저장합니다.
-7. holdings, OPEN/CLOSED orders, raw broker snapshot을 내부 장부와 매번 비교합니다.
-8. 옵션 캐리와 T-bill 담보 엔진은 Toss 단독 live 범위 밖의 연구/외부 브로커 모듈로 둡니다.
-9. ETF 상대가치와 분배형 ETF 필터는 외부 NAV/분배 데이터와 Toss 현물 주문을 결합해 제한적으로 구현합니다.
-10. 실거래 전 단계는 데이터 적합성 -> 시뮬레이션 -> 페이퍼트레이드 -> 초소형 현물 실거래 순서로 고정합니다.
+비용과 복잡도를 줄이는 1차 조합:
 
-## 주요 위험
+- Toss Open API: 실행, 계좌, 주문, holdings, buying power
+- Massive REST: 옵션/지수/선물/배당/분할 등 시장 및 corporate action 보조
+- FRED: 금리, SOFR, Treasury yield, release calendar
+- SEC EDGAR: 8-K, 10-Q, 10-K, fund filing, CIK 기반 event gate
+- issuer parser: ETF NAV, premium/discount, ROC 공백 보완
 
-- webhook이 없으므로 체결 이벤트는 폴링 지연을 감안해야 합니다.
-- cashflow/tax lot API가 없으므로 세후 장부는 자체적으로 유지해야 합니다.
-- 옵션/마진/대차 전략은 Toss 공식 API 범위 밖입니다.
-- 분배형 ETF의 높은 분배율은 경제적 수익이 아니라 ROC 또는 옵션 프리미엄 반환일 수 있습니다.
-- 레버리지/인버스 ETP는 일일 리셋과 경로의존성 때문에 장기 헤지 수단으로 부적합할 수 있습니다.
+성능 우선 2차 확장:
 
-## 우선 구현 범위
+- Massive WebSocket
+- SEC 실시간 poller
+- Tradier 옵션 체인/ETB 보조
+- source health dashboard
 
-- OAuth2 토큰 발급 모듈
-- accountSeq 조회와 계좌 헤더 처리
-- holdings, buying power, orders 기반 계좌 상태 엔진
-- 주문 계획 로그
-- REST 주문 상태 폴링
-- 주문 execution 기반 체결/수수료/세금/결제예정일 장부
-- broker reconciliation 로그
-- rate limit과 error code 처리
-- kill switch
+## 구현 순서
+
+1. Toss 계좌·주문 동기화
+2. 내부 ledger와 `raw_api_response`
+3. rate limit과 주문 상태 machine
+4. 외부 피드 canonical schema
+5. stale-data gate와 source health
+6. paper replay
+7. shadow-live
+8. 초소형 live 또는 No-Go
+
+## No-Go 원칙
+
+다음 중 하나라도 발생하면 전략 성과와 무관하게 live 신규 주문을 막습니다.
+
+- Toss holdings, orders, buying power와 내부 장부가 어긋남
+- 주문 상태 불명 또는 duplicate create 위험
+- 외부 피드 stale 상태에서 이전 신호로 주문을 계속 냄
+- NAV/ROC 불확실성이 큰 ETF를 필터 없이 매수함
+- rate limit degraded 상태에서 신규 주문이 조회·취소보다 우선됨

@@ -6,31 +6,34 @@
 
 숫자는 세 단계로 관리합니다.
 
-| Stage | Meaning | Use In Live Trading |
+| Stage | Meaning | Live Use |
 | --- | --- | --- |
 | Report Example | 설계 보고서의 설명용 수치 | No |
-| Starter Guardrail | 보고서보다 더 보수적인 paper/micro-live 안전장치 | Limited |
-| Calibrated Policy | 실제 체결, 슬리피지, 손실분포, 주문거부, 세금/수수료 자료로 승인된 값 | Yes |
+| Starter Guardrail | paper/micro-live 안전장치 | Limited |
+| Calibrated Policy | 실제 로그로 승인된 값 | Yes |
 
 ## Default Rule
 
-- `config/default_policy.yaml`의 `portfolio_limits`와 전략 임계값은 기본적으로 `null`입니다.
-- `null` 값은 “아직 자동 운용에 쓰지 말라”는 뜻입니다.
-- live 주문은 `starter_guardrails` 또는 별도 승인된 calibrated policy를 통과해야 합니다.
-- 보고서 숫자를 그대로 복사한 PR이나 설정 변경은 reject합니다.
+- `config/default_policy.yaml`의 전략 임계값은 기본적으로 `null`입니다.
+- `null`은 자동 운용에 쓰지 말라는 뜻입니다.
+- live 주문은 starter guardrail 또는 승인된 calibrated policy를 통과해야 합니다.
+- 보고서 숫자를 그대로 복사한 설정 변경은 reject합니다.
 
 ## What Must Be Observed First
 
-실제 값을 완화하거나 확정하기 전에 최소한 다음 분포를 수집합니다.
+값을 완화하거나 확정하기 전에 최소한 다음 분포를 수집합니다.
 
 - 주문 제출 후 상태 확정까지 latency
 - OPEN/CLOSED 주문 조회 누락률
 - 주문 거부율과 거부 코드
 - 부분체결 빈도
-- 모델 대비 실체결 슬리피지
-- 종목별 호가 스프레드와 주문 크기별 체결 품질
-- `cashBuyingPower` broker constraint와 내부 available cash 차이
-- 수수료/세금/결제예정일 반영 오차
+- 모델 대비 실체결 slippage
+- 종목별 spread와 주문 크기별 체결 품질
+- `cashBuyingPower` constraint와 내부 available cash 차이
+- 수수료, 세금, 결제예정일 반영 오차
+- 외부 source stale 비율
+- fallback 발생률
+- NAV/ROC parser 수동 검토 결과
 - 일별 손익과 drawdown 분포
 
 ## Adjustment Process
@@ -48,7 +51,9 @@
 - reconciliation 차이 발생
 - 주문 상태 불명
 - `clientOrderId` 없는 live 주문 생성 시도
-- `cashBuyingPower` broker constraint 조회 실패
+- `cashBuyingPower` constraint 조회 실패
 - CLOSED 주문 페이징 누락
 - rate limit 대응 실패
-- unknown error code 반복 발생
+- unknown broker error code 반복 발생
+- external source stale 상태에서 해당 source 의존 신호 발생
+- NAV/ROC 불명 ETF 신규 매수

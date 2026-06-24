@@ -1,86 +1,97 @@
-# 전략 엔진 명세
+# Strategy Engines
 
-## Toss Live Scope
+## Scope
 
-공식 Toss Open API 기준 live 자동화 대상은 국내/미국 주식·ETF 현물 주문입니다. 옵션, T-bill 직접 보유, 마진, 대차 기반 전략은 Toss 단독 live 범위 밖입니다.
+Toss live 자동화 대상은 국내/미국 주식 및 ETF 현물 주문입니다. 전략 엔진은 주문을 직접 내지 않고 `signal_log`와 target proposal만 생성합니다. 최종 주문은 account state, data quality, risk hub, rate limit gate를 통과해야 합니다.
 
-## 1. ETF Relative Value Engine
+## Engine Matrix
 
-목적은 동일하거나 매우 유사한 익스포저를 가진 ETF 간 일시적 괴리의 평균회귀를 거래하는 것입니다.
+| Engine | Live Status | Required Data | Decision |
+| --- | --- | --- | --- |
+| Broad ETF Dual Momentum + Cash Overlay | live candidate after paper | Toss candles, market calendar, holdings, buying power; optional FRED cash hurdle | 1차 MVP 후보 |
+| Homogeneous ETF Relative Value Long-Only | live candidate after paper | Toss/Massive prices, trades, spreads, commissions | short 없이 underperformer만 매수 |
+| Distribution Filter | risk filter | issuer/SEC/Massive dividend data, NAV/ROC parser | 매수 엔진이 아니라 손실 회피 필터 |
+| Opening Gap Fade | paper only first | orderbook, trades, intraday candles, strict latency logs | 체결 품질 검증 전 live 금지 |
+| Option Carry | research only | Massive/Tradier options chain, IV, Greeks, OI | Toss 옵션 주문 미지원 |
+| T-Bill Collateral / Rate Hurdle | accounting only | FRED, TreasuryDirect, internal cash ledger | 직접 T-bill 자동화 아님 |
 
-Toss live MVP에서는 다음 제약을 둡니다.
+## Broad ETF Dual Momentum + Cash Overlay
 
-- 현물 long-only 또는 현금 보유 전환만 허용합니다.
-- short leg, borrow rate가 필요한 pair는 제외합니다.
-- 주문은 `cashBuyingPower` broker constraint와 sellable quantity를 통과해야 합니다.
-- OPEN 주문이 남아 있으면 같은 symbol의 반대 주문을 제한합니다.
+목적은 광역 ETF 바스켓에서 상대강도가 좋은 자산만 보유하고, 조건이 나빠지면 현금 또는 현금성 ETF로 낮추는 것입니다.
 
-초기 규칙은 확정 숫자가 아니라 calibration 대상입니다.
+초기 제약:
 
-- 대상: 동일 지수 ETF, 대체성 높은 섹터/스타일 ETF
-- 제외: 장기 보유용 레버리지/인버스 ETP, borrow 필요 구조
-- 진입: 사전에 정한 lookback에서 평균회귀성이 확인되고, 실제 체결 비용을 이긴다는 증거가 쌓인 경우
-- 청산: 평균회귀, 시간 경과, 손실한도, 유동성 악화 중 먼저 오는 조건
-- lookback, half-life, z-score, 보유기간은 보고서 숫자를 복사하지 않고 paper/live 관측 후 승인합니다.
+- 저회전 월간 또는 주간 리밸런싱부터 시작
+- 시장가 남발 금지
+- `cashBuyingPower` constraint와 내부 available cash를 모두 통과
+- drawdown 관리가 목적이지 고빈도 alpha 수확이 아님
+- FRED 금리는 현금 대기 비용과 hurdle 보조로만 사용
 
-## 2. Distribution Filter Engine
+## Homogeneous ETF Relative Value Long-Only
 
-이 엔진은 매수 엔진이 아니라 함정 회피 필터입니다.
+이상적인 ETF relative value는 long/short지만 Toss live MVP에서는 short leg를 쓰지 않습니다.
 
-Toss 공식 API는 ETF NAV, premium/discount, ROC 구성, ex-date를 직접 제공하지 않습니다. 이 데이터는 issuer, SEC, 거래소, 외부 데이터 공급자로 보완합니다.
+허용 방식:
+
+- 매우 유사한 ETF 대체군만 whitelist
+- 괴리가 커진 underperformer만 매수
+- outperformer는 현금 보유 또는 기존 보유 축소로 대응
+- 예상 spread 회복이 총 비용의 최소 2배 이상일 때만 후보
+- 구조 차이, 배당 처리, 운용보수, 유동성 차이를 별도 필터로 확인
+
+제외:
+
+- borrow rate가 필요한 pair
+- inverse/leveraged ETP
+- NAV/iNAV 신뢰도가 없으면 premium/discount arbitrage
+
+## Distribution Filter
+
+분배형 ETF 필터는 수익 엔진이 아니라 신규 매수 차단 엔진입니다.
 
 차단 조건:
 
-- 시장가격이 NAV 또는 indicative value 대비 과도한 premium
-- 최근 분배의 ROC 비중이 높음
-- ex-date 직전 단순 배당 캡처 목적 매수
-- headline distribution rate와 30-day SEC yield의 괴리가 과도함
-- 기초자산 총수익률 대비 ETF 총수익률 괴리가 비정상적으로 확대
+- NAV 또는 indicative value 대비 premium 과열
+- ROC(Return of Capital) 비중 불명 또는 과도
+- ex-date 직전 단순 배당 capture 목적 매수
+- headline distribution rate와 30-day SEC yield의 큰 괴리
+- 기초자산 총수익률 대비 ETF 총수익률 열화
+- issuer 공지 또는 SEC filing이 stale
 
-## 3. Option Carry Engine
+Toss API만으로 NAV, premium/discount, ROC, ex-date를 완전히 해결할 수 없으므로 `docs/12_external_data_feeds.md`의 issuer/SEC/Massive 보조 계층이 필요합니다.
 
-목적은 내재변동성이 실현변동성보다 높을 때 정의된 위험의 옵션 프리미엄을 수확하는 것입니다.
+## Opening Gap Fade
 
-공식 Toss Open API 기준으로 옵션체인, Greeks, 옵션 주문은 제공 범위가 아닙니다. 따라서 이 엔진은 Toss 단독 live 자동매매 대상이 아니라 연구용 또는 외부 브로커 연동 대상입니다.
+개장초 갭-되돌림은 후보로 남기되 live 초기 범위에서는 제외합니다.
 
-Toss 저장소 안에서는 다음 산출물까지만 둡니다.
+필수 선행 조건:
 
-- 외부 옵션 데이터 스키마
-- 백테스트/리서치 신호
-- Toss 현물 포지션과의 공통 리스크 측정
+- orderbook/trades timestamp 정합성 검증
+- order create -> detail 반영 지연 측정
+- partial fill, cancel, replace 거절 처리 검증
+- 첫 5분 거래 금지 또는 별도 실험 계정
+- 하루 손실 한도 도달 시 엔진 즉시 off
 
-## 4. T-Bill Collateral Engine
+## Research-Only Engines
 
-목적은 담보 안정성, 유동성, 현금성 수익을 동시에 관리하는 것입니다.
+### Option Carry
 
-공식 Toss Open API의 보유주식 조회는 국내/미국 주식만 포함하고 해외 옵션·채권은 제외합니다. T-bill 직접 보유, 채권, 담보 인정, margin breakdown은 Toss Open API 자동화 범위 밖으로 둡니다.
+Toss 공식 API는 옵션 주문, 옵션 chain, IV, Greeks를 제공하지 않습니다. 옵션 데이터는 Massive/Tradier 같은 외부 provider로 연구할 수 있지만, Toss live 주문과 연결하지 않습니다.
 
-Toss 저장소 안에서는 다음만 관리합니다.
+### T-Bill Collateral / Rate Hurdle
 
-- 현금성 대체 ETF 사용 여부의 리스크 검토
-- 외부 T-bill ladder 장부
-- 옵션/담보 모듈과 Toss 현물 계좌의 회계상 분리
+Toss 공식 API는 해외 채권 또는 직접 T-bill 보유/담보 자동화를 제공하지 않습니다. 이 엔진은 FRED/TreasuryDirect 기반 rate hurdle, 외부 T-bill ladder 보조장부, 현금성 ETF 비교까지만 담당합니다.
 
-## Unified Scoring
+## Unified Gate
 
-모든 엔진은 다음 개념의 조정 점수로 비교합니다.
-
-```text
-AdjustedScore =
-  z(expected_carry)
-  - risk_penalty
-  - liquidity_cost_penalty
-  - tax_drag_penalty
-  - execution_penalty
-  - network_overlap_penalty
-```
-
-Toss live 주문 후보는 추가로 다음 게이트를 통과해야 합니다.
+모든 엔진 후보는 같은 gate를 통과합니다.
 
 - market calendar상 주문 가능 시간
-- stock warning 없음 또는 허용 가능한 warning
-- price limit/orderbook 기준 가격 유효성
-- buying power 충분
-- sellable quantity 충분
-- OPEN 주문 충돌 없음
-- rate limit 예산 충분
+- stock warning 또는 거래 제한 없음
+- stale-data gate 통과
+- source health 정상
+- buying power와 sellable quantity 통과
+- open order 충돌 없음
+- rate-limit token bucket 정상
+- reconciliation 차이 없음
+- starter/calibrated guardrail 통과
