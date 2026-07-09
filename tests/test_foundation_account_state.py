@@ -18,6 +18,9 @@ from toss_trading.data import (
 
 
 class FakeTossAdapter:
+    def __init__(self):
+        self.detail_order_ids = []
+
     def get_accounts(self):
         return TossApiResult(
             endpoint="/api/v1/accounts",
@@ -79,6 +82,7 @@ class FakeTossAdapter:
         return self._raw(f"/api/v1/orders?status={status}&limit=100", body)
 
     def get_order(self, order_id):
+        self.detail_order_ids.append(order_id)
         status = "OPEN" if order_id == "open-1" else "CLOSED"
         return self._raw(
             f"/api/v1/orders/{order_id}",
@@ -220,6 +224,137 @@ class FoundationAccountStateTest(unittest.TestCase):
         self.assertEqual(second.execution_delta_rows, 0)
         delta_count = ledger.conn.execute("SELECT COUNT(*) FROM execution_delta_log").fetchone()[0]
         self.assertEqual(delta_count, 1)
+
+    def test_snapshotter_limits_order_detail_calls_and_prefers_closed_orders(self):
+        ledger = AccountLedger()
+        ledger.init_schema()
+        fake = FakeTossAdapter()
+        fake.ledger = ledger
+
+        result = FoundationSnapshotter(fake, ledger).snapshot(
+            account_seq="1",
+            max_order_details=1,
+        )
+
+        self.assertEqual(result.order_detail_rows, 1)
+        self.assertEqual(fake.detail_order_ids, ["closed-1"])
+        detail_count = ledger.conn.execute(
+            "SELECT COUNT(*) FROM raw_api_response WHERE endpoint LIKE '/api/v1/orders/%'"
+        ).fetchone()[0]
+        self.assertEqual(detail_count, 1)
+
+    def test_execution_snapshot_updates_when_average_filled_price_changes(self):
+        ledger = AccountLedger()
+        ledger.init_schema()
+        first_raw = ledger.save_raw_api_response(
+            source="toss",
+            source_type="broker",
+            endpoint="/api/v1/orders",
+            http_method="GET",
+            account_seq="1",
+            body={},
+            status_code=200,
+        )
+        second_raw = ledger.save_raw_api_response(
+            source="toss",
+            source_type="broker",
+            endpoint="/api/v1/orders",
+            http_method="GET",
+            account_seq="1",
+            body={},
+            status_code=200,
+        )
+        first = {
+            "orders": [
+                {
+                    "orderId": "order-avg",
+                    "status": "CLOSED",
+                    "execution": {
+                        "filledQuantity": "2",
+                        "filledAmount": "200",
+                        "averageFilledPrice": "100",
+                        "commission": "1",
+                        "tax": "0",
+                    },
+                }
+            ]
+        }
+        corrected = {
+            "orders": [
+                {
+                    "orderId": "order-avg",
+                    "status": "CLOSED",
+                    "execution": {
+                        "filledQuantity": "2",
+                        "filledAmount": "200",
+                        "averageFilledPrice": "99.99",
+                        "commission": "1",
+                        "tax": "0",
+                    },
+                }
+            ]
+        }
+
+        first_counts = ledger.ingest_execution_snapshots(
+            first,
+            account_seq="1",
+            raw_ref=first_raw,
+        )
+        corrected_counts = ledger.ingest_execution_snapshots(
+            corrected,
+            account_seq="1",
+            raw_ref=second_raw,
+        )
+
+        self.assertEqual(first_counts, (1, 1))
+        self.assertEqual(corrected_counts, (1, 0))
+        snapshot_count = ledger.conn.execute(
+            "SELECT COUNT(*) FROM execution_snapshot_log WHERE order_id = 'order-avg'"
+        ).fetchone()[0]
+        delta_count = ledger.conn.execute(
+            "SELECT COUNT(*) FROM execution_delta_log WHERE order_id = 'order-avg'"
+        ).fetchone()[0]
+        latest_average = ledger.conn.execute(
+            """
+            SELECT average_filled_price
+            FROM execution_snapshot_log
+            WHERE order_id = 'order-avg'
+            ORDER BY snapshot_seq DESC
+            LIMIT 1
+            """
+        ).fetchone()["average_filled_price"]
+        self.assertEqual(snapshot_count, 2)
+        self.assertEqual(delta_count, 1)
+        self.assertEqual(latest_average, 99.99)
+
+    def test_empty_commission_response_does_not_create_snapshot_row(self):
+        ledger = AccountLedger()
+        ledger.init_schema()
+        raw_ref = ledger.save_raw_api_response(
+            source="toss",
+            source_type="broker",
+            endpoint="/api/v1/commissions",
+            http_method="GET",
+            account_seq="1",
+            body={"commissions": []},
+            status_code=200,
+        )
+
+        empty_array_rows = ledger.ingest_commissions(
+            {"commissions": []},
+            account_seq="1",
+            raw_ref=raw_ref,
+        )
+        empty_object_rows = ledger.ingest_commissions(
+            {},
+            account_seq="1",
+            raw_ref=raw_ref,
+        )
+
+        self.assertEqual(empty_array_rows, 0)
+        self.assertEqual(empty_object_rows, 0)
+        row_count = ledger.conn.execute("SELECT COUNT(*) FROM commission_snapshot").fetchone()[0]
+        self.assertEqual(row_count, 0)
 
     def test_latest_empty_snapshots_do_not_reuse_stale_holdings_or_open_orders(self):
         ledger = AccountLedger()

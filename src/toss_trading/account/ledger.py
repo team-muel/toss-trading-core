@@ -64,6 +64,13 @@ def _float_or_zero(value: Any) -> float:
     return _float(value) or 0.0
 
 
+def _same_optional_float(left: Any, right: float | None) -> bool:
+    left_float = _float(left)
+    if left_float is None or right is None:
+        return left_float is None and right is None
+    return left_float == right
+
+
 def _endpoint_like_pattern(endpoint: str) -> str:
     separator = "&" if "?" in endpoint else "?"
     return f"{endpoint}{separator}%"
@@ -482,6 +489,10 @@ class AccountLedger:
                 unchanged = (
                     float(previous["cumulative_filled_qty"]) == filled_qty
                     and float(previous["cumulative_filled_amount"]) == filled_amount
+                    and _same_optional_float(
+                        previous["average_filled_price"],
+                        average_filled_price,
+                    )
                     and float(previous["cumulative_commission"] or 0) == cumulative_commission
                     and float(previous["cumulative_tax"] or 0) == cumulative_tax
                     and previous["order_status"] == order_status
@@ -637,6 +648,8 @@ class AccountLedger:
             amount = _float(
                 _get(item, "commission", "commissionAmount", "commission_amount")
             )
+            if amount is None:
+                continue
             rows.append(
                 (
                     str(uuid.uuid4()),

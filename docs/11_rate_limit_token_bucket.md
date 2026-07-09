@@ -11,6 +11,8 @@ Foundation runner now has a conservative in-memory token bucket:
 
 This is enough for read-only foundation snapshot/audit on one VM process. It is not yet a distributed or persisted bucket. Before multi-process runners, cron overlap, or live order submission, rate-limit state must be persisted or process concurrency must be prevented.
 
+The GCP foundation runner uses `flock` through `scripts/run_foundation_gcp.sh` to prevent overlapping read-only runs on one VM. This is still not a distributed rate-limit bucket and does not cover multiple VMs.
+
 ## Goal
 
 Toss Open API는 client x API group 기준 rate limit을 적용합니다. 주문 시스템은 응답 헤더를 읽어 그룹별 token bucket을 갱신하고, limit에 가까워지면 신규 주문보다 상태 조회와 취소를 우선합니다.

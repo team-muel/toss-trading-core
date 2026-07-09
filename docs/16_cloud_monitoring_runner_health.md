@@ -14,6 +14,7 @@ The runner produces three local evidence sources:
 runtime/foundation_account_state.sqlite
 runtime/foundation_account_state_report.txt
 runtime/foundation_runner.jsonl
+runtime/backups/*.sqlite
 ```
 
 The JSONL log is the primary VM log source. Each line is a JSON object with at least:
@@ -22,17 +23,27 @@ The JSONL log is the primary VM log source. Each line is a JSON object with at l
 {"ts":"...","event":"..."}
 ```
 
-Important events:
+Stable Cloud Monitoring event contract:
 
 ```text
 foundation_runner_start
+foundation_runner_ok
+foundation_runner_failed
 foundation_snapshot_start
 foundation_snapshot_ok
 foundation_snapshot_failed
 foundation_audit_start
 foundation_audit_ok
 foundation_audit_failed
-foundation_runner_ok
+gcp_secret_environment_loaded
+```
+
+Additional runner operations events:
+
+```text
+foundation_runner_backup_ok
+foundation_runner_backup_upload_ok
+foundation_runner_lock_busy
 ```
 
 ## Minimum Cloud Monitoring Policy
@@ -40,8 +51,12 @@ foundation_runner_ok
 Send `runtime/foundation_runner.jsonl` to Cloud Logging using the Ops Agent or a small file tailer. Alert only on operational failures:
 
 - no `foundation_runner_ok` event after a scheduled/manual run
+- latest event is `foundation_runner_failed`
 - latest event is `foundation_snapshot_failed`
 - latest event is `foundation_audit_failed`
+- expected `foundation_runner_backup_ok` event is missing after a successful audit
+- `FOUNDATION_GCS_BACKUP_URI` is set but `foundation_runner_backup_upload_ok` is missing
+- repeated `foundation_runner_lock_busy` events indicate cron or systemd timer overlap
 - latest `source_health_snapshot.source_status` is not `ok`
 - Toss error action is `register_current_ip_in_toss_openapi_allowlist`
 - v1 audit fails after a manual funded validation run
@@ -55,6 +70,11 @@ foundation_snapshot_ok_count
 foundation_snapshot_failed_count
 foundation_audit_ok_count
 foundation_audit_failed_count
+gcp_secret_environment_loaded_count
+foundation_runner_backup_ok_count
+foundation_runner_backup_upload_ok_count
+foundation_runner_lock_busy_count
+foundation_runner_failed_count
 foundation_runner_ok_count
 ```
 

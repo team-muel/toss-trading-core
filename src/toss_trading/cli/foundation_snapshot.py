@@ -14,6 +14,20 @@ from toss_trading.data import (
 from toss_trading.runtime import JsonlLogger, load_gcp_secret_environment
 
 
+def _latest_source_health_safely(ledger: AccountLedger):
+    try:
+        return ledger.conn.execute(
+            """
+            SELECT source, channel, source_status, action
+            FROM source_health_snapshot
+            ORDER BY ts DESC, created_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    except Exception:
+        return None
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Read Toss account state, store raw/normalized snapshots, and print an explanation.",
@@ -69,6 +83,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum pages to read for each order status.",
     )
     parser.add_argument(
+        "--max-order-details",
+        type=int,
+        default=20,
+        help="Maximum /orders/{orderId} detail calls per snapshot.",
+    )
+    parser.add_argument(
         "--report",
         default="runtime/foundation_account_state_report.txt",
         help="Text report output path.",
@@ -107,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ledger = AccountLedger(db_path)
     try:
+        ledger.init_schema(args.schema)
         if args.load_gcp_secrets:
             result = load_gcp_secret_environment(project_id=args.gcp_project_id)
             logger.emit(
@@ -114,7 +135,6 @@ def main(argv: list[str] | None = None) -> int:
                 loaded_env_names=result.loaded_env_names,
                 skipped_env_names=result.skipped_env_names,
             )
-        ledger.init_schema(args.schema)
         ledger.load_instrument_mappings(mappings)
         credentials = load_toss_credentials_from_env()
         adapter = TossReadOnlyAdapter(credentials, ledger)
@@ -123,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
             include_order_details=args.include_order_details,
             buying_power_currency=args.buying_power_currency,
             max_order_pages=args.max_order_pages,
+            max_order_details=args.max_order_details,
         )
         lines = [
             "foundation_snapshot=ok",
@@ -159,14 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         # Keep this intentionally terse; raw API responses are already persisted.
         lines = ["foundation_snapshot=failed", f"reason={exc}"]
-        health = ledger.conn.execute(
-            """
-            SELECT source, channel, source_status, action
-            FROM source_health_snapshot
-            ORDER BY ts DESC, created_at DESC
-            LIMIT 1
-            """
-        ).fetchone()
+        health = _latest_source_health_safely(ledger)
         if health is not None:
             lines.extend(
                 [

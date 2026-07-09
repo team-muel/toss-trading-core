@@ -24,6 +24,21 @@ REQUIRED_RAW_ENDPOINTS = [
     "/api/v1/commissions",
 ]
 
+KNOWN_ORDER_STATUSES = {
+    "PENDING",
+    "PENDING_CANCEL",
+    "PENDING_REPLACE",
+    "PARTIAL_FILLED",
+    "FILLED",
+    "CANCELED",
+    "REJECTED",
+    "CANCEL_REJECTED",
+    "REPLACE_REJECTED",
+    "REPLACED",
+}
+
+REVIEW_ORDER_STATUSES = {"CANCEL_REJECTED", "REPLACE_REJECTED"}
+
 
 @dataclass(frozen=True)
 class FoundationAuditResult:
@@ -195,7 +210,12 @@ def audit_foundation_db(
             )
             commission_rows = _count(
                 conn,
-                "SELECT COUNT(*) FROM commission_snapshot WHERE account_seq = ?",
+                """
+                SELECT COUNT(*)
+                FROM commission_snapshot
+                WHERE account_seq = ?
+                  AND commission_amount IS NOT NULL
+                """,
                 (account_seq,),
             )
             sellable_rows = _count(
@@ -207,6 +227,49 @@ def audit_foundation_db(
                 """,
                 (account_seq,),
             )
+            reconciliation_block_rows = _count(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM broker_reconciliation_log
+                WHERE account_seq = ?
+                  AND status = 'BLOCK'
+                """,
+                (account_seq,),
+            )
+            latest_reconciliation_block = conn.execute(
+                """
+                SELECT item_type, difference, action_required
+                FROM broker_reconciliation_log
+                WHERE account_seq = ?
+                  AND status = 'BLOCK'
+                ORDER BY ts DESC, created_at DESC
+                LIMIT 1
+                """,
+                (account_seq,),
+            ).fetchone()
+            unknown_order_status_rows = conn.execute(
+                """
+                SELECT DISTINCT status
+                FROM broker_order_snapshot
+                WHERE account_seq = ?
+                  AND status NOT IN ({placeholders})
+                ORDER BY status
+                """.format(placeholders=", ".join("?" for _ in KNOWN_ORDER_STATUSES)),
+                (account_seq, *sorted(KNOWN_ORDER_STATUSES)),
+            ).fetchall()
+            review_order_status_rows = conn.execute(
+                """
+                SELECT DISTINCT status
+                FROM broker_order_snapshot
+                WHERE account_seq = ?
+                  AND status IN ({placeholders})
+                ORDER BY status
+                """.format(placeholders=", ".join("?" for _ in REVIEW_ORDER_STATUSES)),
+                (account_seq, *sorted(REVIEW_ORDER_STATUSES)),
+            ).fetchall()
+            unknown_order_statuses = [str(item["status"]) for item in unknown_order_status_rows]
+            review_order_statuses = [str(item["status"]) for item in review_order_status_rows]
             lines.append(f"account[{account_seq}].holdings_count={explanation.holdings_count}")
             lines.append(
                 f"account[{account_seq}].open_orders_count={explanation.open_orders_count}"
@@ -219,6 +282,18 @@ def audit_foundation_db(
             lines.append(f"account[{account_seq}].settlement_rows={settlement_rows}")
             lines.append(f"account[{account_seq}].sellable_quantity_rows={sellable_rows}")
             lines.append(
+                f"account[{account_seq}].reconciliation_block_rows="
+                f"{reconciliation_block_rows}"
+            )
+            lines.append(
+                f"account[{account_seq}].unknown_order_statuses="
+                f"{unknown_order_statuses or ['none']}"
+            )
+            lines.append(
+                f"account[{account_seq}].review_order_statuses="
+                f"{review_order_statuses or ['none']}"
+            )
+            lines.append(
                 f"account[{account_seq}].buying_power_currencies="
                 f"{sorted(explanation.buying_power_by_currency)}"
             )
@@ -229,6 +304,19 @@ def audit_foundation_db(
                 failures.append(f"account[{account_seq}].missing_normalized_buying_power")
             if explanation.blockers:
                 failures.extend(f"account[{account_seq}].{item}" for item in explanation.blockers)
+            if latest_reconciliation_block is not None:
+                failures.append(
+                    f"account[{account_seq}].broker_reconciliation_block:"
+                    f"{latest_reconciliation_block['item_type']}:"
+                    f"{latest_reconciliation_block['difference']}:"
+                    f"{latest_reconciliation_block['action_required']}"
+                )
+            for status in unknown_order_statuses:
+                failures.append(f"account[{account_seq}].unknown_order_status:{status}")
+            for status in review_order_statuses:
+                failures.append(
+                    f"account[{account_seq}].review_order_status_requires_order_detail:{status}"
+                )
             if profile == "v1-funded-read-only":
                 if explanation.holdings_count == 0:
                     failures.append(f"account[{account_seq}].v1_requires_nonzero_holdings")

@@ -130,6 +130,44 @@ class FoundationAuditTest(unittest.TestCase):
             self.assertIn("v1_requires_nonzero_holdings", result.as_text())
             self.assertIn("v1_requires_closed_order", result.as_text())
 
+    def test_v1_audit_ignores_commission_rows_without_amount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "foundation.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.conn.execute(
+                """
+                UPDATE commission_snapshot
+                SET commission_amount = NULL
+                WHERE account_seq = '1'
+                """
+            )
+            ledger.conn.commit()
+            ledger.close()
+
+            result = audit_foundation_db(
+                db_path=db_path,
+                profile="v1-funded-read-only",
+            )
+
+            self.assertFalse(result.ok)
+            self.assertIn("commission_rows=0", result.as_text())
+            self.assertIn("v1_requires_commission_snapshot", result.as_text())
+
     def test_audit_fails_when_latest_toss_health_is_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "foundation.sqlite"
@@ -150,6 +188,130 @@ class FoundationAuditTest(unittest.TestCase):
 
             self.assertFalse(result.ok)
             self.assertIn("latest_source_health_not_ok", result.as_text())
+
+    def test_audit_fails_when_reconciliation_block_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "foundation.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.conn.execute(
+                """
+                INSERT INTO broker_reconciliation_log (
+                  id, ts, account_seq, item_type, broker_value, internal_value,
+                  difference, status, action_required, created_at
+                ) VALUES (
+                  'block-1', '2026-07-09T00:00:00+00:00', '1',
+                  'execution_snapshot', '{}', '{}',
+                  'negative_execution_delta', 'BLOCK',
+                  'inspect_order_detail_before_new_orders',
+                  '2026-07-09T00:00:00+00:00'
+                )
+                """
+            )
+            ledger.conn.commit()
+            ledger.close()
+
+            result = audit_foundation_db(db_path=db_path)
+
+            self.assertFalse(result.ok)
+            self.assertIn("reconciliation_block_rows=1", result.as_text())
+            self.assertIn("broker_reconciliation_block:execution_snapshot", result.as_text())
+            self.assertIn("negative_execution_delta", result.as_text())
+
+    def test_audit_fails_when_unknown_order_status_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "foundation.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.conn.execute(
+                """
+                INSERT INTO broker_order_snapshot (
+                  id, ts, account_seq, broker_order_id, symbol, status, created_at
+                ) VALUES (
+                  'unknown-status-1', '2026-07-09T00:00:00+00:00', '1',
+                  'order-unknown', 'SPY', 'BROKER_NEW_STATUS',
+                  '2026-07-09T00:00:00+00:00'
+                )
+                """
+            )
+            ledger.conn.commit()
+            ledger.close()
+
+            result = audit_foundation_db(db_path=db_path)
+
+            self.assertFalse(result.ok)
+            self.assertIn("unknown_order_statuses=['BROKER_NEW_STATUS']", result.as_text())
+            self.assertIn("unknown_order_status:BROKER_NEW_STATUS", result.as_text())
+
+    def test_audit_fails_when_review_order_status_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "foundation.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.conn.execute(
+                """
+                INSERT INTO broker_order_snapshot (
+                  id, ts, account_seq, broker_order_id, symbol, status, created_at
+                ) VALUES (
+                  'review-status-1', '2026-07-09T00:00:00+00:00', '1',
+                  'order-review', 'SPY', 'CANCEL_REJECTED',
+                  '2026-07-09T00:00:00+00:00'
+                )
+                """
+            )
+            ledger.conn.commit()
+            ledger.close()
+
+            result = audit_foundation_db(db_path=db_path)
+
+            self.assertFalse(result.ok)
+            self.assertIn("review_order_statuses=['CANCEL_REJECTED']", result.as_text())
+            self.assertIn(
+                "review_order_status_requires_order_detail:CANCEL_REJECTED",
+                result.as_text(),
+            )
 
 
 if __name__ == "__main__":

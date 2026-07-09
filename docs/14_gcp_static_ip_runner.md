@@ -32,7 +32,7 @@ The returned IP must match the static external IP registered in Toss.
 
 ```bash
 sudo apt update
-sudo apt install -y git python3 python3-venv python3-pip
+sudo apt install -y git python3 python3-venv python3-pip util-linux
 gcloud --version
 git clone https://github.com/team-muel/toss-trading-core.git
 cd toss-trading-core
@@ -73,9 +73,17 @@ export TOSS_ACCOUNT_SEQ_SECRET="toss-account-seq"
 export TOSS_API_ENV_SECRET="toss-api-env"
 export TOSS_BROKER_BASE_URL_SECRET="toss-broker-base-url"
 export FOUNDATION_LOAD_GCP_SECRETS=1
+export FOUNDATION_MAX_ORDER_DETAILS=1
+export FOUNDATION_BACKUP_DIR="/var/lib/toss-trading/backups"
+export FOUNDATION_LOCK_PATH="/var/lock/toss-trading-foundation.lock"
+# Optional:
+# export FOUNDATION_GCS_BACKUP_URI="gs://your-foundation-backup-bucket/foundation"
 ```
 
 The runner sources `scripts/load_gcp_secrets.sh` when `FOUNDATION_LOAD_GCP_SECRETS=1`.
+The runner defaults to one order detail call per snapshot so v1 can validate the latest manual CLOSED order without scanning old history.
+After a successful audit, the runner writes a SQLite backup locally and uploads it to Cloud Storage when `FOUNDATION_GCS_BACKUP_URI` is set.
+The runner uses `flock` on `FOUNDATION_LOCK_PATH` to prevent overlapping cron or systemd timer runs.
 
 ## Runner Commands
 

@@ -44,6 +44,7 @@ export TOSS_ACCOUNT_SEQ_SECRET="toss-account-seq"
 export TOSS_API_ENV_SECRET="toss-api-env"
 export TOSS_BROKER_BASE_URL_SECRET="toss-broker-base-url"
 export FOUNDATION_LOAD_GCP_SECRETS=1
+export FOUNDATION_MAX_ORDER_DETAILS=1
 ```
 
 The values above are secret names, not secret values.
@@ -100,6 +101,7 @@ Default runtime outputs:
 runtime/foundation_account_state.sqlite
 runtime/foundation_account_state_report.txt
 runtime/foundation_runner.jsonl
+runtime/backups/*.sqlite
 ```
 
 Override paths with:
@@ -108,9 +110,21 @@ Override paths with:
 export FOUNDATION_DB_PATH="/var/lib/toss-trading/foundation_account_state.sqlite"
 export FOUNDATION_REPORT_PATH="/var/log/toss-trading/foundation_account_state_report.txt"
 export FOUNDATION_JSON_LOG_PATH="/var/log/toss-trading/foundation_runner.jsonl"
+export FOUNDATION_BACKUP_DIR="/var/lib/toss-trading/backups"
+export FOUNDATION_LOCK_PATH="/var/lock/toss-trading-foundation.lock"
 ```
 
 For early manual validation, repository-local `runtime/` is acceptable. For persistent VM operation, prefer `/var/lib/toss-trading` for SQLite and `/var/log/toss-trading` for logs.
+
+Optional Cloud Storage backup upload:
+
+```bash
+export FOUNDATION_GCS_BACKUP_URI="gs://your-foundation-backup-bucket/foundation"
+```
+
+If set, the runner uploads the SQLite backup after `foundation_audit` passes. The VM service account needs write access to that bucket.
+
+The runner requires `flock` and takes a non-blocking lock at `FOUNDATION_LOCK_PATH`. If another run is active, it writes `foundation_runner_lock_busy` and exits without starting another API polling run.
 
 ## Git Safety
 

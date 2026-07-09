@@ -57,6 +57,7 @@ class FoundationSnapshotter:
         include_order_details: bool = True,
         buying_power_currency: str = "USD",
         max_order_pages: int = 20,
+        max_order_details: int = 20,
     ) -> FoundationSnapshotResult:
         accounts_result = self.adapter.get_accounts()
         accounts = self.ledger.ingest_accounts(
@@ -96,9 +97,10 @@ class FoundationSnapshotter:
 
         open_orders = 0
         closed_orders = 0
-        order_results = []
+        open_order_results = []
+        closed_order_results = []
         for result in self.adapter.get_all_orders(status="OPEN", max_pages=max_order_pages):
-            order_results.append(result)
+            open_order_results.append(result)
             open_orders += self.ledger.ingest_orders(
                 result.body,
                 account_seq=resolved_account_seq,
@@ -113,7 +115,7 @@ class FoundationSnapshotter:
             execution_delta_rows += deltas
 
         for result in self.adapter.get_all_orders(status="CLOSED", max_pages=max_order_pages):
-            order_results.append(result)
+            closed_order_results.append(result)
             closed_orders += self.ledger.ingest_orders(
                 result.body,
                 account_seq=resolved_account_seq,
@@ -128,9 +130,14 @@ class FoundationSnapshotter:
             execution_delta_rows += deltas
 
         if include_order_details:
+            detail_limit = max(0, max_order_details)
             seen_order_ids: set[str] = set()
-            for result in order_results:
+            for result in [*closed_order_results, *open_order_results]:
+                if order_detail_rows >= detail_limit:
+                    break
                 for order in _orders_from_body(result.body):
+                    if order_detail_rows >= detail_limit:
+                        break
                     order_id = str(order.get("orderId") or order.get("id") or "").strip()
                     if not order_id or order_id in seen_order_ids:
                         continue
