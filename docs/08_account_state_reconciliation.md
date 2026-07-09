@@ -96,3 +96,26 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 - broker 접근 실패 시 `source_health_snapshot`에 `blocked/error`와 운영 action 저장
 - `runtime/foundation_account_state_report.txt`에 holdings count, open orders count, buying power, blockers 출력
 - `blockers=['none']` 또는 명확히 설명 가능한 비거래 blocker만 존재
+
+## Foundation v1 Funded Read-Only Evidence
+
+v1은 빈 계좌 검증이 아닙니다. 실제 현금, 보유종목, 수동 주문, 체결, 수수료, 결제일이 있는 상태에서 다음 명령이 통과해야 합니다.
+
+```powershell
+$env:PYTHONPATH='src'
+python -m toss_trading.cli.foundation_snapshot
+python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
+```
+
+v1 audit은 다음을 요구합니다.
+
+- holdings count가 0보다 큼
+- CLOSED order가 존재
+- cumulative filled quantity, cumulative filled amount, average filled price가 존재
+- commission snapshot이 존재
+- settlement date가 존재
+- 보유종목별 sellable quantity snapshot이 존재
+- buying power가 broker constraint로 저장됨
+- `blockers=['none']`
+
+이 조건이 통과하기 전에는 paper order planner와 전략 신호를 연결하지 않습니다.

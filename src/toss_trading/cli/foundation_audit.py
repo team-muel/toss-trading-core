@@ -52,6 +52,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="data/instrument_master.csv",
         help="Instrument master CSV path.",
     )
+    parser.add_argument(
+        "--profile",
+        choices=["v0-empty-safe", "v1-funded-read-only"],
+        default="v0-empty-safe",
+        help="Validation profile. v1 requires funded/non-empty account evidence.",
+    )
     return parser
 
 
@@ -77,9 +83,10 @@ def audit_foundation_db(
     db_path: str | Path,
     universe_path: str | Path = "data/universe.csv",
     instrument_master_path: str | Path = "data/instrument_master.csv",
+    profile: str = "v0-empty-safe",
 ) -> FoundationAuditResult:
     failures: list[str] = []
-    lines = ["foundation_audit=running"]
+    lines = ["foundation_audit=running", f"profile={profile}"]
 
     universe = load_universe(universe_path)
     mappings = load_instrument_mappings(instrument_master_path)
@@ -132,6 +139,42 @@ def audit_foundation_db(
         for row in account_rows:
             account_seq = str(row["account_seq"])
             explanation = ledger.explain_account_state(account_seq)
+            closed_order_rows = _count(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM broker_order_snapshot
+                WHERE account_seq = ?
+                  AND status NOT IN ('PENDING', 'PENDING_CANCEL', 'PENDING_REPLACE', 'PARTIAL_FILLED')
+                """,
+                (account_seq,),
+            )
+            execution_rows = _count(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM broker_order_snapshot
+                WHERE account_seq = ?
+                  AND cumulative_filled_qty IS NOT NULL
+                  AND cumulative_filled_amount IS NOT NULL
+                  AND average_filled_price IS NOT NULL
+                """,
+                (account_seq,),
+            )
+            settlement_rows = _count(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM broker_order_snapshot
+                WHERE account_seq = ? AND settlement_date IS NOT NULL
+                """,
+                (account_seq,),
+            )
+            commission_rows = _count(
+                conn,
+                "SELECT COUNT(*) FROM commission_snapshot WHERE account_seq = ?",
+                (account_seq,),
+            )
             sellable_rows = _count(
                 conn,
                 """
@@ -145,6 +188,10 @@ def audit_foundation_db(
             lines.append(
                 f"account[{account_seq}].open_orders_count={explanation.open_orders_count}"
             )
+            lines.append(f"account[{account_seq}].closed_order_rows={closed_order_rows}")
+            lines.append(f"account[{account_seq}].execution_rows={execution_rows}")
+            lines.append(f"account[{account_seq}].commission_rows={commission_rows}")
+            lines.append(f"account[{account_seq}].settlement_rows={settlement_rows}")
             lines.append(f"account[{account_seq}].sellable_quantity_rows={sellable_rows}")
             lines.append(
                 f"account[{account_seq}].buying_power_currencies="
@@ -157,6 +204,19 @@ def audit_foundation_db(
                 failures.append(f"account[{account_seq}].missing_normalized_buying_power")
             if explanation.blockers:
                 failures.extend(f"account[{account_seq}].{item}" for item in explanation.blockers)
+            if profile == "v1-funded-read-only":
+                if explanation.holdings_count == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_nonzero_holdings")
+                if closed_order_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_closed_order")
+                if execution_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_execution_summary")
+                if commission_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_commission_snapshot")
+                if settlement_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_settlement_date")
+                if sellable_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_sellable_quantity")
 
         if failures:
             return FoundationAuditResult(
@@ -174,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         db_path=args.db,
         universe_path=args.universe,
         instrument_master_path=args.instrument_master,
+        profile=args.profile,
     )
     print(result.as_text())
     return 0 if result.ok else 1

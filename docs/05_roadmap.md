@@ -71,6 +71,16 @@ $env:PYTHONPATH='src'
 python -m toss_trading.cli.foundation_audit
 ```
 
+Foundation v1 funded read-only 검증은 실제 현금, 보유종목, 수동 주문, 체결, 수수료, 결제일이 있는 계좌 상태에서 아래 명령으로 수행합니다.
+
+```powershell
+$env:PYTHONPATH='src'
+python -m toss_trading.cli.foundation_snapshot
+python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
+```
+
+v1이 통과하기 전에는 paper order planner와 전략 신호를 붙이지 않습니다.
+
 기본 산출물:
 
 - `runtime/foundation_account_state.sqlite`
