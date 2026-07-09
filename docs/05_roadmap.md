@@ -81,6 +81,14 @@ python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
 
 v1이 통과하기 전에는 paper order planner와 전략 신호를 붙이지 않습니다.
 
+GCP 고정 IP VM에서는 Secret Manager와 JSONL 로그를 사용하는 runner로 같은 검증을 반복합니다.
+
+```bash
+export FOUNDATION_LOAD_GCP_SECRETS=1
+export FOUNDATION_AUDIT_PROFILE=v0-empty-safe
+./scripts/run_foundation_gcp.sh
+```
+
 기본 산출물:
 
 - `runtime/foundation_account_state.sqlite`

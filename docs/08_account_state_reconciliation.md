@@ -111,7 +111,9 @@ v1 audit은 다음을 요구합니다.
 
 - holdings count가 0보다 큼
 - CLOSED order가 존재
+- `/api/v1/orders/{orderId}` 상세 응답이 raw로 저장됨
 - cumulative filled quantity, cumulative filled amount, average filled price가 존재
+- cumulative execution snapshot에서 execution delta가 생성됨
 - commission snapshot이 존재
 - settlement date가 존재
 - 보유종목별 sellable quantity snapshot이 존재

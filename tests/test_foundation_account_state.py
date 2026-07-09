@@ -1,4 +1,5 @@
 import unittest
+import json
 from io import BytesIO
 from unittest.mock import patch
 
@@ -64,32 +65,47 @@ class FakeTossAdapter:
         }
         return self._raw("/api/v1/holdings", body)
 
-    def get_orders(self, status=None):
+    def get_all_orders(self, status, **query):
+        return [self.get_orders(status=status, **query)]
+
+    def get_orders(self, status=None, **query):
         body = {
-            "orders": [
-                {
-                    "orderId": f"{status.lower()}-1",
-                    "clientOrderId": f"cid-{status.lower()}",
-                    "symbol": "SPY",
-                    "side": "BUY",
-                    "orderType": "LIMIT",
-                    "timeInForce": "DAY",
-                    "status": "PENDING" if status == "OPEN" else "FILLED",
-                    "quantity": "1",
-                    "price": "500",
-                    "orderedAt": "2026-06-24T09:30:00+09:00",
-                    "execution": {
-                        "filledQuantity": "0" if status == "OPEN" else "1",
-                        "filledAmount": "0" if status == "OPEN" else "500",
-                        "averageFilledPrice": None if status == "OPEN" else "500",
-                        "commission": "0",
-                        "tax": "0",
-                        "settlementDate": None if status == "OPEN" else "2026-06-26",
-                    },
-                }
-            ]
+            "result": {
+                "orders": [self._order(status)],
+                "nextCursor": None,
+                "hasNext": False,
+            }
         }
-        return self._raw(f"/api/v1/orders?status={status}", body)
+        return self._raw(f"/api/v1/orders?status={status}&limit=100", body)
+
+    def get_order(self, order_id):
+        status = "OPEN" if order_id == "open-1" else "CLOSED"
+        return self._raw(
+            f"/api/v1/orders/{order_id}",
+            {"result": self._order(status)},
+        )
+
+    def _order(self, status):
+        return {
+            "orderId": f"{status.lower()}-1",
+            "clientOrderId": f"cid-{status.lower()}",
+            "symbol": "SPY",
+            "side": "BUY",
+            "orderType": "LIMIT",
+            "timeInForce": "DAY",
+            "status": "PENDING" if status == "OPEN" else "FILLED",
+            "quantity": "1",
+            "price": "500",
+            "orderedAt": "2026-06-24T09:30:00+09:00",
+            "execution": {
+                "filledQuantity": "0" if status == "OPEN" else "1",
+                "filledAmount": "0" if status == "OPEN" else "500",
+                "averageFilledPrice": None if status == "OPEN" else "500",
+                "commission": "0",
+                "tax": "0",
+                "settlementDate": None if status == "OPEN" else "2026-06-26",
+            },
+        }
 
     def get_buying_power(self, **query):
         self.last_buying_power_query = query
@@ -143,6 +159,8 @@ class FoundationAccountStateTest(unittest.TestCase):
         universe = load_universe("data/universe.csv")
         mappings = load_instrument_mappings("data/instrument_master.csv")
         validate_universe_mapping(universe, mappings)
+        missing_cik = [item.ticker for item in mappings if not item.cik]
+        self.assertEqual(missing_cik, [])
 
     def test_schema_initialization_is_idempotent(self):
         ledger = AccountLedger()
@@ -172,6 +190,9 @@ class FoundationAccountStateTest(unittest.TestCase):
         self.assertEqual(result.buying_power_rows, 1)
         self.assertEqual(result.commission_rows, 1)
         self.assertEqual(result.sellable_quantity_rows, 1)
+        self.assertEqual(result.order_detail_rows, 2)
+        self.assertEqual(result.execution_snapshot_rows, 2)
+        self.assertEqual(result.execution_delta_rows, 1)
         self.assertEqual(result.explanation.holdings_count, 1)
         self.assertEqual(result.explanation.open_orders_count, 1)
         self.assertEqual(result.explanation.buying_power_by_currency["USD"], 2500.0)
@@ -179,7 +200,26 @@ class FoundationAccountStateTest(unittest.TestCase):
         self.assertEqual(fake.last_buying_power_query, {"currency": "USD"})
 
         raw_count = ledger.conn.execute("SELECT COUNT(*) FROM raw_api_response").fetchone()[0]
-        self.assertEqual(raw_count, 7)
+        self.assertEqual(raw_count, 9)
+
+        detail_count = ledger.conn.execute(
+            "SELECT COUNT(*) FROM raw_api_response WHERE endpoint LIKE '/api/v1/orders/%'"
+        ).fetchone()[0]
+        self.assertEqual(detail_count, 2)
+
+    def test_execution_delta_is_not_duplicated_for_same_cumulative_snapshot(self):
+        ledger = AccountLedger()
+        ledger.init_schema()
+        fake = FakeTossAdapter()
+        fake.ledger = ledger
+
+        first = FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
+        second = FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
+
+        self.assertEqual(first.execution_delta_rows, 1)
+        self.assertEqual(second.execution_delta_rows, 0)
+        delta_count = ledger.conn.execute("SELECT COUNT(*) FROM execution_delta_log").fetchone()[0]
+        self.assertEqual(delta_count, 1)
 
     def test_latest_empty_snapshots_do_not_reuse_stale_holdings_or_open_orders(self):
         ledger = AccountLedger()
@@ -352,6 +392,64 @@ class FoundationAccountStateTest(unittest.TestCase):
             health["action"],
             "register_current_ip_in_toss_openapi_allowlist",
         )
+
+    def test_toss_adapter_follows_order_pagination(self):
+        class FakeResponse:
+            status = 200
+            headers = {}
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(self.body).encode("utf-8")
+
+        calls = []
+
+        def fake_urlopen(request, timeout):
+            calls.append(request.full_url)
+            body = (
+                {
+                    "result": {
+                        "orders": [{"orderId": "closed-1"}],
+                        "hasNext": True,
+                        "nextCursor": "cursor-2",
+                    }
+                }
+                if len(calls) == 1
+                else {
+                    "result": {
+                        "orders": [{"orderId": "closed-2"}],
+                        "hasNext": False,
+                        "nextCursor": None,
+                    }
+                }
+            )
+            return FakeResponse(body)
+
+        adapter = TossReadOnlyAdapter(
+            TossCredentials(
+                client_id="client",
+                client_secret="secret",
+                account_seq="1",
+                base_url="https://example.invalid",
+            )
+        )
+        adapter._access_token = "token"
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            results = adapter.get_all_orders(status="CLOSED", limit=100)
+
+        self.assertEqual(len(results), 2)
+        self.assertIn("status=CLOSED", calls[0])
+        self.assertIn("limit=100", calls[0])
+        self.assertIn("cursor=cursor-2", calls[1])
 
 
 if __name__ == "__main__":

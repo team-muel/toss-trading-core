@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -9,16 +10,45 @@ from typing import Any
 
 from toss_trading.account.ledger import AccountLedger
 from toss_trading.broker.credentials import TossCredentials
+from toss_trading.runtime import TokenBucket
+
+
+def _extract_toss_error(body: Any) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        return {}
+    error = body.get("error")
+    if isinstance(error, dict):
+        return {
+            "code": error.get("code") or body.get("code"),
+            "message": error.get("message") or body.get("message"),
+            "request_id": error.get("requestId") or error.get("request_id") or body.get("requestId"),
+            "field": error.get("data", {}).get("field") if isinstance(error.get("data"), dict) else None,
+            "description": error.get("error_description") or body.get("error_description"),
+        }
+    return {
+        "code": body.get("error") or body.get("code"),
+        "message": body.get("message"),
+        "request_id": body.get("requestId") or body.get("request_id"),
+        "field": body.get("field"),
+        "description": body.get("error_description"),
+    }
+
+
+def _header(headers: dict[str, str], name: str) -> str | None:
+    target = name.lower()
+    for key, value in headers.items():
+        if key.lower() == target:
+            return value
+    return None
 
 
 def _health_action(status_code: int, body: Any) -> str | None:
     if status_code < 400:
         return None
-    error_text = ""
-    if isinstance(body, dict):
-        error_text = " ".join(
-            str(body.get(key, "")) for key in ("error", "error_description", "message")
-        ).lower()
+    parsed = _extract_toss_error(body)
+    error_text = " ".join(
+        str(parsed.get(key, "")) for key in ("code", "message", "description", "field")
+    ).lower()
     if status_code == 403 and "ip address not allowed" in error_text:
         return "register_current_ip_in_toss_openapi_allowlist"
     if status_code == 401:
@@ -26,6 +56,20 @@ def _health_action(status_code: int, body: Any) -> str | None:
     if status_code == 429:
         return "backoff_and_check_toss_rate_limit"
     return "inspect_raw_api_response"
+
+
+class TossApiError(RuntimeError):
+    def __init__(self, *, endpoint: str, status_code: int, body: Any) -> None:
+        self.endpoint = endpoint
+        self.status_code = status_code
+        self.error = _extract_toss_error(body)
+        detail = ", ".join(
+            f"{key}={value}"
+            for key, value in self.error.items()
+            if value not in (None, "")
+        )
+        suffix = f": {detail}" if detail else ""
+        super().__init__(f"Toss API error {status_code} on {endpoint}{suffix}")
 
 
 def _redact_sensitive_response(value: Any) -> Any:
@@ -53,10 +97,19 @@ class TossApiResult:
 class TossReadOnlyAdapter:
     """Read-only Toss Open API adapter for foundation account-state ingestion."""
 
-    def __init__(self, credentials: TossCredentials, ledger: AccountLedger | None = None) -> None:
+    def __init__(
+        self,
+        credentials: TossCredentials,
+        ledger: AccountLedger | None = None,
+        rate_limiter: TokenBucket | None = None,
+    ) -> None:
         self.credentials = credentials
         self.ledger = ledger
         self._access_token: str | None = None
+        self.rate_limiter = rate_limiter or TokenBucket(
+            capacity=float(os.environ.get("TOSS_RATE_LIMIT_CAPACITY", "20")),
+            refill_per_second=float(os.environ.get("TOSS_RATE_LIMIT_REFILL_PER_SECOND", "5")),
+        )
 
     def refresh_token(self) -> TossApiResult:
         endpoint = "/oauth2/token"
@@ -85,11 +138,67 @@ class TossReadOnlyAdapter:
     def get_holdings(self) -> TossApiResult:
         return self._get("/api/v1/holdings", account_bound=True)
 
-    def get_orders(self, status: str | None = None) -> TossApiResult:
+    def get_orders(
+        self,
+        status: str | None = None,
+        *,
+        symbol: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        cursor: str | None = None,
+        limit: int | None = 100,
+    ) -> TossApiResult:
         endpoint = "/api/v1/orders"
+        query: dict[str, str | int] = {}
         if status:
-            endpoint = f"{endpoint}?{urllib.parse.urlencode({'status': status})}"
+            query["status"] = status
+        if symbol:
+            query["symbol"] = symbol
+        if from_date:
+            query["from"] = from_date
+        if to_date:
+            query["to"] = to_date
+        if cursor:
+            query["cursor"] = cursor
+        if limit:
+            query["limit"] = limit
+        if query:
+            endpoint = f"{endpoint}?{urllib.parse.urlencode(query)}"
         return self._get(endpoint, account_bound=True)
+
+    def get_all_orders(
+        self,
+        status: str,
+        *,
+        symbol: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        limit: int = 100,
+        max_pages: int = 20,
+    ) -> list[TossApiResult]:
+        results: list[TossApiResult] = []
+        cursor: str | None = None
+        for _ in range(max_pages):
+            result = self.get_orders(
+                status=status,
+                symbol=symbol,
+                from_date=from_date,
+                to_date=to_date,
+                cursor=cursor,
+                limit=limit,
+            )
+            results.append(result)
+            page = result.body.get("result") if isinstance(result.body, dict) else {}
+            if not isinstance(page, dict) or not page.get("hasNext"):
+                break
+            cursor = page.get("nextCursor")
+            if not cursor:
+                break
+        return results
+
+    def get_order(self, order_id: str) -> TossApiResult:
+        encoded = urllib.parse.quote(order_id, safe="")
+        return self._get(f"/api/v1/orders/{encoded}", account_bound=True)
 
     def get_buying_power(self, **query: str) -> TossApiResult:
         endpoint = "/api/v1/buying-power"
@@ -133,6 +242,7 @@ class TossReadOnlyAdapter:
         health_channel = f"rest:{endpoint.split('?', 1)[0]}"
         status_code = 0
         response_headers: dict[str, str] = {}
+        self.rate_limiter.acquire()
         try:
             with urllib.request.urlopen(request, timeout=15) as response:
                 status_code = response.status
@@ -151,7 +261,10 @@ class TossReadOnlyAdapter:
                     action=f"network_error:{exc.reason}",
                 )
             raise RuntimeError(f"Toss API network error on {endpoint}: {exc.reason}") from exc
-        body = json.loads(raw) if raw else {}
+        try:
+            body = json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            body = {"non_json_response": raw[:500]}
         request_headers = {key.lower(): value for key, value in request.header_items()}
         account_seq = request_headers.get("x-tossinvest-account")
         raw_response_id = ""
@@ -165,7 +278,7 @@ class TossReadOnlyAdapter:
                 body=stored_body,
                 account_seq=account_seq,
                 status_code=status_code,
-                request_id=response_headers.get("X-Request-Id"),
+                request_id=_header(response_headers, "X-Request-Id"),
                 request_payload=request_payload,
                 headers=response_headers,
             )
@@ -176,8 +289,9 @@ class TossReadOnlyAdapter:
                 action=_health_action(status_code, body),
                 last_success_at=None if status_code >= 400 else None,
             )
+        self.rate_limiter.update_from_headers(response_headers)
         if status_code >= 400:
-            raise RuntimeError(f"Toss API error {status_code} on {endpoint}: {body}")
+            raise TossApiError(endpoint=endpoint, status_code=status_code, body=body)
         return TossApiResult(
             endpoint=endpoint,
             status_code=status_code,

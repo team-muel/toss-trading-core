@@ -25,10 +25,19 @@ def _as_list(payload: Any, *keys: str) -> list[dict[str, Any]]:
     if isinstance(payload, list):
         return [item for item in payload if isinstance(item, dict)]
     if isinstance(payload, dict):
+        if any(key in payload for key in ("orderId", "id", "broker_order_id")):
+            return [payload]
         for key in keys:
             value = payload.get(key)
             if isinstance(value, list):
                 return [item for item in value if isinstance(item, dict)]
+        result = payload.get("result")
+        if isinstance(result, dict):
+            nested = _as_list(result, *keys)
+            if nested:
+                return nested
+        if isinstance(result, list):
+            return [item for item in result if isinstance(item, dict)]
         for value in payload.values():
             if isinstance(value, list):
                 return [item for item in value if isinstance(item, dict)]
@@ -49,6 +58,15 @@ def _float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _float_or_zero(value: Any) -> float:
+    return _float(value) or 0.0
+
+
+def _endpoint_like_pattern(endpoint: str) -> str:
+    separator = "&" if "?" in endpoint else "?"
+    return f"{endpoint}{separator}%"
 
 
 def _mask_account_no(value: Any) -> str | None:
@@ -248,7 +266,7 @@ class AccountLedger:
               AND (status_code IS NULL OR status_code < 400)
               AND (? IS NULL OR account_seq = ?)
             """,
-            (endpoint, f"{endpoint}?%", account_seq, account_seq),
+            (endpoint, _endpoint_like_pattern(endpoint), account_seq, account_seq),
         ).fetchone()
         return row["ts"] if row is not None else None
 
@@ -422,6 +440,151 @@ class AccountLedger:
         self.conn.commit()
         return len(rows)
 
+    def ingest_execution_snapshots(
+        self,
+        body: Any,
+        *,
+        account_seq: str,
+        raw_ref: str,
+        ts: str | None = None,
+    ) -> tuple[int, int]:
+        now = ts or utc_now()
+        orders = _as_list(body, "orders", "results", "data")
+        inserted_snapshots = 0
+        inserted_deltas = 0
+        for item in orders:
+            broker_order_id = str(_get(item, "orderId", "id", default="")).strip()
+            if not broker_order_id:
+                continue
+            execution = item.get("execution") if isinstance(item.get("execution"), dict) else {}
+            filled_qty = _float(_get(execution, "filledQuantity"))
+            filled_amount = _float(_get(execution, "filledAmount"))
+            if filled_qty is None or filled_amount is None:
+                continue
+            order_id = broker_order_id
+            previous = self.conn.execute(
+                """
+                SELECT *
+                FROM execution_snapshot_log
+                WHERE account_seq = ? AND order_id = ?
+                ORDER BY snapshot_seq DESC
+                LIMIT 1
+                """,
+                (account_seq, order_id),
+            ).fetchone()
+            cumulative_commission = _float_or_zero(_get(execution, "commission"))
+            cumulative_tax = _float_or_zero(_get(execution, "tax"))
+            order_status = str(_get(item, "status", default="UNKNOWN"))
+            average_filled_price = _float(_get(execution, "averageFilledPrice"))
+            settlement_date = _get(execution, "settlementDate")
+
+            if previous is not None:
+                unchanged = (
+                    float(previous["cumulative_filled_qty"]) == filled_qty
+                    and float(previous["cumulative_filled_amount"]) == filled_amount
+                    and float(previous["cumulative_commission"] or 0) == cumulative_commission
+                    and float(previous["cumulative_tax"] or 0) == cumulative_tax
+                    and previous["order_status"] == order_status
+                    and previous["settlement_date"] == settlement_date
+                )
+                if unchanged:
+                    continue
+                delta_qty = filled_qty - float(previous["cumulative_filled_qty"])
+                delta_amount = filled_amount - float(previous["cumulative_filled_amount"])
+                delta_commission = cumulative_commission - float(
+                    previous["cumulative_commission"] or 0
+                )
+                delta_tax = cumulative_tax - float(previous["cumulative_tax"] or 0)
+                if min(delta_qty, delta_amount, delta_commission, delta_tax) < 0:
+                    self.conn.execute(
+                        """
+                        INSERT INTO broker_reconciliation_log (
+                          id, ts, account_seq, item_type, broker_value, internal_value,
+                          difference, status, action_required, created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            str(uuid.uuid4()),
+                            now,
+                            account_seq,
+                            "execution_snapshot",
+                            json.dumps(item, ensure_ascii=False, sort_keys=True),
+                            json.dumps(dict(previous), ensure_ascii=False, sort_keys=True),
+                            "negative_execution_delta",
+                            "BLOCK",
+                            "inspect_order_detail_before_new_orders",
+                            now,
+                        ),
+                    )
+                    self.conn.commit()
+                    continue
+                snapshot_seq = int(previous["snapshot_seq"]) + 1
+                from_snapshot_id = previous["id"]
+            else:
+                delta_qty = filled_qty
+                delta_amount = filled_amount
+                delta_commission = cumulative_commission
+                delta_tax = cumulative_tax
+                snapshot_seq = 1
+                from_snapshot_id = None
+
+            snapshot_id = str(uuid.uuid4())
+            self.conn.execute(
+                """
+                INSERT INTO execution_snapshot_log (
+                  id, ts, account_seq, order_id, broker_order_id, snapshot_seq,
+                  order_status, cumulative_filled_qty, cumulative_filled_amount,
+                  average_filled_price, cumulative_commission, cumulative_tax,
+                  settlement_date, raw_snapshot_ref, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    now,
+                    account_seq,
+                    order_id,
+                    broker_order_id,
+                    snapshot_seq,
+                    order_status,
+                    filled_qty,
+                    filled_amount,
+                    average_filled_price,
+                    cumulative_commission,
+                    cumulative_tax,
+                    settlement_date,
+                    raw_ref,
+                    now,
+                ),
+            )
+            inserted_snapshots += 1
+            if delta_qty or delta_amount or delta_commission or delta_tax:
+                self.conn.execute(
+                    """
+                    INSERT INTO execution_delta_log (
+                      id, ts, account_seq, order_id, broker_order_id, from_snapshot_id,
+                      to_snapshot_id, delta_filled_qty, delta_filled_amount,
+                      delta_commission, delta_tax, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid.uuid4()),
+                        now,
+                        account_seq,
+                        order_id,
+                        broker_order_id,
+                        from_snapshot_id,
+                        snapshot_id,
+                        delta_qty,
+                        delta_amount,
+                        delta_commission,
+                        delta_tax,
+                        now,
+                    ),
+                )
+                inserted_deltas += 1
+        self.conn.commit()
+        return inserted_snapshots, inserted_deltas
+
     def ingest_sellable_quantity(
         self,
         body: Any,
@@ -562,7 +725,7 @@ class AccountLedger:
         ).fetchall()
         open_orders = self.conn.execute(
             """
-            SELECT COUNT(*) AS count
+            SELECT COUNT(DISTINCT current.broker_order_id) AS count
             FROM broker_order_snapshot current
             WHERE current.account_seq = ?
               AND (? IS NULL OR current.ts >= ?)

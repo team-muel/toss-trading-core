@@ -11,6 +11,7 @@ from toss_trading.data import (
     load_universe,
     validate_universe_mapping,
 )
+from toss_trading.runtime import JsonlLogger, load_gcp_secret_environment
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -55,9 +56,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Currency query value for Toss buying-power. Defaults to USD.",
     )
     parser.add_argument(
+        "--skip-order-details",
+        action="store_false",
+        dest="include_order_details",
+        default=True,
+        help="Skip /orders/{orderId} detail calls.",
+    )
+    parser.add_argument(
+        "--max-order-pages",
+        type=int,
+        default=20,
+        help="Maximum pages to read for each order status.",
+    )
+    parser.add_argument(
         "--report",
         default="runtime/foundation_account_state_report.txt",
         help="Text report output path.",
+    )
+    parser.add_argument(
+        "--load-gcp-secrets",
+        action="store_true",
+        help="Load Toss environment variables from GCP Secret Manager before running.",
+    )
+    parser.add_argument(
+        "--gcp-project-id",
+        default=None,
+        help="GCP project id for Secret Manager. Defaults to GCP_PROJECT_ID.",
+    )
+    parser.add_argument(
+        "--json-log",
+        default=None,
+        help="Optional JSONL log output path.",
     )
     return parser
 
@@ -73,16 +102,27 @@ def main(argv: list[str] | None = None) -> int:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     report_path = Path(args.report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
+    logger = JsonlLogger(args.json_log)
+    logger.emit("foundation_snapshot_start", db=str(db_path), report=str(report_path))
 
     ledger = AccountLedger(db_path)
     try:
+        if args.load_gcp_secrets:
+            result = load_gcp_secret_environment(project_id=args.gcp_project_id)
+            logger.emit(
+                "gcp_secret_environment_loaded",
+                loaded_env_names=result.loaded_env_names,
+                skipped_env_names=result.skipped_env_names,
+            )
         ledger.init_schema(args.schema)
         ledger.load_instrument_mappings(mappings)
         credentials = load_toss_credentials_from_env()
         adapter = TossReadOnlyAdapter(credentials, ledger)
         result = FoundationSnapshotter(adapter, ledger).snapshot(
             include_sellable_quantity=args.include_sellable_quantity,
+            include_order_details=args.include_order_details,
             buying_power_currency=args.buying_power_currency,
+            max_order_pages=args.max_order_pages,
         )
         lines = [
             "foundation_snapshot=ok",
@@ -93,12 +133,28 @@ def main(argv: list[str] | None = None) -> int:
             f"buying_power_rows={result.buying_power_rows}",
             f"commission_rows={result.commission_rows}",
             f"sellable_quantity_rows={result.sellable_quantity_rows}",
+            f"order_detail_rows={result.order_detail_rows}",
+            f"execution_snapshot_rows={result.execution_snapshot_rows}",
+            f"execution_delta_rows={result.execution_delta_rows}",
             "",
             result.explanation.as_text(),
         ]
         report = "\n".join(lines)
         report_path.write_text(report + "\n", encoding="utf-8")
         print(report)
+        logger.emit(
+            "foundation_snapshot_ok",
+            accounts_rows=result.accounts,
+            holdings_rows=result.holdings,
+            open_order_rows=result.open_orders,
+            closed_order_rows=result.closed_orders,
+            buying_power_rows=result.buying_power_rows,
+            commission_rows=result.commission_rows,
+            sellable_quantity_rows=result.sellable_quantity_rows,
+            order_detail_rows=result.order_detail_rows,
+            execution_snapshot_rows=result.execution_snapshot_rows,
+            execution_delta_rows=result.execution_delta_rows,
+        )
         return 0
     except Exception as exc:
         # Keep this intentionally terse; raw API responses are already persisted.
@@ -121,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
         message = "\n".join(lines)
         report_path.write_text(message + "\n", encoding="utf-8")
         print(message)
+        logger.emit("foundation_snapshot_failed", reason=str(exc))
         return 1
     finally:
         ledger.close()

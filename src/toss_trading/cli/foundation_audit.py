@@ -11,6 +11,7 @@ from toss_trading.data import (
     load_universe,
     validate_universe_mapping,
 )
+from toss_trading.runtime import JsonlLogger
 
 
 REQUIRED_RAW_ENDPOINTS = [
@@ -58,6 +59,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="v0-empty-safe",
         help="Validation profile. v1 requires funded/non-empty account evidence.",
     )
+    parser.add_argument(
+        "--json-log",
+        default=None,
+        help="Optional JSONL log output path.",
+    )
     return parser
 
 
@@ -66,6 +72,7 @@ def _count(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ()
 
 
 def _raw_success_count(conn: sqlite3.Connection, endpoint: str) -> int:
+    separator = "&" if "?" in endpoint else "?"
     return _count(
         conn,
         """
@@ -74,7 +81,7 @@ def _raw_success_count(conn: sqlite3.Connection, endpoint: str) -> int:
         WHERE (endpoint = ? OR endpoint LIKE ?)
           AND (status_code IS NULL OR status_code < 400)
         """,
-        (endpoint, f"{endpoint}?%"),
+        (endpoint, f"{endpoint}{separator}%"),
     )
 
 
@@ -149,16 +156,32 @@ def audit_foundation_db(
                 """,
                 (account_seq,),
             )
+            order_detail_raw_rows = _count(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM raw_api_response
+                WHERE account_seq = ?
+                  AND endpoint LIKE '/api/v1/orders/%'
+                  AND (status_code IS NULL OR status_code < 400)
+                """,
+                (account_seq,),
+            )
             execution_rows = _count(
                 conn,
                 """
                 SELECT COUNT(*)
-                FROM broker_order_snapshot
+                FROM execution_snapshot_log
                 WHERE account_seq = ?
                   AND cumulative_filled_qty IS NOT NULL
                   AND cumulative_filled_amount IS NOT NULL
                   AND average_filled_price IS NOT NULL
                 """,
+                (account_seq,),
+            )
+            execution_delta_rows = _count(
+                conn,
+                "SELECT COUNT(*) FROM execution_delta_log WHERE account_seq = ?",
                 (account_seq,),
             )
             settlement_rows = _count(
@@ -189,7 +212,9 @@ def audit_foundation_db(
                 f"account[{account_seq}].open_orders_count={explanation.open_orders_count}"
             )
             lines.append(f"account[{account_seq}].closed_order_rows={closed_order_rows}")
+            lines.append(f"account[{account_seq}].order_detail_raw_rows={order_detail_raw_rows}")
             lines.append(f"account[{account_seq}].execution_rows={execution_rows}")
+            lines.append(f"account[{account_seq}].execution_delta_rows={execution_delta_rows}")
             lines.append(f"account[{account_seq}].commission_rows={commission_rows}")
             lines.append(f"account[{account_seq}].settlement_rows={settlement_rows}")
             lines.append(f"account[{account_seq}].sellable_quantity_rows={sellable_rows}")
@@ -209,8 +234,12 @@ def audit_foundation_db(
                     failures.append(f"account[{account_seq}].v1_requires_nonzero_holdings")
                 if closed_order_rows == 0:
                     failures.append(f"account[{account_seq}].v1_requires_closed_order")
+                if order_detail_raw_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_order_detail_raw")
                 if execution_rows == 0:
                     failures.append(f"account[{account_seq}].v1_requires_execution_summary")
+                if execution_delta_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_execution_delta")
                 if commission_rows == 0:
                     failures.append(f"account[{account_seq}].v1_requires_commission_snapshot")
                 if settlement_rows == 0:
@@ -230,6 +259,8 @@ def audit_foundation_db(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    logger = JsonlLogger(args.json_log)
+    logger.emit("foundation_audit_start", db=args.db, profile=args.profile)
     result = audit_foundation_db(
         db_path=args.db,
         universe_path=args.universe,
@@ -237,6 +268,11 @@ def main(argv: list[str] | None = None) -> int:
         profile=args.profile,
     )
     print(result.as_text())
+    logger.emit(
+        "foundation_audit_ok" if result.ok else "foundation_audit_failed",
+        profile=args.profile,
+        lines=result.lines,
+    )
     return 0 if result.ok else 1
 
 

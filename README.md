@@ -40,6 +40,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/11_rate_limit_token_bucket.md` | Toss API group별 rate limit 설계 |
 | `docs/12_external_data_feeds.md` | Massive, FRED, SEC, issuer parser 등 외부 연속 데이터 피드 정책 |
 | `docs/13_foundation_v1_funded_read_only_validation.md` | 실제 현금, 보유, 수동 주문, 체결, 수수료, 결제일이 있는 계좌 read-only 검증 |
+| `docs/14_gcp_static_ip_runner.md` | GCP 고정 IP VM, Secret Manager, JSONL runner 운영 절차 |
 
 ## Repository Layout
 
@@ -86,4 +87,12 @@ Foundation v1 funded read-only 검증:
 $env:PYTHONPATH='src'
 python -m toss_trading.cli.foundation_snapshot
 python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
+```
+
+GCP VM runner:
+
+```bash
+export FOUNDATION_LOAD_GCP_SECRETS=1
+export FOUNDATION_AUDIT_PROFILE=v0-empty-safe
+./scripts/run_foundation_gcp.sh
 ```

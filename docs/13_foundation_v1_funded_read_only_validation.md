@@ -55,7 +55,9 @@ The v1 audit must prove:
 
 - at least one holding is normalized
 - at least one CLOSED order is normalized
+- at least one `/api/v1/orders/{orderId}` detail raw response exists
 - at least one execution summary has cumulative filled quantity, cumulative filled amount, and average filled price
+- at least one execution delta is generated from cumulative execution snapshots
 - at least one commission snapshot exists
 - at least one settlement date exists
 - sellable quantity is stored for held symbols
@@ -71,6 +73,8 @@ If any v1 requirement fails:
 - keep the system read-only
 - inspect `raw_api_response` for the Toss response shape
 - update normalization only after confirming the raw field mapping
+- confirm CLOSED order pagination and order detail calls were saved in `raw_api_response`
+- confirm repeated snapshots do not create duplicate execution deltas
 - rerun `foundation_snapshot`
 - rerun `foundation_audit --profile v1-funded-read-only`
 
