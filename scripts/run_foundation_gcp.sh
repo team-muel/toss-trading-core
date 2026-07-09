@@ -20,12 +20,9 @@ fi
 
 export PYTHONPATH="${PYTHONPATH:-src}"
 
-SECRET_ARGS=()
 if [[ "${FOUNDATION_LOAD_GCP_SECRETS:-0}" == "1" ]]; then
-  SECRET_ARGS+=(--load-gcp-secrets)
-  if [[ -n "${GCP_PROJECT_ID:-}" ]]; then
-    SECRET_ARGS+=(--gcp-project-id "${GCP_PROJECT_ID}")
-  fi
+  # shellcheck disable=SC1091
+  source "scripts/load_gcp_secrets.sh"
 fi
 
 echo "{\"event\":\"foundation_runner_start\",\"profile\":\"${PROFILE}\",\"db\":\"${DB_PATH}\"}" >> "${JSON_LOG_PATH}"
@@ -34,8 +31,7 @@ echo "{\"event\":\"foundation_runner_start\",\"profile\":\"${PROFILE}\",\"db\":\
   --db "${DB_PATH}" \
   --report "${REPORT_PATH}" \
   --buying-power-currency "${BUYING_POWER_CURRENCY}" \
-  --json-log "${JSON_LOG_PATH}" \
-  "${SECRET_ARGS[@]}"
+  --json-log "${JSON_LOG_PATH}"
 
 "${PYTHON_BIN}" -m toss_trading.cli.foundation_audit \
   --db "${DB_PATH}" \

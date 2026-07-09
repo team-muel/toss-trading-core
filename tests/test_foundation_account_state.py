@@ -345,6 +345,62 @@ class FoundationAccountStateTest(unittest.TestCase):
         self.assertEqual(health["source_status"], "ok")
         self.assertIsNotNone(health["last_success_at"])
 
+    def test_toss_adapter_redacts_account_identifiers_in_raw_body(self):
+        class FakeResponse:
+            status = 200
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "accounts": [
+                            {
+                                "accountSeq": "1",
+                                "accountNo": "1234567890",
+                                "accountNumber": "9876543210",
+                                "account_no": "555544443333",
+                            }
+                        ]
+                    }
+                ).encode("utf-8")
+
+        ledger = AccountLedger()
+        ledger.init_schema()
+        adapter = TossReadOnlyAdapter(
+            TossCredentials(
+                client_id="client",
+                client_secret="secret",
+                account_seq=None,
+                base_url="https://example.invalid",
+            ),
+            ledger,
+        )
+        request = urllib.request.Request(
+            "https://example.invalid/api/v1/accounts",
+            method="GET",
+        )
+
+        with patch("urllib.request.urlopen", return_value=FakeResponse()):
+            result = adapter._send(request, "/api/v1/accounts")
+
+        body = ledger.conn.execute(
+            "SELECT body_json FROM raw_api_response WHERE id = ?",
+            (result.raw_response_id,),
+        ).fetchone()["body_json"]
+
+        self.assertNotIn("1234567890", body)
+        self.assertNotIn("9876543210", body)
+        self.assertNotIn("555544443333", body)
+        self.assertNotIn('"accountSeq": "1"', body)
+        self.assertIn("******7890", body)
+        self.assertIn("***REDACTED***", body)
+
     def test_toss_adapter_records_ip_allowlist_failure_as_source_health(self):
         ledger = AccountLedger()
         ledger.init_schema()
@@ -377,12 +433,13 @@ class FoundationAccountStateTest(unittest.TestCase):
 
         raw = ledger.conn.execute(
             """
-            SELECT status_code, body_json
+            SELECT status_code, channel, body_json
             FROM raw_api_response
             WHERE endpoint = '/oauth2/token'
             """
         ).fetchone()
         self.assertEqual(raw["status_code"], 403)
+        self.assertEqual(raw["channel"], "rest:/oauth2/token")
         self.assertIn("IP address not allowed", raw["body_json"])
 
         health = ledger.latest_source_health("toss", "rest:/oauth2/token")
@@ -392,6 +449,95 @@ class FoundationAccountStateTest(unittest.TestCase):
             health["action"],
             "register_current_ip_in_toss_openapi_allowlist",
         )
+
+    def test_toss_adapter_stores_non_json_error_body_before_raising(self):
+        ledger = AccountLedger()
+        ledger.init_schema()
+        adapter = TossReadOnlyAdapter(
+            TossCredentials(
+                client_id="client",
+                client_secret="secret",
+                account_seq=None,
+                base_url="https://example.invalid",
+            ),
+            ledger,
+        )
+        request = urllib.request.Request(
+            "https://example.invalid/api/v1/holdings",
+            method="GET",
+        )
+        failure = urllib.error.HTTPError(
+            request.full_url,
+            503,
+            "Service Unavailable",
+            {"Content-Type": "text/html"},
+            BytesIO(b"<html><body>temporarily unavailable\xff</body></html>"),
+        )
+
+        with patch("urllib.request.urlopen", side_effect=failure):
+            with self.assertRaisesRegex(RuntimeError, "Toss API error 503"):
+                adapter._send(request, "/api/v1/holdings")
+
+        raw = ledger.conn.execute(
+            """
+            SELECT status_code, channel, body_json
+            FROM raw_api_response
+            WHERE endpoint = '/api/v1/holdings'
+            """
+        ).fetchone()
+        self.assertEqual(raw["status_code"], 503)
+        self.assertEqual(raw["channel"], "rest:/api/v1/holdings")
+        self.assertIn("non_json_response", raw["body_json"])
+        self.assertIn("temporarily unavailable", raw["body_json"])
+
+    def test_toss_adapter_uses_error_body_request_id_when_header_is_absent(self):
+        ledger = AccountLedger()
+        ledger.init_schema()
+        adapter = TossReadOnlyAdapter(
+            TossCredentials(
+                client_id="client",
+                client_secret="secret",
+                account_seq=None,
+                base_url="https://example.invalid",
+            ),
+            ledger,
+        )
+        request = urllib.request.Request(
+            "https://example.invalid/api/v1/orders",
+            method="GET",
+        )
+        failure = urllib.error.HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            {},
+            BytesIO(
+                json.dumps(
+                    {
+                        "error": {
+                            "requestId": "body-req-400",
+                            "code": "BAD_REQUEST",
+                            "message": "bad request",
+                            "data": {"field": "cursor"},
+                        }
+                    }
+                ).encode("utf-8")
+            ),
+        )
+
+        with patch("urllib.request.urlopen", side_effect=failure):
+            with self.assertRaisesRegex(RuntimeError, "request_id=body-req-400"):
+                adapter._send(request, "/api/v1/orders")
+
+        raw = ledger.conn.execute(
+            """
+            SELECT request_id, channel
+            FROM raw_api_response
+            WHERE endpoint = '/api/v1/orders'
+            """
+        ).fetchone()
+        self.assertEqual(raw["request_id"], "body-req-400")
+        self.assertEqual(raw["channel"], "rest:/api/v1/orders")
 
     def test_toss_adapter_follows_order_pagination(self):
         class FakeResponse:

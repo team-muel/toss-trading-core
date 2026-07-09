@@ -13,6 +13,18 @@ from toss_trading.broker.credentials import TossCredentials
 from toss_trading.runtime import TokenBucket
 
 
+SECRET_RESPONSE_KEYS = {"access_token", "refresh_token", "id_token"}
+ACCOUNT_NUMBER_KEYS = {"accountno", "accountnumber", "account_no"}
+ACCOUNT_IDENTIFIER_KEYS = {
+    "accountseq",
+    "account_seq",
+    "accountid",
+    "account_id",
+    "accountidentifier",
+    "account_identifier",
+}
+
+
 def _extract_toss_error(body: Any) -> dict[str, Any]:
     if not isinstance(body, dict):
         return {}
@@ -76,7 +88,12 @@ def _redact_sensitive_response(value: Any) -> Any:
     if isinstance(value, dict):
         redacted = {}
         for key, item in value.items():
-            if key in {"access_token", "refresh_token", "id_token"}:
+            normalized_key = key.lower()
+            if normalized_key in SECRET_RESPONSE_KEYS:
+                redacted[key] = "***REDACTED***"
+            elif normalized_key in ACCOUNT_NUMBER_KEYS:
+                redacted[key] = _redact_account_number(item)
+            elif normalized_key in ACCOUNT_IDENTIFIER_KEYS:
                 redacted[key] = "***REDACTED***"
             else:
                 redacted[key] = _redact_sensitive_response(item)
@@ -84,6 +101,30 @@ def _redact_sensitive_response(value: Any) -> Any:
     if isinstance(value, list):
         return [_redact_sensitive_response(item) for item in value]
     return value
+
+
+def _redact_account_number(value: Any) -> str:
+    text = str(value)
+    if len(text) <= 4:
+        return "****"
+    return f"{'*' * (len(text) - 4)}{text[-4:]}"
+
+
+def _decode_response(raw: bytes) -> str:
+    return raw.decode("utf-8", errors="replace")
+
+
+def _parse_response_body(raw: str) -> Any:
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"non_json_response": raw[:500]}
+
+
+def _response_request_id(headers: dict[str, str], body: Any) -> str | None:
+    return _header(headers, "X-Request-Id") or _extract_toss_error(body).get("request_id")
 
 
 @dataclass(frozen=True)
@@ -247,11 +288,11 @@ class TossReadOnlyAdapter:
             with urllib.request.urlopen(request, timeout=15) as response:
                 status_code = response.status
                 response_headers = dict(response.headers.items())
-                raw = response.read().decode("utf-8")
+                raw = _decode_response(response.read())
         except urllib.error.HTTPError as exc:
             status_code = exc.code
             response_headers = dict(exc.headers.items())
-            raw = exc.read().decode("utf-8")
+            raw = _decode_response(exc.read())
         except urllib.error.URLError as exc:
             if self.ledger is not None:
                 self.ledger.record_source_health(
@@ -261,10 +302,7 @@ class TossReadOnlyAdapter:
                     action=f"network_error:{exc.reason}",
                 )
             raise RuntimeError(f"Toss API network error on {endpoint}: {exc.reason}") from exc
-        try:
-            body = json.loads(raw) if raw else {}
-        except json.JSONDecodeError:
-            body = {"non_json_response": raw[:500]}
+        body = _parse_response_body(raw)
         request_headers = {key.lower(): value for key, value in request.header_items()}
         account_seq = request_headers.get("x-tossinvest-account")
         raw_response_id = ""
@@ -278,9 +316,10 @@ class TossReadOnlyAdapter:
                 body=stored_body,
                 account_seq=account_seq,
                 status_code=status_code,
-                request_id=_header(response_headers, "X-Request-Id"),
+                request_id=_response_request_id(response_headers, body),
                 request_payload=request_payload,
                 headers=response_headers,
+                channel=health_channel,
             )
             self.ledger.record_source_health(
                 source="toss",

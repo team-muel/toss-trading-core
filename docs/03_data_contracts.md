@@ -73,7 +73,7 @@
 - `status_code`
 - `body_json`
 
-민감한 API key, token, account identifier는 저장하지 않습니다.
+민감한 API key, token, raw account number, raw account identifier는 저장하지 않습니다. `raw_api_response.body_json` 저장 전 OAuth token, `accountNo`/`accountNumber`/`account_no`, `accountSeq`/`account_seq`류 필드는 redaction합니다. 정규화 테이블의 `account_seq`는 대사 키로만 사용합니다.
 
 ## Market And External Data
 

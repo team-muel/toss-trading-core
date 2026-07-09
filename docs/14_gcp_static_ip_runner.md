@@ -11,6 +11,11 @@ This runner makes Foundation v0/v1 reproducible on a GCP VM with a static extern
 
 The VM only runs `foundation_snapshot` and `foundation_audit`.
 
+Related documents:
+
+- `docs/15_gcp_secret_manager_and_runtime.md`
+- `docs/16_cloud_monitoring_runner_health.md`
+
 ## Network Requirement
 
 Use the VM static external IP in Toss Open API allowlist. Do not use the VM internal IP such as `10.x.x.x`.
@@ -28,6 +33,7 @@ The returned IP must match the static external IP registered in Toss.
 ```bash
 sudo apt update
 sudo apt install -y git python3 python3-venv python3-pip
+gcloud --version
 git clone https://github.com/team-muel/toss-trading-core.git
 cd toss-trading-core
 python3 -m venv .venv
@@ -51,6 +57,7 @@ toss-broker-base-url      # https://openapi.tossinvest.com
 Grant the VM service account Secret Manager access:
 
 ```bash
+gcloud --version
 gcloud projects add-iam-policy-binding "${GCP_PROJECT_ID}" \
   --member="serviceAccount:${VM_SERVICE_ACCOUNT_EMAIL}" \
   --role="roles/secretmanager.secretAccessor"
@@ -67,6 +74,8 @@ export TOSS_API_ENV_SECRET="toss-api-env"
 export TOSS_BROKER_BASE_URL_SECRET="toss-broker-base-url"
 export FOUNDATION_LOAD_GCP_SECRETS=1
 ```
+
+The runner sources `scripts/load_gcp_secrets.sh` when `FOUNDATION_LOAD_GCP_SECRETS=1`.
 
 ## Runner Commands
 
@@ -95,6 +104,8 @@ runtime/foundation_runner.jsonl
 ```
 
 The JSONL log records runner, snapshot, audit, and Secret Manager loading events without printing secret values.
+
+Cloud Logging/Monitoring expectations are defined in `docs/16_cloud_monitoring_runner_health.md`.
 
 ## Go/No-Go
 

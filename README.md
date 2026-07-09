@@ -41,6 +41,8 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/12_external_data_feeds.md` | Massive, FRED, SEC, issuer parser 등 외부 연속 데이터 피드 정책 |
 | `docs/13_foundation_v1_funded_read_only_validation.md` | 실제 현금, 보유, 수동 주문, 체결, 수수료, 결제일이 있는 계좌 read-only 검증 |
 | `docs/14_gcp_static_ip_runner.md` | GCP 고정 IP VM, Secret Manager, JSONL runner 운영 절차 |
+| `docs/15_gcp_secret_manager_and_runtime.md` | GCP Secret Manager, VM 환경변수, runtime DB/log 경로 |
+| `docs/16_cloud_monitoring_runner_health.md` | Cloud Logging/Monitoring 기반 runner health 기준 |
 
 ## Repository Layout
 
