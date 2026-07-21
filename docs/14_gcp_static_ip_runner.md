@@ -7,9 +7,14 @@ This runner makes Foundation v0/v1 reproducible on a GCP VM with a static extern
 - no automatic orders
 - no strategy signals
 - no external market-data feeds
-- no cron or systemd automation by default
+- no automatic orders; the optional systemd timer remains read-only
 
 The VM only runs `foundation_snapshot` and `foundation_audit`.
+
+The production-lab VM installs `deploy/systemd/toss-foundation.service` and
+`deploy/systemd/toss-foundation.timer`. The timer runs the read-only v0 audit
+every six hours, uses a restrictive `UMask=0077`, and uploads successful
+backups to the configured private Cloud Storage bucket.
 
 Related documents:
 
@@ -87,6 +92,16 @@ The runner defaults to one order detail call per snapshot. For v1,
 order was OPEN; the runner passes it as `--target-order-id`.
 After a successful audit, the runner writes a SQLite backup locally and uploads it to Cloud Storage when `FOUNDATION_GCS_BACKUP_URI` is set.
 The runner uses `flock` on `FOUNDATION_LOCK_PATH` to prevent overlapping cron or systemd timer runs.
+
+Install the reviewed units only after replacing the project, user, paths, and
+bucket values for the target VM:
+
+```bash
+sudo install -m 0644 deploy/systemd/toss-foundation.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/toss-foundation.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now toss-foundation.timer
+```
 
 ## Runner Commands
 

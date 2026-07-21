@@ -1,0 +1,31 @@
+[Unit]
+Description=Toss Foundation read-only snapshot and audit
+After=network-online.target google-cloud-ops-agent.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=seoje
+Group=seoje
+WorkingDirectory=/home/seoje/toss-trading/current
+UMask=0077
+Environment=GCP_PROJECT_ID=toss-trading-core-lab
+Environment=TOSS_CLIENT_ID_SECRET=toss-client-id
+Environment=TOSS_CLIENT_SECRET_SECRET=toss-client-secret
+Environment=TOSS_ACCOUNT_SEQ_SECRET=toss-account-seq
+Environment=TOSS_API_ENV_SECRET=toss-api-env
+Environment=TOSS_BROKER_BASE_URL_SECRET=toss-broker-base-url
+Environment=FOUNDATION_LOAD_GCP_SECRETS=1
+Environment=FOUNDATION_AUDIT_PROFILE=v0-empty-safe
+Environment=FOUNDATION_MAX_ORDER_DETAILS=1
+Environment=FOUNDATION_DB_PATH=/home/seoje/toss-trading/runtime/foundation_account_state.sqlite
+Environment=FOUNDATION_REPORT_PATH=/home/seoje/toss-trading/runtime/foundation_account_state_report.txt
+Environment=FOUNDATION_JSON_LOG_PATH=/home/seoje/toss-trading/runtime/foundation_runner.jsonl
+Environment=FOUNDATION_BACKUP_DIR=/home/seoje/toss-trading/runtime/backups
+Environment=FOUNDATION_LOCK_PATH=/home/seoje/toss-trading/runtime/foundation_runner.lock
+Environment=FOUNDATION_GCS_BACKUP_URI=gs://toss-trading-core-lab-foundation-backups/foundation
+Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python
+ExecStart=/home/seoje/toss-trading/current/scripts/run_foundation_gcp.sh
+
+[Install]
+WantedBy=multi-user.target

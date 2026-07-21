@@ -127,6 +127,14 @@ If set, the runner uploads the SQLite backup after `foundation_audit` passes. Th
 
 The runner requires `flock` and takes a non-blocking lock at `FOUNDATION_LOCK_PATH`. If another run is active, it writes `foundation_runner_lock_busy` and exits without starting another API polling run.
 
+The runner sets `umask 077`. New databases, backups, reports, locks, and logs
+are therefore readable only by the service user. The systemd service also sets
+`UMask=0077` as a second enforcement layer.
+
+Install runtime dependencies from `requirements.lock` and CI/test dependencies
+from `requirements-dev.lock` so that a reviewed commit resolves the same
+dependency versions during later deployments.
+
 ## Git Safety
 
 Never commit:

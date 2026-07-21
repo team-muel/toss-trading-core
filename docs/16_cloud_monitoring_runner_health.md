@@ -51,6 +51,7 @@ foundation_runner_lock_busy
 Send `runtime/foundation_runner.jsonl` to Cloud Logging using the Ops Agent or a small file tailer. Alert only on operational failures:
 
 - no `foundation_runner_ok` event after a scheduled/manual run
+- no `foundation_runner_ok` event for eight hours while the six-hour timer is enabled
 - latest event is `foundation_runner_failed`
 - latest event is `foundation_snapshot_failed`
 - latest event is `foundation_audit_failed`
@@ -115,6 +116,10 @@ Do not build these yet:
 - external data quality dashboards
 
 Those come after Foundation v1 passes and paper order planner is introduced.
+
+All operational failure and heartbeat-absence policies must have a verified
+notification channel. A policy without a channel creates a console incident but
+does not notify the operator.
 
 ## Manual Health Check
 
