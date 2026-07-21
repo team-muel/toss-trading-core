@@ -34,8 +34,8 @@ Foundation v0 운영 기반은 완료되었습니다.
 | Priority | Work | Completion evidence | Dependency |
 | --- | --- | --- | --- |
 | 완료 | Foundation v1 funded read-only | CLOSED 조회로 실제 Open API `orderId`를 복구하고 상세·체결·수수료·결제일 감사 통과 | 2026-07-21 완료 |
-| P1 | 백업 복원 훈련 | GCS 백업을 별도 임시 경로로 복원해 SQLite 무결성과 최신 실행 증거 확인 | v1 전후 어느 때나 가능 |
-| P1 | 운영 관찰 | 최소 24시간 동안 6시간 timer 실행과 이메일 경보 경로가 정상인지 확인 | 현재 운영 설정 |
+| 완료 | 백업 복원 훈련 | 격리 경로에서 SQLite `integrity_check=ok`와 v1 감사 재통과 | 2026-07-21 완료 |
+| 진행 중 | 운영 관찰 | 매일 19:00 KST 자동 점검으로 6시간 timer 실행과 경보 정책 상태 확인 | 첫 24시간 결과 대기 |
 | P2 | Foundation 1–5 완료 여부 재점검 | universe/master 1:1 대사와 replay/source-health 회귀 테스트 통과 | v1 통과 권장 |
 | P3 | 외부 데이터 최소 스택 시작 | Massive REST → dividends/splits → FRED → SEC 순서로 구현 | Foundation v1 통과 |
 | P4 | signal safety와 paper planner | feature/signal 분리, stale-data gate, 실제 주문 없는 planner 검증 | 외부 데이터 최소 스택 |
