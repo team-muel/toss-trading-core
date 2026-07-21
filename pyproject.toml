@@ -4,10 +4,22 @@ version = "0.1.0"
 description = "USD-based multi-engine auto-trading research foundation"
 requires-python = ">=3.11"
 dependencies = [
-  "google-cloud-secret-manager>=2.20",
-  "pydantic>=2.0",
-  "pyyaml>=6.0",
+  "google-cloud-secret-manager>=2.20,<3",
+  "pyyaml>=6.0,<7",
 ]
+
+[project.optional-dependencies]
+test = [
+  "build>=1.2,<2",
+  "pytest>=8,<9",
+]
+
+[build-system]
+requires = ["setuptools>=69,<81"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

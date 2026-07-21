@@ -75,7 +75,7 @@ Foundation v1 funded read-only 검증은 실제 현금, 보유종목, 수동 주
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m toss_trading.cli.foundation_snapshot
+python -m toss_trading.cli.foundation_snapshot --target-order-id "<OPEN 상태에서 확보한 orderId>"
 python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
 ```
 
@@ -102,7 +102,8 @@ export FOUNDATION_AUDIT_PROFILE=v0-empty-safe
 - holdings, orders, buying power 정규화 snapshot이 생성됨
 - report가 계좌 상태를 사람이 읽을 수 있게 설명함
 
-현재 알려진 blocker:
+운영 blocker 처리:
 
-- `/oauth2/token`이 `403 access_denied`와 `IP address not allowed`를 반환하면 Toss Open API 허용 IP 등록이 먼저 필요합니다.
+- GCP 고정 외부 IP의 Toss Open API 허용 IP 등록은 2026-07-21 완료되었습니다.
+- 새 GCP VM 실행에서 `/oauth2/token`이 `403 access_denied`와 `IP address not allowed`를 다시 반환하면 등록한 IP와 VM의 실제 외부 IP가 같은지 재확인합니다.
 - 이 경우 CLI는 `raw_api_response`에 원본 실패 응답을 저장하고, `source_health_snapshot`에 `source_status='blocked'`, `action='register_current_ip_in_toss_openapi_allowlist'`를 남깁니다.

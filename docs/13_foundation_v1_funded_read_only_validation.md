@@ -23,12 +23,18 @@ This phase is still read-only. The system does not submit automatic orders. The 
 
 ## Manual Account Event
 
-Use the Toss app, not this system, to create a small real account event.
+Use the Toss app, not this system, to create a small real account event. The
+current approved OpenAPI contract does not rely on a CLOSED order list. Capture
+the order ID while the manual order is still OPEN, then validate its detail.
 
 Required event shape:
 
-- Buy one small supported US-listed stock or ETF from `data/universe.csv`.
-- Wait until the order appears in CLOSED orders.
+- Place one small supported US-listed stock or ETF limit order from
+  `data/universe.csv` far enough from market to remain OPEN briefly.
+- Run `foundation_snapshot` while it is OPEN and record its `orderId`.
+- Fill the order only through the Toss app, then use that exact ID for the
+  read-only detail validation. A cancel-only event cannot satisfy the execution,
+  commission, and settlement evidence required by v1.
 - Prefer an order size where fees, tax, and settlement fields are visible in the Toss API response.
 - Do not run an automatic order planner in this phase.
 
@@ -38,7 +44,7 @@ After the manual order is visible in Toss:
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m toss_trading.cli.foundation_snapshot --max-order-details 1
+python -m toss_trading.cli.foundation_snapshot --target-order-id "<captured-order-id>"
 python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
 ```
 
@@ -54,8 +60,10 @@ profile=v1-funded-read-only
 The v1 audit must prove:
 
 - at least one holding is normalized
-- at least one CLOSED order is normalized
-- at least one `/api/v1/orders/{orderId}` detail raw response exists
+- the captured target order is normalized from its detail response
+- the captured target order has a filled quantity greater than zero
+- the same `/api/v1/orders/{orderId}` detail raw response exists in the
+  latest completed snapshot run
 - at least one execution summary has cumulative filled quantity, cumulative filled amount, and average filled price
 - at least one execution delta is generated from cumulative execution snapshots
 - at least one commission snapshot exists
@@ -73,7 +81,7 @@ If any v1 requirement fails:
 - keep the system read-only
 - inspect `raw_api_response` for the Toss response shape
 - update normalization only after confirming the raw field mapping
-- confirm CLOSED order pagination and the limited `/api/v1/orders/{orderId}` detail call were saved in `raw_api_response`
+- confirm the exact `/api/v1/orders/{target_order_id}` detail call was saved in the same completed snapshot run
 - confirm repeated snapshots do not create duplicate execution deltas
 - rerun `foundation_snapshot`
 - rerun `foundation_audit --profile v1-funded-read-only`

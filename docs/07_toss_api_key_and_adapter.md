@@ -39,7 +39,7 @@ TOSS_API_ENV
 | `orders.modify()` | `POST /api/v1/orders/{orderId}/modify` | review 상태 처리 |
 | `orders.cancel()` | `POST /api/v1/orders/{orderId}/cancel` | review 상태 처리 |
 | `orders.list_open()` | `GET /api/v1/orders` | OPEN 주문 대사 |
-| `orders.list_closed()` | `GET /api/v1/orders` | CLOSED 주문 페이징 누락 방지 |
+| `orders.list_closed()` | `GET /api/v1/orders` | OpenAPI 1.2.4 계약 모순 해소 전 비활성화 |
 | `orders.get()` | `GET /api/v1/orders/{orderId}` | execution 누적 snapshot 생성 |
 | `buying_power.get()` | `GET /api/v1/buying-power` | `cashBuyingPower`를 broker constraint로 저장 |
 | `sellable_quantity.get()` | `GET /api/v1/sellable-quantity` | 매도 가능 수량 gate |
@@ -56,7 +56,7 @@ TOSS_API_ENV
 허용 순서:
 
 1. 같은 `clientOrderId`로 결과 재조회 또는 재요청
-2. OPEN/CLOSED 주문 조회
+2. OPEN 주문 조회와 같은 `clientOrderId` 결과 확인
 3. 주문 상세 조회
 4. 상태 확정 후 새 의사결정과 새 `clientOrderId` 발급
 
@@ -90,7 +90,8 @@ Toss 주문 상태는 REST polling으로 관리합니다.
 
 - create 직후 detail/list polling
 - OPEN 주문 주기 대사
-- CLOSED 주문 페이징 대사
+- CLOSED 목록은 OpenAPI 1.2.4가 쿼리 enum에는 노출하지만 `PaginatedOrderResponse`에는 `400 closed-not-supported`라고 명시하므로 호출하지 않음
+- 종료 주문은 OPEN일 때 확보한 정확한 `orderId`로 상세 조회
 - rate-limit header 기반 cadence 조정
 - 429 발생 시 `Retry-After` 우선
 

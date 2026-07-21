@@ -101,6 +101,7 @@ P2:
 
 - `foundation_audit_failed` for `v1-funded-read-only` after a known manual test order
 - missing order detail raw response
+- missing or empty `FOUNDATION_TARGET_ORDER_ID` for a v1 run
 - missing execution delta after a filled order
 
 ## Non-Goals

@@ -19,7 +19,6 @@ REQUIRED_RAW_ENDPOINTS = [
     "/api/v1/accounts",
     "/api/v1/holdings",
     "/api/v1/orders?status=OPEN",
-    "/api/v1/orders?status=CLOSED",
     "/api/v1/buying-power",
     "/api/v1/commissions",
 ]
@@ -86,18 +85,73 @@ def _count(conn: sqlite3.Connection, query: str, params: tuple[object, ...] = ()
     return int(conn.execute(query, params).fetchone()[0])
 
 
-def _raw_success_count(conn: sqlite3.Connection, endpoint: str) -> int:
+def _raw_success_count(
+    conn: sqlite3.Connection,
+    endpoint: str,
+    *,
+    run_id: str,
+    account_seq: str,
+) -> int:
     separator = "&" if "?" in endpoint else "?"
+    account_neutral = endpoint in {"/oauth2/token", "/api/v1/accounts"}
     return _count(
         conn,
         """
         SELECT COUNT(*)
         FROM raw_api_response
         WHERE (endpoint = ? OR endpoint LIKE ?)
-          AND (status_code IS NULL OR status_code < 400)
+          AND run_id = ?
+          AND status_code BETWEEN 200 AND 299
+          AND (? = 1 OR account_seq = ?)
         """,
-        (endpoint, f"{endpoint}{separator}%"),
+        (endpoint, f"{endpoint}{separator}%", run_id, int(account_neutral), account_seq),
     )
+
+
+def _schema_failure(db_path: str | Path) -> str | None:
+    path = Path(db_path)
+    if not path.exists():
+        return "foundation_database_not_found"
+    conn = sqlite3.connect(path)
+    try:
+        required_tables = {
+            "snapshot_run",
+            "raw_api_response",
+            "source_health_snapshot",
+            "instrument_master",
+            "account_snapshot",
+            "holding_snapshot",
+            "broker_order_snapshot",
+            "buying_power_snapshot",
+            "sellable_quantity_snapshot",
+            "execution_snapshot_log",
+            "execution_delta_log",
+            "broker_reconciliation_log",
+        }
+        existing = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        missing = sorted(required_tables - existing)
+        if missing:
+            return f"incompatible_foundation_schema:missing_tables={','.join(missing)}"
+        run_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(snapshot_run)")
+        }
+        required_run_columns = {
+            "run_id",
+            "account_seq",
+            "target_order_id",
+            "started_at",
+            "completed_at",
+            "status",
+        }
+        missing_columns = sorted(required_run_columns - run_columns)
+        if missing_columns:
+            return f"incompatible_foundation_schema:missing_snapshot_run_columns={','.join(missing_columns)}"
+    finally:
+        conn.close()
+    return None
 
 
 def audit_foundation_db(
@@ -114,6 +168,13 @@ def audit_foundation_db(
     mappings = load_instrument_mappings(instrument_master_path)
     validate_universe_mapping(universe, mappings)
 
+    schema_failure = _schema_failure(db_path)
+    if schema_failure is not None:
+        return FoundationAuditResult(
+            ok=False,
+            lines=["foundation_audit=failed", f"profile={profile}", f"failure={schema_failure}"],
+        )
+
     ledger = AccountLedger(db_path)
     try:
         conn = ledger.conn
@@ -122,27 +183,70 @@ def audit_foundation_db(
         if instrument_count < len(universe):
             failures.append("instrument_master_not_loaded_for_full_universe")
 
+        run = conn.execute(
+            """
+            SELECT *
+            FROM snapshot_run
+            WHERE status = 'COMPLETE'
+            ORDER BY completed_at DESC, started_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        if run is None:
+            return FoundationAuditResult(
+                ok=False,
+                lines=[
+                    "foundation_audit=failed",
+                    f"profile={profile}",
+                    "failure=missing_complete_snapshot_run",
+                ],
+            )
+        run_id = str(run["run_id"])
+        account_seq = str(run["account_seq"] or "").strip()
+        target_order_id = str(run["target_order_id"] or "").strip()
+        lines.extend(
+            [
+                f"snapshot_run_id={run_id}",
+                f"snapshot_account_seq={account_seq or 'none'}",
+                f"target_order_id={'present' if target_order_id else 'none'}",
+            ]
+        )
+        if not account_seq:
+            failures.append("complete_snapshot_run_missing_account_seq")
+
         for endpoint in REQUIRED_RAW_ENDPOINTS:
-            successes = _raw_success_count(conn, endpoint)
+            successes = _raw_success_count(
+                conn,
+                endpoint,
+                run_id=run_id,
+                account_seq=account_seq,
+            )
             lines.append(f"raw_success[{endpoint}]={successes}")
             if successes == 0:
                 failures.append(f"missing_successful_raw_endpoint:{endpoint}")
 
+        failed_broker_rows = _count(
+            conn,
+            """
+            SELECT COUNT(*) FROM raw_api_response
+            WHERE run_id = ? AND source_type = 'broker'
+              AND (status_code IS NULL OR status_code NOT BETWEEN 200 AND 299)
+            """,
+            (run_id,),
+        )
+        lines.append(f"non_2xx_broker_rows={failed_broker_rows}")
+        if failed_broker_rows:
+            failures.append("latest_complete_run_contains_non_2xx_broker_response")
+
         latest_bad_health = conn.execute(
             """
             SELECT source, channel, source_status, action
-            FROM source_health_snapshot current
-            WHERE source_status <> 'ok'
-              AND NOT EXISTS (
-                SELECT 1
-                FROM source_health_snapshot newer
-                WHERE newer.source = current.source
-                  AND newer.channel = current.channel
-                  AND newer.ts > current.ts
-              )
-            ORDER BY ts DESC
+            FROM source_health_snapshot
+            WHERE run_id = ? AND source_status <> 'ok'
+            ORDER BY ts DESC, created_at DESC
             LIMIT 1
-            """
+            """,
+            (run_id,),
         ).fetchone()
         if latest_bad_health is not None:
             failures.append(
@@ -152,80 +256,121 @@ def audit_foundation_db(
             )
 
         account_rows = conn.execute(
-            "SELECT DISTINCT account_seq FROM account_snapshot ORDER BY account_seq"
+            "SELECT DISTINCT account_seq FROM account_snapshot WHERE run_id = ? ORDER BY account_seq",
+            (run_id,),
         ).fetchall()
         lines.append(f"account_count={len(account_rows)}")
         if not account_rows:
             failures.append("missing_account_snapshot")
+        account_values = [str(row["account_seq"]) for row in account_rows]
+        if account_seq and account_seq not in account_values:
+            failures.append("snapshot_run_account_not_in_current_account_snapshot")
+        if len(account_values) != 1:
+            failures.append("latest_complete_run_must_bind_exactly_one_account")
 
-        for row in account_rows:
-            account_seq = str(row["account_seq"])
-            explanation = ledger.explain_account_state(account_seq)
+        if account_seq:
+            explanation = ledger.explain_account_state(account_seq, run_id=run_id)
             closed_order_rows = _count(
                 conn,
                 """
                 SELECT COUNT(*)
                 FROM broker_order_snapshot
-                WHERE account_seq = ?
+                WHERE run_id = ? AND account_seq = ?
                   AND status NOT IN ('PENDING', 'PENDING_CANCEL', 'PENDING_REPLACE', 'PARTIAL_FILLED')
                 """,
-                (account_seq,),
+                (run_id, account_seq),
             )
             order_detail_raw_rows = _count(
                 conn,
                 """
                 SELECT COUNT(*)
                 FROM raw_api_response
-                WHERE account_seq = ?
+                WHERE run_id = ? AND account_seq = ?
                   AND endpoint LIKE '/api/v1/orders/%'
-                  AND (status_code IS NULL OR status_code < 400)
+                  AND status_code BETWEEN 200 AND 299
                 """,
-                (account_seq,),
+                (run_id, account_seq),
             )
+            target_detail_raw_rows = 0
+            target_order_rows = 0
+            target_filled_rows = 0
+            if target_order_id:
+                target_detail_raw_rows = _count(
+                    conn,
+                    """
+                    SELECT COUNT(*) FROM raw_api_response
+                    WHERE run_id = ? AND account_seq = ? AND endpoint = ?
+                      AND status_code BETWEEN 200 AND 299
+                    """,
+                    (run_id, account_seq, f"/api/v1/orders/{target_order_id}"),
+                )
+                target_order_rows = _count(
+                    conn,
+                    """
+                    SELECT COUNT(*) FROM broker_order_snapshot
+                    WHERE run_id = ? AND account_seq = ? AND broker_order_id = ?
+                    """,
+                    (run_id, account_seq, target_order_id),
+                )
+                target_filled_rows = _count(
+                    conn,
+                    """
+                    SELECT COUNT(*) FROM broker_order_snapshot
+                    WHERE run_id = ? AND account_seq = ? AND broker_order_id = ?
+                      AND CAST(cumulative_filled_qty_decimal AS NUMERIC) > 0
+                    """,
+                    (run_id, account_seq, target_order_id),
+                )
             execution_rows = _count(
                 conn,
                 """
                 SELECT COUNT(*)
                 FROM execution_snapshot_log
-                WHERE account_seq = ?
-                  AND cumulative_filled_qty IS NOT NULL
-                  AND cumulative_filled_amount IS NOT NULL
-                  AND average_filled_price IS NOT NULL
+                WHERE run_id = ? AND account_seq = ?
+                  AND (? = '' OR order_id = ?)
+                  AND cumulative_filled_qty_decimal IS NOT NULL
+                  AND cumulative_filled_amount_decimal IS NOT NULL
+                  AND average_filled_price_decimal IS NOT NULL
                 """,
-                (account_seq,),
+                (run_id, account_seq, target_order_id, target_order_id),
             )
             execution_delta_rows = _count(
                 conn,
-                "SELECT COUNT(*) FROM execution_delta_log WHERE account_seq = ?",
-                (account_seq,),
+                """
+                SELECT COUNT(*) FROM execution_delta_log
+                WHERE run_id = ? AND account_seq = ? AND (? = '' OR order_id = ?)
+                """,
+                (run_id, account_seq, target_order_id, target_order_id),
             )
             settlement_rows = _count(
                 conn,
                 """
                 SELECT COUNT(*)
                 FROM broker_order_snapshot
-                WHERE account_seq = ? AND settlement_date IS NOT NULL
+                WHERE run_id = ? AND account_seq = ?
+                  AND (? = '' OR broker_order_id = ?)
+                  AND settlement_date IS NOT NULL
                 """,
-                (account_seq,),
+                (run_id, account_seq, target_order_id, target_order_id),
             )
             commission_rows = _count(
                 conn,
                 """
-                SELECT COUNT(*)
-                FROM commission_snapshot
-                WHERE account_seq = ?
-                  AND commission_amount IS NOT NULL
+                SELECT COUNT(*) FROM broker_order_snapshot
+                WHERE run_id = ? AND account_seq = ?
+                  AND (? = '' OR broker_order_id = ?)
+                  AND cumulative_commission_decimal IS NOT NULL
                 """,
-                (account_seq,),
+                (run_id, account_seq, target_order_id, target_order_id),
             )
             sellable_rows = _count(
                 conn,
                 """
                 SELECT COUNT(*)
                 FROM sellable_quantity_snapshot
-                WHERE account_seq = ?
+                WHERE run_id = ? AND account_seq = ?
                 """,
-                (account_seq,),
+                (run_id, account_seq),
             )
             reconciliation_block_rows = _count(
                 conn,
@@ -234,8 +379,9 @@ def audit_foundation_db(
                 FROM broker_reconciliation_log
                 WHERE account_seq = ?
                   AND status = 'BLOCK'
+                  AND ts >= ? AND ts <= ?
                 """,
-                (account_seq,),
+                (account_seq, run["started_at"], run["completed_at"]),
             )
             latest_reconciliation_block = conn.execute(
                 """
@@ -243,30 +389,31 @@ def audit_foundation_db(
                 FROM broker_reconciliation_log
                 WHERE account_seq = ?
                   AND status = 'BLOCK'
+                  AND ts >= ? AND ts <= ?
                 ORDER BY ts DESC, created_at DESC
                 LIMIT 1
                 """,
-                (account_seq,),
+                (account_seq, run["started_at"], run["completed_at"]),
             ).fetchone()
             unknown_order_status_rows = conn.execute(
                 """
                 SELECT DISTINCT status
                 FROM broker_order_snapshot
-                WHERE account_seq = ?
+                WHERE run_id = ? AND account_seq = ?
                   AND status NOT IN ({placeholders})
                 ORDER BY status
                 """.format(placeholders=", ".join("?" for _ in KNOWN_ORDER_STATUSES)),
-                (account_seq, *sorted(KNOWN_ORDER_STATUSES)),
+                (run_id, account_seq, *sorted(KNOWN_ORDER_STATUSES)),
             ).fetchall()
             review_order_status_rows = conn.execute(
                 """
                 SELECT DISTINCT status
                 FROM broker_order_snapshot
-                WHERE account_seq = ?
+                WHERE run_id = ? AND account_seq = ?
                   AND status IN ({placeholders})
                 ORDER BY status
                 """.format(placeholders=", ".join("?" for _ in REVIEW_ORDER_STATUSES)),
-                (account_seq, *sorted(REVIEW_ORDER_STATUSES)),
+                (run_id, account_seq, *sorted(REVIEW_ORDER_STATUSES)),
             ).fetchall()
             unknown_order_statuses = [str(item["status"]) for item in unknown_order_status_rows]
             review_order_statuses = [str(item["status"]) for item in review_order_status_rows]
@@ -276,6 +423,9 @@ def audit_foundation_db(
             )
             lines.append(f"account[{account_seq}].closed_order_rows={closed_order_rows}")
             lines.append(f"account[{account_seq}].order_detail_raw_rows={order_detail_raw_rows}")
+            lines.append(f"account[{account_seq}].target_detail_raw_rows={target_detail_raw_rows}")
+            lines.append(f"account[{account_seq}].target_order_rows={target_order_rows}")
+            lines.append(f"account[{account_seq}].target_filled_rows={target_filled_rows}")
             lines.append(f"account[{account_seq}].execution_rows={execution_rows}")
             lines.append(f"account[{account_seq}].execution_delta_rows={execution_delta_rows}")
             lines.append(f"account[{account_seq}].commission_rows={commission_rows}")
@@ -318,18 +468,22 @@ def audit_foundation_db(
                     f"account[{account_seq}].review_order_status_requires_order_detail:{status}"
                 )
             if profile == "v1-funded-read-only":
+                if not target_order_id:
+                    failures.append(f"account[{account_seq}].v1_requires_target_order_id")
                 if explanation.holdings_count == 0:
                     failures.append(f"account[{account_seq}].v1_requires_nonzero_holdings")
-                if closed_order_rows == 0:
-                    failures.append(f"account[{account_seq}].v1_requires_closed_order")
-                if order_detail_raw_rows == 0:
-                    failures.append(f"account[{account_seq}].v1_requires_order_detail_raw")
+                if target_detail_raw_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_target_order_detail_raw")
+                if target_order_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_target_order_snapshot")
+                if target_filled_rows == 0:
+                    failures.append(f"account[{account_seq}].v1_requires_filled_target_order")
                 if execution_rows == 0:
                     failures.append(f"account[{account_seq}].v1_requires_execution_summary")
                 if execution_delta_rows == 0:
                     failures.append(f"account[{account_seq}].v1_requires_execution_delta")
                 if commission_rows == 0:
-                    failures.append(f"account[{account_seq}].v1_requires_commission_snapshot")
+                    failures.append(f"account[{account_seq}].v1_requires_execution_commission")
                 if settlement_rows == 0:
                     failures.append(f"account[{account_seq}].v1_requires_settlement_date")
                 if sellable_rows == 0:

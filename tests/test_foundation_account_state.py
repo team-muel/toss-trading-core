@@ -22,6 +22,19 @@ class FakeTossAdapter:
         self.detail_order_ids = []
 
     def get_accounts(self):
+        token_rows = self.ledger.conn.execute(
+            "SELECT COUNT(*) FROM raw_api_response WHERE run_id = ? AND endpoint = '/oauth2/token'",
+            (self.ledger.current_run_id,),
+        ).fetchone()[0]
+        if token_rows == 0:
+            self.ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
         return TossApiResult(
             endpoint="/api/v1/accounts",
             status_code=200,
@@ -31,7 +44,7 @@ class FakeTossAdapter:
                 endpoint="/api/v1/accounts",
                 http_method="GET",
                 body={
-                    "accounts": [
+                    "result": [
                         {
                             "accountSeq": "1",
                             "accountNo": "1234567890",
@@ -39,9 +52,10 @@ class FakeTossAdapter:
                         }
                     ]
                 },
+                status_code=200,
             ),
             body={
-                "accounts": [
+                "result": [
                     {
                         "accountSeq": "1",
                         "accountNo": "1234567890",
@@ -53,18 +67,18 @@ class FakeTossAdapter:
 
     def get_holdings(self):
         body = {
-            "holdings": [
+            "result": {"items": [
                 {
                     "symbol": "SPY",
                     "quantity": "2",
                     "averagePurchasePrice": "500",
                     "lastPrice": "510",
-                    "marketValue": "1020",
-                    "profitLoss": "20",
-                    "cost": "1000",
+                    "marketValue": {"purchaseAmount": "1000", "amount": "1020", "amountAfterCost": "1020"},
+                    "profitLoss": {"amount": "20", "amountAfterCost": "20", "rate": "0.02", "rateAfterCost": "0.02"},
+                    "cost": {"commission": "0", "tax": "0"},
                     "currency": "USD",
                 }
-            ]
+            ]}
         }
         return self._raw("/api/v1/holdings", body)
 
@@ -99,6 +113,7 @@ class FakeTossAdapter:
             "timeInForce": "DAY",
             "status": "PENDING" if status == "OPEN" else "FILLED",
             "quantity": "1",
+            "currency": "USD",
             "price": "500",
             "orderedAt": "2026-06-24T09:30:00+09:00",
             "execution": {
@@ -107,6 +122,7 @@ class FakeTossAdapter:
                 "averageFilledPrice": None if status == "OPEN" else "500",
                 "commission": "0",
                 "tax": "0",
+                "filledAt": None,
                 "settlementDate": None if status == "OPEN" else "2026-06-26",
             },
         }
@@ -115,21 +131,19 @@ class FakeTossAdapter:
         self.last_buying_power_query = query
         return self._raw(
             f"/api/v1/buying-power?currency={query.get('currency', '')}",
-            {"currency": "USD", "cashBuyingPower": "2500"},
+            {"result": {"currency": "USD", "cashBuyingPower": "2500"}},
         )
 
     def get_commissions(self, **query):
         return self._raw(
             "/api/v1/commissions",
             {
-                "commissions": [
+                "result": [
                     {
-                        "market": "US",
-                        "symbol": "SPY",
-                        "side": "BUY",
-                        "orderAmount": "500",
-                        "commission": "0",
-                        "currency": "USD",
+                        "marketCountry": "US",
+                        "commissionRate": "0.015",
+                        "startDate": None,
+                        "endDate": None,
                     }
                 ]
             },
@@ -139,7 +153,7 @@ class FakeTossAdapter:
         symbol = query["symbol"]
         return self._raw(
             f"/api/v1/sellable-quantity?symbol={symbol}",
-            {"symbol": symbol, "sellableQuantity": "2"},
+            {"result": {"sellableQuantity": "2"}},
         )
 
     def _raw(self, endpoint, body):
@@ -153,6 +167,7 @@ class FakeTossAdapter:
                 http_method="GET",
                 account_seq="1",
                 body=body,
+                status_code=200,
             ),
             body=body,
         )
@@ -190,26 +205,26 @@ class FoundationAccountStateTest(unittest.TestCase):
         self.assertEqual(result.accounts, 1)
         self.assertEqual(result.holdings, 1)
         self.assertEqual(result.open_orders, 1)
-        self.assertEqual(result.closed_orders, 1)
+        self.assertEqual(result.closed_orders, 0)
         self.assertEqual(result.buying_power_rows, 1)
         self.assertEqual(result.commission_rows, 1)
         self.assertEqual(result.sellable_quantity_rows, 1)
-        self.assertEqual(result.order_detail_rows, 2)
+        self.assertEqual(result.order_detail_rows, 1)
         self.assertEqual(result.execution_snapshot_rows, 2)
-        self.assertEqual(result.execution_delta_rows, 1)
+        self.assertEqual(result.execution_delta_rows, 0)
         self.assertEqual(result.explanation.holdings_count, 1)
         self.assertEqual(result.explanation.open_orders_count, 1)
-        self.assertEqual(result.explanation.buying_power_by_currency["USD"], 2500.0)
+        self.assertEqual(result.explanation.buying_power_by_currency["USD"], "2500")
         self.assertEqual(result.explanation.blockers, [])
         self.assertEqual(fake.last_buying_power_query, {"currency": "USD"})
 
         raw_count = ledger.conn.execute("SELECT COUNT(*) FROM raw_api_response").fetchone()[0]
-        self.assertEqual(raw_count, 9)
+        self.assertEqual(raw_count, 8)
 
         detail_count = ledger.conn.execute(
             "SELECT COUNT(*) FROM raw_api_response WHERE endpoint LIKE '/api/v1/orders/%'"
         ).fetchone()[0]
-        self.assertEqual(detail_count, 2)
+        self.assertEqual(detail_count, 1)
 
     def test_execution_delta_is_not_duplicated_for_same_cumulative_snapshot(self):
         ledger = AccountLedger()
@@ -220,10 +235,10 @@ class FoundationAccountStateTest(unittest.TestCase):
         first = FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
         second = FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
 
-        self.assertEqual(first.execution_delta_rows, 1)
+        self.assertEqual(first.execution_delta_rows, 0)
         self.assertEqual(second.execution_delta_rows, 0)
         delta_count = ledger.conn.execute("SELECT COUNT(*) FROM execution_delta_log").fetchone()[0]
-        self.assertEqual(delta_count, 1)
+        self.assertEqual(delta_count, 0)
 
     def test_snapshotter_limits_order_detail_calls_and_prefers_closed_orders(self):
         ledger = AccountLedger()
@@ -237,7 +252,7 @@ class FoundationAccountStateTest(unittest.TestCase):
         )
 
         self.assertEqual(result.order_detail_rows, 1)
-        self.assertEqual(fake.detail_order_ids, ["closed-1"])
+        self.assertEqual(fake.detail_order_ids, ["open-1"])
         detail_count = ledger.conn.execute(
             "SELECT COUNT(*) FROM raw_api_response WHERE endpoint LIKE '/api/v1/orders/%'"
         ).fetchone()[0]
@@ -265,7 +280,8 @@ class FoundationAccountStateTest(unittest.TestCase):
             status_code=200,
         )
         first = {
-            "orders": [
+            "result": {
+                "orders": [
                 {
                     "orderId": "order-avg",
                     "status": "CLOSED",
@@ -277,10 +293,14 @@ class FoundationAccountStateTest(unittest.TestCase):
                         "tax": "0",
                     },
                 }
-            ]
+                ],
+                "hasNext": False,
+                "nextCursor": None,
+            }
         }
         corrected = {
-            "orders": [
+            "result": {
+                "orders": [
                 {
                     "orderId": "order-avg",
                     "status": "CLOSED",
@@ -292,18 +312,23 @@ class FoundationAccountStateTest(unittest.TestCase):
                         "tax": "0",
                     },
                 }
-            ]
+                ],
+                "hasNext": False,
+                "nextCursor": None,
+            }
         }
 
         first_counts = ledger.ingest_execution_snapshots(
             first,
             account_seq="1",
             raw_ref=first_raw,
+            status_group="OPEN",
         )
         corrected_counts = ledger.ingest_execution_snapshots(
             corrected,
             account_seq="1",
             raw_ref=second_raw,
+            status_group="OPEN",
         )
 
         self.assertEqual(first_counts, (1, 1))
@@ -336,97 +361,48 @@ class FoundationAccountStateTest(unittest.TestCase):
             endpoint="/api/v1/commissions",
             http_method="GET",
             account_seq="1",
-            body={"commissions": []},
+            body={"result": []},
             status_code=200,
         )
 
         empty_array_rows = ledger.ingest_commissions(
-            {"commissions": []},
+            {"result": []},
             account_seq="1",
             raw_ref=raw_ref,
         )
         empty_object_rows = ledger.ingest_commissions(
-            {},
+            {"result": []},
             account_seq="1",
             raw_ref=raw_ref,
         )
 
         self.assertEqual(empty_array_rows, 0)
         self.assertEqual(empty_object_rows, 0)
-        row_count = ledger.conn.execute("SELECT COUNT(*) FROM commission_snapshot").fetchone()[0]
+        row_count = ledger.conn.execute(
+            "SELECT COUNT(*) FROM commission_rate_schedule_snapshot"
+        ).fetchone()[0]
         self.assertEqual(row_count, 0)
 
     def test_latest_empty_snapshots_do_not_reuse_stale_holdings_or_open_orders(self):
         ledger = AccountLedger()
         ledger.init_schema()
-        old_holdings_raw = ledger.save_raw_api_response(
-            source="toss",
-            source_type="broker",
-            endpoint="/api/v1/holdings",
-            http_method="GET",
-            account_seq="1",
-            body={"holdings": [{"symbol": "SPY", "quantity": "2"}]},
-            status_code=200,
-            ts="2026-06-24T00:00:00+00:00",
-        )
-        ledger.ingest_holdings(
-            {"holdings": [{"symbol": "SPY", "quantity": "2", "marketValue": "1000"}]},
-            account_seq="1",
-            raw_ref=old_holdings_raw,
-            ts="2026-06-24T00:00:01+00:00",
-        )
-        old_orders_raw = ledger.save_raw_api_response(
-            source="toss",
-            source_type="broker",
-            endpoint="/api/v1/orders?status=OPEN",
-            http_method="GET",
-            account_seq="1",
-            body={"orders": [{"orderId": "old-open", "symbol": "SPY", "status": "PENDING"}]},
-            status_code=200,
-            ts="2026-06-24T00:00:02+00:00",
-        )
-        ledger.ingest_orders(
-            {"orders": [{"orderId": "old-open", "symbol": "SPY", "status": "PENDING"}]},
-            account_seq="1",
-            raw_ref=old_orders_raw,
-            ts="2026-06-24T00:00:03+00:00",
-        )
-        ledger.save_raw_api_response(
-            source="toss",
-            source_type="broker",
-            endpoint="/api/v1/holdings",
-            http_method="GET",
-            account_seq="1",
-            body={"holdings": []},
-            status_code=200,
-            ts="2026-06-24T00:01:00+00:00",
-        )
-        ledger.save_raw_api_response(
-            source="toss",
-            source_type="broker",
-            endpoint="/api/v1/orders?status=OPEN",
-            http_method="GET",
-            account_seq="1",
-            body={"orders": []},
-            status_code=200,
-            ts="2026-06-24T00:01:01+00:00",
-        )
-        buying_power_raw = ledger.save_raw_api_response(
-            source="toss",
-            source_type="broker",
-            endpoint="/api/v1/buying-power",
-            http_method="GET",
-            account_seq="1",
-            body={"currency": "USD", "cashBuyingPower": "2500"},
-            status_code=200,
-            ts="2026-06-24T00:01:02+00:00",
-        )
-        ledger.ingest_buying_power(
-            {"currency": "USD", "cashBuyingPower": "2500"},
-            account_seq="1",
-            raw_ref=buying_power_raw,
-            ts="2026-06-24T00:01:03+00:00",
-        )
+        populated = FakeTossAdapter()
+        populated.ledger = ledger
+        FoundationSnapshotter(populated, ledger).snapshot(account_seq="1")
+
+        class EmptyFakeTossAdapter(FakeTossAdapter):
+            def get_holdings(self):
+                return self._raw("/api/v1/holdings", {"result": {"items": []}})
+
+            def get_orders(self, status=None, **query):
+                return self._raw(
+                    f"/api/v1/orders?status={status}&limit=100",
+                    {"result": {"orders": [], "nextCursor": None, "hasNext": False}},
+                )
+
+        empty = EmptyFakeTossAdapter()
+        empty.ledger = ledger
+        FoundationSnapshotter(empty, ledger).snapshot(account_seq="1")
 
         explanation = ledger.explain_account_state("1")
 
@@ -674,46 +650,7 @@ class FoundationAccountStateTest(unittest.TestCase):
         self.assertEqual(raw["request_id"], "body-req-400")
         self.assertEqual(raw["channel"], "rest:/api/v1/orders")
 
-    def test_toss_adapter_follows_order_pagination(self):
-        class FakeResponse:
-            status = 200
-            headers = {}
-
-            def __init__(self, body):
-                self.body = body
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, exc_type, exc, traceback):
-                return False
-
-            def read(self):
-                return json.dumps(self.body).encode("utf-8")
-
-        calls = []
-
-        def fake_urlopen(request, timeout):
-            calls.append(request.full_url)
-            body = (
-                {
-                    "result": {
-                        "orders": [{"orderId": "closed-1"}],
-                        "hasNext": True,
-                        "nextCursor": "cursor-2",
-                    }
-                }
-                if len(calls) == 1
-                else {
-                    "result": {
-                        "orders": [{"orderId": "closed-2"}],
-                        "hasNext": False,
-                        "nextCursor": None,
-                    }
-                }
-            )
-            return FakeResponse(body)
-
+    def test_toss_adapter_blocks_ambiguous_closed_order_listing(self):
         adapter = TossReadOnlyAdapter(
             TossCredentials(
                 client_id="client",
@@ -722,15 +659,9 @@ class FoundationAccountStateTest(unittest.TestCase):
                 base_url="https://example.invalid",
             )
         )
-        adapter._access_token = "token"
 
-        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            results = adapter.get_all_orders(status="CLOSED", limit=100)
-
-        self.assertEqual(len(results), 2)
-        self.assertIn("status=CLOSED", calls[0])
-        self.assertIn("limit=100", calls[0])
-        self.assertIn("cursor=cursor-2", calls[1])
+        with self.assertRaisesRegex(RuntimeError, "closed-not-supported"):
+            adapter.get_all_orders(status="CLOSED")
 
 
 if __name__ == "__main__":

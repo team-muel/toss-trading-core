@@ -5,7 +5,8 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from typing import Any
 
 from toss_trading.account.ledger import AccountLedger
@@ -147,10 +148,53 @@ class TossReadOnlyAdapter:
         self.credentials = credentials
         self.ledger = ledger
         self._access_token: str | None = None
-        self.rate_limiter = rate_limiter or TokenBucket(
+        self._access_token_expires_at: float = 0.0
+        self.run_id: str | None = None
+        default_limiter = rate_limiter or TokenBucket(
             capacity=float(os.environ.get("TOSS_RATE_LIMIT_CAPACITY", "20")),
             refill_per_second=float(os.environ.get("TOSS_RATE_LIMIT_REFILL_PER_SECOND", "5")),
         )
+        self.rate_limiter = default_limiter
+        self.rate_limiters: dict[str, TokenBucket] = {"DEFAULT": default_limiter}
+
+    def with_account(self, account_seq: str) -> "TossReadOnlyAdapter":
+        clone = TossReadOnlyAdapter(
+            replace(self.credentials, account_seq=account_seq),
+            ledger=self.ledger,
+            rate_limiter=self.rate_limiter,
+        )
+        clone._access_token = self._access_token
+        clone._access_token_expires_at = self._access_token_expires_at
+        clone.rate_limiters = self.rate_limiters
+        clone.run_id = self.run_id
+        return clone
+
+    def _api_group(self, endpoint: str) -> str:
+        path = endpoint.split("?", 1)[0]
+        if path == "/oauth2/token":
+            return "AUTH"
+        if path == "/api/v1/accounts":
+            return "ACCOUNT"
+        if path == "/api/v1/holdings":
+            return "ASSET"
+        if path == "/api/v1/orders" or path.startswith("/api/v1/orders/"):
+            return "ORDER_HISTORY"
+        if path in {
+            "/api/v1/buying-power",
+            "/api/v1/sellable-quantity",
+            "/api/v1/commissions",
+        }:
+            return "ORDER_INFO"
+        return "DEFAULT"
+
+    def _limiter_for(self, endpoint: str) -> TokenBucket:
+        group = self._api_group(endpoint)
+        if group not in self.rate_limiters:
+            self.rate_limiters[group] = TokenBucket(
+                capacity=float(os.environ.get("TOSS_RATE_LIMIT_CAPACITY", "5")),
+                refill_per_second=float(os.environ.get("TOSS_RATE_LIMIT_REFILL_PER_SECOND", "5")),
+            )
+        return self.rate_limiters[group]
 
     def refresh_token(self) -> TossApiResult:
         endpoint = "/oauth2/token"
@@ -171,6 +215,11 @@ class TossReadOnlyAdapter:
         if not token:
             raise RuntimeError("Toss token response did not include access_token")
         self._access_token = str(token)
+        expires_in = result.body.get("expires_in") if isinstance(result.body, dict) else None
+        try:
+            self._access_token_expires_at = time.monotonic() + max(0, int(expires_in) - 30)
+        except (TypeError, ValueError):
+            self._access_token_expires_at = time.monotonic()
         return result
 
     def get_accounts(self) -> TossApiResult:
@@ -217,9 +266,15 @@ class TossReadOnlyAdapter:
         limit: int = 100,
         max_pages: int = 20,
     ) -> list[TossApiResult]:
+        if status != "OPEN":
+            raise RuntimeError(
+                "Toss CLOSED order listing is disabled: OpenAPI 1.2.4 exposes the query value "
+                "but PaginatedOrderResponse still documents 400 closed-not-supported"
+            )
         results: list[TossApiResult] = []
         cursor: str | None = None
-        for _ in range(max_pages):
+        seen_cursors: set[str] = set()
+        for page_number in range(max_pages):
             result = self.get_orders(
                 status=status,
                 symbol=symbol,
@@ -233,8 +288,13 @@ class TossReadOnlyAdapter:
             if not isinstance(page, dict) or not page.get("hasNext"):
                 break
             cursor = page.get("nextCursor")
-            if not cursor:
-                break
+            if not cursor or cursor in seen_cursors:
+                raise RuntimeError("Toss order pagination is incomplete or cursor repeated")
+            seen_cursors.add(cursor)
+        else:
+            raise RuntimeError(
+                f"Toss order pagination exceeded max_pages={max_pages}; snapshot is incomplete"
+            )
         return results
 
     def get_order(self, order_id: str) -> TossApiResult:
@@ -260,7 +320,7 @@ class TossReadOnlyAdapter:
         return self._get(endpoint, account_bound=True)
 
     def _get(self, endpoint: str, *, account_bound: bool) -> TossApiResult:
-        if self._access_token is None:
+        if self._access_token is None or time.monotonic() >= self._access_token_expires_at:
             self.refresh_token()
         headers = {"Authorization": f"Bearer {self._access_token}"}
         if account_bound:
@@ -283,25 +343,36 @@ class TossReadOnlyAdapter:
         health_channel = f"rest:{endpoint.split('?', 1)[0]}"
         status_code = 0
         response_headers: dict[str, str] = {}
-        self.rate_limiter.acquire()
-        try:
-            with urllib.request.urlopen(request, timeout=15) as response:
-                status_code = response.status
-                response_headers = dict(response.headers.items())
-                raw = _decode_response(response.read())
-        except urllib.error.HTTPError as exc:
-            status_code = exc.code
-            response_headers = dict(exc.headers.items())
-            raw = _decode_response(exc.read())
-        except urllib.error.URLError as exc:
-            if self.ledger is not None:
-                self.ledger.record_source_health(
-                    source="toss",
-                    channel=health_channel,
-                    source_status="error",
-                    action=f"network_error:{exc.reason}",
-                )
-            raise RuntimeError(f"Toss API network error on {endpoint}: {exc.reason}") from exc
+        limiter = self._limiter_for(endpoint)
+        retry_count = 0
+        while True:
+            limiter.acquire()
+            try:
+                with urllib.request.urlopen(request, timeout=15) as response:
+                    status_code = response.status
+                    response_headers = dict(response.headers.items())
+                    raw = _decode_response(response.read())
+            except urllib.error.HTTPError as exc:
+                status_code = exc.code
+                response_headers = dict(exc.headers.items())
+                raw = _decode_response(exc.read())
+            except urllib.error.URLError as exc:
+                if self.ledger is not None:
+                    self.ledger.record_source_health(
+                        source="toss",
+                        channel=health_channel,
+                        source_status="error",
+                        action=f"network_error:{exc.reason}",
+                        run_id=self.run_id,
+                    )
+                raise RuntimeError(f"Toss API network error on {endpoint}: {exc.reason}") from exc
+            limiter.update_from_headers(response_headers)
+            if status_code == 429 and request.get_method() == "GET" and retry_count < 2:
+                retry_count += 1
+                wait = TokenBucket.retry_after_seconds(response_headers)
+                time.sleep(wait if wait is not None else min(4.0, float(2**retry_count)))
+                continue
+            break
         body = _parse_response_body(raw)
         request_headers = {key.lower(): value for key, value in request.header_items()}
         account_seq = request_headers.get("x-tossinvest-account")
@@ -320,6 +391,7 @@ class TossReadOnlyAdapter:
                 request_payload=request_payload,
                 headers=response_headers,
                 channel=health_channel,
+                run_id=self.run_id,
             )
             self.ledger.record_source_health(
                 source="toss",
@@ -327,8 +399,8 @@ class TossReadOnlyAdapter:
                 source_status="ok" if status_code < 400 else "blocked",
                 action=_health_action(status_code, body),
                 last_success_at=None if status_code >= 400 else None,
+                run_id=self.run_id,
             )
-        self.rate_limiter.update_from_headers(response_headers)
         if status_code >= 400:
             raise TossApiError(endpoint=endpoint, status_code=status_code, body=body)
         return TossApiResult(

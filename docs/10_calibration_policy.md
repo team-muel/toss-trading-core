@@ -24,7 +24,7 @@
 값을 완화하거나 확정하기 전에 최소한 다음 분포를 수집합니다.
 
 - 주문 제출 후 상태 확정까지 latency
-- OPEN/CLOSED 주문 조회 누락률
+- OPEN 주문 및 target order 상세 조회 누락률
 - 주문 거부율과 거부 코드
 - 부분체결 빈도
 - 모델 대비 실체결 slippage
@@ -52,7 +52,7 @@
 - 주문 상태 불명
 - `clientOrderId` 없는 live 주문 생성 시도
 - `cashBuyingPower` constraint 조회 실패
-- CLOSED 주문 페이징 누락
+- target order 상세 응답 누락
 - rate limit 대응 실패
 - unknown broker error code 반복 발생
 - external source stale 상태에서 해당 source 의존 신호 발생

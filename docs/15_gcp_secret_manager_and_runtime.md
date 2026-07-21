@@ -45,6 +45,7 @@ export TOSS_API_ENV_SECRET="toss-api-env"
 export TOSS_BROKER_BASE_URL_SECRET="toss-broker-base-url"
 export FOUNDATION_LOAD_GCP_SECRETS=1
 export FOUNDATION_MAX_ORDER_DETAILS=1
+export FOUNDATION_TARGET_ORDER_ID=""  # v1에서만 captured orderId 설정
 ```
 
 The values above are secret names, not secret values.
@@ -158,10 +159,11 @@ foundation_audit=ok
 profile=v0-empty-safe
 ```
 
-Foundation v1 after a manual tiny order is CLOSED:
+Foundation v1 after the captured manual tiny order is filled:
 
 ```bash
 export FOUNDATION_AUDIT_PROFILE=v1-funded-read-only
+export FOUNDATION_TARGET_ORDER_ID="<captured-order-id>"
 ./scripts/run_foundation_gcp.sh
 ```
 

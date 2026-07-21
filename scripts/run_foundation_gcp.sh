@@ -12,6 +12,7 @@ BACKUP_DIR="${FOUNDATION_BACKUP_DIR:-runtime/backups}"
 LOCK_PATH="${FOUNDATION_LOCK_PATH:-runtime/foundation_runner.lock}"
 BUYING_POWER_CURRENCY="${FOUNDATION_BUYING_POWER_CURRENCY:-USD}"
 MAX_ORDER_DETAILS="${FOUNDATION_MAX_ORDER_DETAILS:-1}"
+TARGET_ORDER_ID="${FOUNDATION_TARGET_ORDER_ID:-}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 mkdir -p \
@@ -105,12 +106,18 @@ fi
 
 json_log "foundation_runner_start"
 
-"${PYTHON_BIN}" -m toss_trading.cli.foundation_snapshot \
-  --db "${DB_PATH}" \
-  --report "${REPORT_PATH}" \
-  --buying-power-currency "${BUYING_POWER_CURRENCY}" \
-  --max-order-details "${MAX_ORDER_DETAILS}" \
+SNAPSHOT_ARGS=(
+  --db "${DB_PATH}"
+  --report "${REPORT_PATH}"
+  --buying-power-currency "${BUYING_POWER_CURRENCY}"
+  --max-order-details "${MAX_ORDER_DETAILS}"
   --json-log "${JSON_LOG_PATH}"
+)
+if [[ -n "${TARGET_ORDER_ID}" ]]; then
+  SNAPSHOT_ARGS+=(--target-order-id "${TARGET_ORDER_ID}")
+fi
+
+"${PYTHON_BIN}" -m toss_trading.cli.foundation_snapshot "${SNAPSHOT_ARGS[@]}"
 
 "${PYTHON_BIN}" -m toss_trading.cli.foundation_audit \
   --db "${DB_PATH}" \
