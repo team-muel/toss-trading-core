@@ -1,11 +1,16 @@
 runtime:
-  mode: paper
+  mode: foundation_read_only
   base_currency: USD
   tax_reporting_currency: KRW
   live_trading_enabled: false
   broker_base_url: https://openapi.tossinvest.com
-  toss_openapi_schema_hash: 3cfe843cba752874ab4fa83998e2614c8c03fb7bc154ee53e65df8e078a1d71d
+  toss_openapi_schema_version: 1.2.4
+  toss_openapi_schema_hash: 7000d89ea3d783b0fa36d32e31750e85e139098306dbfce53a75fc4891019f1b
   toss_openapi_schema_hash_source: https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
+  # OpenAPI 1.2.4 exposes status=CLOSED in the query enum but the referenced
+  # PaginatedOrderResponse still says it returns 400 closed-not-supported.
+  # Keep CLOSED list polling disabled until Toss publishes an unambiguous contract.
+  closed_order_listing_supported: false
   live_scope: equity_etf_only
 
 external_data:
@@ -77,6 +82,11 @@ starter_guardrails:
   allow_stale_external_signal_reuse: false
   block_new_orders_on_any_reconciliation_diff: true
   block_new_orders_after_any_unknown_order_state: true
+  require_same_run_reconciliation: true
+  require_normal_source_health: true
+  require_rate_limit_healthy: true
+  kill_switch_states_allowing_orders:
+    - NORMAL
 
 portfolio_limits:
   # Populated only after calibration review. Do not copy report numbers here.

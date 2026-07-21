@@ -45,6 +45,7 @@ export TOSS_API_ENV_SECRET="toss-api-env"
 export TOSS_BROKER_BASE_URL_SECRET="toss-broker-base-url"
 export FOUNDATION_LOAD_GCP_SECRETS=1
 export FOUNDATION_MAX_ORDER_DETAILS=1
+export FOUNDATION_TARGET_ORDER_ID=""  # v1에서만 captured orderId 설정
 ```
 
 The values above are secret names, not secret values.
@@ -126,6 +127,14 @@ If set, the runner uploads the SQLite backup after `foundation_audit` passes. Th
 
 The runner requires `flock` and takes a non-blocking lock at `FOUNDATION_LOCK_PATH`. If another run is active, it writes `foundation_runner_lock_busy` and exits without starting another API polling run.
 
+The runner sets `umask 077`. New databases, backups, reports, locks, and logs
+are therefore readable only by the service user. The systemd service also sets
+`UMask=0077` as a second enforcement layer.
+
+Install runtime dependencies from `requirements.lock` and CI/test dependencies
+from `requirements-dev.lock` so that a reviewed commit resolves the same
+dependency versions during later deployments.
+
 ## Git Safety
 
 Never commit:
@@ -158,10 +167,11 @@ foundation_audit=ok
 profile=v0-empty-safe
 ```
 
-Foundation v1 after a manual tiny order is CLOSED:
+Foundation v1 after the captured manual tiny order is filled:
 
 ```bash
 export FOUNDATION_AUDIT_PROFILE=v1-funded-read-only
+export FOUNDATION_TARGET_ORDER_ID="<captured-order-id>"
 ./scripts/run_foundation_gcp.sh
 ```
 

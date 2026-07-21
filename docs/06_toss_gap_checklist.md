@@ -10,7 +10,7 @@
 - [x] `Authorization: Bearer {access_token}`
 - [x] 계좌 API용 `X-Tossinvest-Account` 헤더
 - [x] rate limit 그룹과 응답 헤더
-- [ ] Toss Open API 허용 IP 등록 확인
+- [x] GCP 고정 외부 IP의 Toss Open API 허용 IP 등록 확인 (2026-07-21)
 - [ ] token expiry와 refresh timing 실계좌 확인
 - [ ] 계좌별 주문 권한 확인
 - [ ] sandbox 또는 paper endpoint 존재 여부 확인
@@ -66,7 +66,8 @@
 - [ ] 내부 장부와 Toss holdings 대사
 - [ ] `/oauth2/token`이 `access_denied` 또는 IP 제한 없이 성공
 - [ ] OPEN 주문 목록과 내부 open order ledger 대사
-- [ ] CLOSED 주문 페이징 누락 방지
+- [ ] OpenAPI 1.2.4의 CLOSED 계약 모순 해소 확인 전 CLOSED 목록 호출 금지
+- [ ] OPEN 상태에서 확보한 정확한 `orderId`의 상세 응답으로 종료 상태 검증
 - [ ] 부분체결 snapshot/delta 처리
 - [ ] `clientOrderId`를 모든 주문에 강제
 - [ ] 주문 timeout 후 중복 주문 방지

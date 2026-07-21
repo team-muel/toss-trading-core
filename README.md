@@ -87,9 +87,12 @@ Foundation v1 funded read-only 검증:
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m toss_trading.cli.foundation_snapshot
+python -m toss_trading.cli.foundation_snapshot --target-order-id "<OPEN 상태에서 확보한 orderId>"
 python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
 ```
+
+대상 주문은 토스 앱에서 직접 제출하고 실제로 소량 체결된 주문이어야 합니다.
+취소만 된 주문은 체결량, 수수료, 결제일 증거가 없어 v1을 통과하지 못합니다.
 
 GCP VM runner:
 

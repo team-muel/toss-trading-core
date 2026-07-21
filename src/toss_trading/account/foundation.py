@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Any
 
 from toss_trading.account.ledger import AccountLedger, AccountStateExplanation
 from toss_trading.broker.toss import TossReadOnlyAdapter
+from toss_trading.contracts import require_accounts
 
 
 @dataclass(frozen=True)
 class FoundationSnapshotResult:
+    run_id: str
     accounts: int
     holdings: int
     open_orders: int
@@ -58,87 +61,92 @@ class FoundationSnapshotter:
         buying_power_currency: str = "USD",
         max_order_pages: int = 20,
         max_order_details: int = 20,
+        target_order_id: str | None = None,
+        policy_hash: str | None = None,
     ) -> FoundationSnapshotResult:
-        accounts_result = self.adapter.get_accounts()
-        accounts = self.ledger.ingest_accounts(
-            accounts_result.body,
-            raw_ref=accounts_result.raw_response_id,
+        run_id = self.ledger.begin_snapshot_run(
+            account_seq=account_seq,
+            target_order_id=target_order_id,
+            policy_hash=policy_hash,
         )
-        credentials = getattr(self.adapter, "credentials", None)
-        adapter_account_seq = getattr(credentials, "account_seq", None)
-        resolved_account_seq = account_seq or adapter_account_seq
-        if not resolved_account_seq:
-            rows = self.ledger.conn.execute(
-                """
-                SELECT DISTINCT account_seq
-                FROM account_snapshot
-                ORDER BY account_seq
-                """
-            ).fetchall()
-            if len(rows) != 1:
+        try:
+            if hasattr(self.adapter, "run_id"):
+                self.adapter.run_id = run_id
+            accounts_result = self.adapter.get_accounts()
+            account_items = require_accounts(accounts_result.body)
+            accounts = self.ledger.ingest_accounts(
+                accounts_result.body,
+                raw_ref=accounts_result.raw_response_id,
+                run_id=run_id,
+            )
+            current_account_seqs = {
+                str(item["accountSeq"]).strip() for item in account_items if item.get("accountSeq")
+            }
+            if not current_account_seqs:
+                raise RuntimeError("Toss accounts response did not contain an accountSeq")
+            credentials = getattr(self.adapter, "credentials", None)
+            adapter_account_seq = getattr(credentials, "account_seq", None)
+            resolved_account_seq = account_seq or adapter_account_seq
+            if not resolved_account_seq:
+                if len(current_account_seqs) != 1:
+                    raise RuntimeError(
+                        "TOSS_ACCOUNT_SEQ is required when the current accounts response is ambiguous"
+                    )
+                resolved_account_seq = next(iter(current_account_seqs))
+            if resolved_account_seq not in current_account_seqs:
                 raise RuntimeError(
-                    "TOSS_ACCOUNT_SEQ is required when accounts list is empty or ambiguous"
+                    "requested account_seq is not present in the current Toss accounts response"
                 )
-            resolved_account_seq = str(rows[0]["account_seq"])
+            if adapter_account_seq and adapter_account_seq != resolved_account_seq:
+                if not isinstance(self.adapter, TossReadOnlyAdapter):
+                    raise RuntimeError("adapter account differs from requested account_seq")
+                self.adapter = self.adapter.with_account(resolved_account_seq)
+                self.adapter.run_id = run_id
 
-        if credentials is not None and getattr(credentials, "account_seq", None) is None:
-            object.__setattr__(credentials, "account_seq", resolved_account_seq)
-
-        holdings_result = self.adapter.get_holdings()
-        holdings = self.ledger.ingest_holdings(
-            holdings_result.body,
-            account_seq=resolved_account_seq,
-            raw_ref=holdings_result.raw_response_id,
-        )
-
-        order_detail_rows = 0
-        execution_snapshot_rows = 0
-        execution_delta_rows = 0
-
-        open_orders = 0
-        closed_orders = 0
-        open_order_results = []
-        closed_order_results = []
-        for result in self.adapter.get_all_orders(status="OPEN", max_pages=max_order_pages):
-            open_order_results.append(result)
-            open_orders += self.ledger.ingest_orders(
-                result.body,
+            holdings_result = self.adapter.get_holdings()
+            holdings = self.ledger.ingest_holdings(
+                holdings_result.body,
                 account_seq=resolved_account_seq,
-                raw_ref=result.raw_response_id,
+                raw_ref=holdings_result.raw_response_id,
+                run_id=run_id,
             )
-            snapshots, deltas = self.ledger.ingest_execution_snapshots(
-                result.body,
-                account_seq=resolved_account_seq,
-                raw_ref=result.raw_response_id,
-            )
-            execution_snapshot_rows += snapshots
-            execution_delta_rows += deltas
 
-        for result in self.adapter.get_all_orders(status="CLOSED", max_pages=max_order_pages):
-            closed_order_results.append(result)
-            closed_orders += self.ledger.ingest_orders(
-                result.body,
-                account_seq=resolved_account_seq,
-                raw_ref=result.raw_response_id,
-            )
-            snapshots, deltas = self.ledger.ingest_execution_snapshots(
-                result.body,
-                account_seq=resolved_account_seq,
-                raw_ref=result.raw_response_id,
-            )
-            execution_snapshot_rows += snapshots
-            execution_delta_rows += deltas
+            order_detail_rows = 0
+            execution_snapshot_rows = 0
+            execution_delta_rows = 0
+            open_orders = 0
+            open_order_results = []
+            for result in self.adapter.get_all_orders(status="OPEN", max_pages=max_order_pages):
+                open_order_results.append(result)
+                open_orders += self.ledger.ingest_orders(
+                    result.body,
+                    account_seq=resolved_account_seq,
+                    raw_ref=result.raw_response_id,
+                    run_id=run_id,
+                    status_group="OPEN",
+                )
+                snapshots, deltas = self.ledger.ingest_execution_snapshots(
+                    result.body,
+                    account_seq=resolved_account_seq,
+                    raw_ref=result.raw_response_id,
+                    run_id=run_id,
+                    status_group="OPEN",
+                )
+                execution_snapshot_rows += snapshots
+                execution_delta_rows += deltas
 
-        if include_order_details:
-            detail_limit = max(0, max_order_details)
-            seen_order_ids: set[str] = set()
-            for result in [*closed_order_results, *open_order_results]:
-                if order_detail_rows >= detail_limit:
-                    break
-                for order in _orders_from_body(result.body):
+            if include_order_details:
+                detail_limit = max(0, max_order_details)
+                seen_order_ids: set[str] = set()
+                detail_order_ids = [target_order_id] if target_order_id else []
+                for result in open_order_results:
+                    detail_order_ids.extend(
+                        str(order.get("orderId") or "").strip()
+                        for order in _orders_from_body(result.body)
+                    )
+                for order_id in detail_order_ids:
                     if order_detail_rows >= detail_limit:
                         break
-                    order_id = str(order.get("orderId") or order.get("id") or "").strip()
                     if not order_id or order_id in seen_order_ids:
                         continue
                     seen_order_ids.add(order_id)
@@ -147,66 +155,71 @@ class FoundationSnapshotter:
                         detail.body,
                         account_seq=resolved_account_seq,
                         raw_ref=detail.raw_response_id,
+                        run_id=run_id,
                     )
                     snapshots, deltas = self.ledger.ingest_execution_snapshots(
                         detail.body,
                         account_seq=resolved_account_seq,
                         raw_ref=detail.raw_response_id,
+                        run_id=run_id,
                     )
                     execution_snapshot_rows += snapshots
                     execution_delta_rows += deltas
 
-        buying_power_result = self.adapter.get_buying_power(currency=buying_power_currency)
-        buying_power_rows = self.ledger.ingest_buying_power(
-            buying_power_result.body,
-            account_seq=resolved_account_seq,
-            raw_ref=buying_power_result.raw_response_id,
-        )
+            buying_power_result = self.adapter.get_buying_power(currency=buying_power_currency)
+            buying_power_rows = self.ledger.ingest_buying_power(
+                buying_power_result.body,
+                account_seq=resolved_account_seq,
+                raw_ref=buying_power_result.raw_response_id,
+                run_id=run_id,
+            )
+            commissions_result = self.adapter.get_commissions()
+            commission_rows = self.ledger.ingest_commissions(
+                commissions_result.body,
+                account_seq=resolved_account_seq,
+                raw_ref=commissions_result.raw_response_id,
+                run_id=run_id,
+            )
 
-        commissions_result = self.adapter.get_commissions()
-        commission_rows = self.ledger.ingest_commissions(
-            commissions_result.body,
-            account_seq=resolved_account_seq,
-            raw_ref=commissions_result.raw_response_id,
-        )
+            sellable_quantity_rows = 0
+            if include_sellable_quantity:
+                symbols = [
+                    row["symbol"]
+                    for row in self.ledger.conn.execute(
+                        """
+                        SELECT symbol FROM holding_snapshot
+                        WHERE account_seq = ? AND run_id = ?
+                        ORDER BY symbol
+                        """,
+                        (resolved_account_seq, run_id),
+                    ).fetchall()
+                ]
+                for symbol in symbols:
+                    result = self.adapter.get_sellable_quantity(symbol=symbol)
+                    sellable_quantity_rows += self.ledger.ingest_sellable_quantity(
+                        result.body,
+                        account_seq=resolved_account_seq,
+                        raw_ref=result.raw_response_id,
+                        fallback_symbol=symbol,
+                        run_id=run_id,
+                    )
 
-        sellable_quantity_rows = 0
-        if include_sellable_quantity:
-            symbols = [
-                row["symbol"]
-                for row in self.ledger.conn.execute(
-                    """
-                    SELECT symbol
-                    FROM holding_snapshot
-                    WHERE account_seq = ?
-                      AND ts = (
-                        SELECT MAX(ts) FROM holding_snapshot WHERE account_seq = ?
-                      )
-                    ORDER BY symbol
-                    """,
-                    (resolved_account_seq, resolved_account_seq),
-                ).fetchall()
-            ]
-            for symbol in symbols:
-                result = self.adapter.get_sellable_quantity(symbol=symbol)
-                sellable_quantity_rows += self.ledger.ingest_sellable_quantity(
-                    result.body,
-                    account_seq=resolved_account_seq,
-                    raw_ref=result.raw_response_id,
-                    fallback_symbol=symbol,
-                )
-
-        explanation = self.ledger.explain_account_state(resolved_account_seq)
-        return FoundationSnapshotResult(
-            accounts=accounts,
-            holdings=holdings,
-            open_orders=open_orders,
-            closed_orders=closed_orders,
-            buying_power_rows=buying_power_rows,
-            commission_rows=commission_rows,
-            sellable_quantity_rows=sellable_quantity_rows,
-            order_detail_rows=order_detail_rows,
-            execution_snapshot_rows=execution_snapshot_rows,
-            execution_delta_rows=execution_delta_rows,
-            explanation=explanation,
-        )
+            self.ledger.finish_snapshot_run(run_id, account_seq=resolved_account_seq)
+            explanation = self.ledger.explain_account_state(resolved_account_seq, run_id=run_id)
+            return FoundationSnapshotResult(
+                run_id=run_id,
+                accounts=accounts,
+                holdings=holdings,
+                open_orders=open_orders,
+                closed_orders=0,
+                buying_power_rows=buying_power_rows,
+                commission_rows=commission_rows,
+                sellable_quantity_rows=sellable_quantity_rows,
+                order_detail_rows=order_detail_rows,
+                execution_snapshot_rows=execution_snapshot_rows,
+                execution_delta_rows=execution_delta_rows,
+                explanation=explanation,
+            )
+        except Exception as exc:
+            self.ledger.fail_snapshot_run(run_id, str(exc))
+            raise

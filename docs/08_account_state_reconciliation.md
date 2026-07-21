@@ -46,7 +46,7 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 | Position quantity difference | 0 | block new orders, replay orders |
 | Average price difference | rounding only | recompute P&L and lots |
 | Open order mismatch | 0 | manual review before new orders |
-| Missing closed order | 0 | reload CLOSED pages and replay ledger |
+| Missing target order detail | 0 | OPEN 상태에서 확보한 `orderId` 상세를 다시 조회 |
 | Commission/tax mismatch | 0 until calibrated | hold P&L as provisional |
 
 ## Replay Principle
@@ -79,7 +79,7 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 
 - 브로커 스냅샷 조회 실패
 - OPEN 주문 상태 불명
-- CLOSED 주문 페이징 누락
+- 대상 주문 ID의 상세 응답 누락
 - holdings와 내부 position ledger 불일치
 - buying power 조회 실패
 - buying power가 내부 available cash와 정책 허용 범위를 벗어남
@@ -103,15 +103,16 @@ v1은 빈 계좌 검증이 아닙니다. 실제 현금, 보유종목, 수동 주
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m toss_trading.cli.foundation_snapshot
+python -m toss_trading.cli.foundation_snapshot --target-order-id "<OPEN 상태에서 확보한 orderId>"
 python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
 ```
 
 v1 audit은 다음을 요구합니다.
 
 - holdings count가 0보다 큼
-- CLOSED order가 존재
-- `/api/v1/orders/{orderId}` 상세 응답이 raw로 저장됨
+- snapshot run에 `target_order_id`가 기록됨
+- 동일 run에 정확한 `/api/v1/orders/{target_order_id}` 상세 응답이 raw로 저장됨
+- 대상 주문에 0보다 큰 실제 체결수량이 존재
 - cumulative filled quantity, cumulative filled amount, average filled price가 존재
 - cumulative execution snapshot에서 execution delta가 생성됨
 - commission snapshot이 존재

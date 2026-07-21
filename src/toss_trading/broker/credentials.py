@@ -1,6 +1,7 @@
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 @dataclass(frozen=True)
@@ -18,6 +19,8 @@ def _load_local_dotenv() -> None:
     Existing process environment variables win.
     """
 
+    if os.environ.get("TOSS_LOAD_LOCAL_DOTENV") != "1":
+        return
     env_path = Path(".env")
     if not env_path.exists():
         return
@@ -48,8 +51,22 @@ def load_toss_credentials_from_env() -> TossCredentials:
         joined = ", ".join(missing)
         raise RuntimeError(f"missing Toss credential environment variables: {joined}")
 
+    base_url = os.environ.get("TOSS_BROKER_BASE_URL", "https://openapi.tossinvest.com")
+    parsed = urlparse(base_url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or (
+            parsed.hostname != "openapi.tossinvest.com"
+            and os.environ.get("TOSS_ALLOW_CUSTOM_BASE_URL") != "1"
+        )
+    ):
+        raise RuntimeError(
+            "TOSS_BROKER_BASE_URL must be https://openapi.tossinvest.com "
+            "(set TOSS_ALLOW_CUSTOM_BASE_URL=1 only for an approved test endpoint)"
+        )
     return TossCredentials(
-        base_url=os.environ.get("TOSS_BROKER_BASE_URL", "https://openapi.tossinvest.com"),
+        base_url=base_url.rstrip("/"),
         client_id=os.environ["TOSS_CLIENT_ID"],
         client_secret=os.environ["TOSS_CLIENT_SECRET"],
         account_seq=os.environ.get("TOSS_ACCOUNT_SEQ") or None,

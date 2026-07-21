@@ -10,6 +10,11 @@ build/
 .env
 .env.*
 !.env.example
-runtime/
+/runtime/
 *.sqlite
 *.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.jsonl
+*.log
+.coverage

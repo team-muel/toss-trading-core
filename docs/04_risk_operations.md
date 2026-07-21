@@ -21,7 +21,7 @@
 - 주문 거부율이 한도 초과
 - 실체결 슬리피지가 모델 대비 2배 이상으로 3거래일 지속
 - Toss holdings와 내부 position ledger 불일치
-- Toss OPEN/CLOSED 주문 목록과 내부 order ledger 불일치
+- Toss OPEN 주문 및 확보된 target order 상세와 내부 order ledger 불일치
 - 주문 응답 타임아웃 뒤 접수 여부 확인 전 새 주문을 내야 하는 상황
 - `cashBuyingPower` constraint 조회 실패 또는 내부 available cash와 정책 허용 범위 초과
 - raw API response 저장 실패
@@ -37,7 +37,7 @@
 | --- | --- | --- |
 | `broker` | token failure, account header error, raw API response failure | live 신규 주문 중단 |
 | `execution` | reject code, timeout, partial fill drift, cancel/replace review | 주문 속도 감속 또는 중단 |
-| `reconciliation` | cash diff, position diff, missing closed order | 신규 주문 중단 |
+| `reconciliation` | cash diff, position diff, missing target order detail | 신규 주문 중단 |
 | `data` | stale quote, missing NAV, missing option chain, source heartbeat loss | 의존 엔진 신호 중단 |
 | `risk` | drawdown, tail stress, concentration | 포지션 축소 검토 |
 | `tax` | ROC unknown, withholding mismatch, tax lot provisional | 해당 ETF 신규진입 차단 |

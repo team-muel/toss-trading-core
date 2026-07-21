@@ -12,6 +12,7 @@ from toss_trading.data import (
     validate_universe_mapping,
 )
 from toss_trading.runtime import JsonlLogger, load_gcp_secret_environment
+from toss_trading.policy import load_policy
 
 
 def _latest_source_health_safely(ledger: AccountLedger):
@@ -108,6 +109,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional JSONL log output path.",
     )
+    parser.add_argument(
+        "--policy",
+        default="config/default_policy.yaml",
+        help="Validated policy artifact recorded with this snapshot run.",
+    )
+    parser.add_argument(
+        "--target-order-id",
+        default=None,
+        help="Known Toss orderId captured while the manual v1 test order was OPEN.",
+    )
     return parser
 
 
@@ -117,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     universe = load_universe(args.universe)
     mappings = load_instrument_mappings(args.instrument_master)
     validate_universe_mapping(universe, mappings)
+    _, policy_hash = load_policy(args.policy)
 
     db_path = Path(args.db)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -144,10 +156,13 @@ def main(argv: list[str] | None = None) -> int:
             buying_power_currency=args.buying_power_currency,
             max_order_pages=args.max_order_pages,
             max_order_details=args.max_order_details,
+            target_order_id=args.target_order_id,
+            policy_hash=policy_hash,
         )
         lines = [
             "foundation_snapshot=ok",
             f"accounts_rows={result.accounts}",
+            f"snapshot_run_id={result.run_id}",
             f"holdings_rows={result.holdings}",
             f"open_order_rows={result.open_orders}",
             f"closed_order_rows={result.closed_orders}",

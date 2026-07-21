@@ -4,6 +4,8 @@
 
 ## Official Base
 
+- Approved schema version: `1.2.4`
+- Approved SHA-256: `7000d89ea3d783b0fa36d32e31750e85e139098306dbfce53a75fc4891019f1b`
 - Base server: `https://openapi.tossinvest.com`
 - Auth: OAuth2 Client Credentials Grant
 - Token endpoint: `POST /oauth2/token`
@@ -33,6 +35,15 @@
 - 미국 주식은 `orderAmount` 기반 시장가 주문을 지원하지만 정규장 시간에만 가능합니다.
 - 1억원 이상 주문은 `confirmHighValueOrder=true`가 필요합니다.
 - 클라이언트는 unknown enum 값을 허용해야 합니다.
+
+## CLOSED Order Contract Caution
+
+OpenAPI 1.2.4는 `/api/v1/orders`의 `status` enum에 `OPEN`, `CLOSED`를 모두
+노출하고 CLOSED용 cursor/limit 설명도 제공합니다. 그러나 같은 문서의
+`PaginatedOrderResponse` 설명에는 `status=CLOSED`가 `400 closed-not-supported`를
+반환한다고 적혀 있습니다. 이 모순이 공식 문서에서 해소되기 전까지 Foundation은
+CLOSED 목록을 호출하지 않습니다. v1은 주문이 OPEN일 때 `orderId`를 확보하고,
+그 정확한 ID의 `/api/v1/orders/{orderId}` 상세를 같은 snapshot run에서 검증합니다.
 
 ## Order Status
 

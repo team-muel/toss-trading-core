@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Toss Foundation read-only audit every six hours
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+RandomizedDelaySec=15min
+Persistent=true
+Unit=toss-foundation.service
+
+[Install]
+WantedBy=timers.target

@@ -24,6 +24,8 @@ class GcpRunnerFilesTest(unittest.TestCase):
             "docs/16_cloud_monitoring_runner_health.md",
             "scripts/load_gcp_secrets.sh",
             "scripts/run_foundation_gcp.sh",
+            "deploy/systemd/toss-foundation.service",
+            "deploy/systemd/toss-foundation.timer",
         ]:
             self.assertTrue(Path(path).exists(), path)
 
@@ -35,7 +37,10 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("FOUNDATION_BACKUP_DIR", runner)
         self.assertIn("FOUNDATION_LOCK_PATH", runner)
         self.assertIn("FOUNDATION_MAX_ORDER_DETAILS", runner)
+        self.assertIn("FOUNDATION_TARGET_ORDER_ID", runner)
+        self.assertIn("umask 077", runner)
         self.assertIn("--max-order-details", runner)
+        self.assertIn("--target-order-id", runner)
         self.assertIn("command -v flock", runner)
         self.assertIn("exec 9>\"${LOCK_PATH}\"", runner)
         self.assertIn("flock -n 9", runner)
@@ -75,6 +80,20 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("gcloud CLI is required", loader)
         self.assertIn("secret_loader_loaded env=", loader)
         self.assertNotIn("echo \"${value}\"", loader)
+
+    def test_systemd_runner_is_read_only_and_hardened(self):
+        service = Path("deploy/systemd/toss-foundation.service").read_text(
+            encoding="utf-8"
+        )
+        timer = Path("deploy/systemd/toss-foundation.timer").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("UMask=0077", service)
+        self.assertIn("FOUNDATION_AUDIT_PROFILE=v0-empty-safe", service)
+        self.assertIn("FOUNDATION_LOAD_GCP_SECRETS=1", service)
+        self.assertIn("OnUnitActiveSec=6h", timer)
+        self.assertIn("Persistent=true", timer)
 
 
 if __name__ == "__main__":
