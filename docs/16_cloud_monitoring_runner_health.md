@@ -62,6 +62,19 @@ Send `runtime/foundation_runner.jsonl` to Cloud Logging using the Ops Agent or a
 - Toss error action is `register_current_ip_in_toss_openapi_allowlist`
 - v1 audit fails after a manual funded validation run
 
+## Deployed Monitoring State — 2026-07-21
+
+The production-lab project currently has:
+
+- Ops Agent collection of the foundation runner JSONL log
+- all ten suggested log-based event counters
+- alert policies for runner failure, snapshot failure, audit failure, and eight-hour heartbeat absence
+- a verified operator email notification channel attached to the alert policies
+
+The systemd timer runs the read-only v0 foundation job every six hours. A
+successful manual run after the Toss key rotation emitted successful broker,
+audit, local backup, and Cloud Storage upload evidence.
+
 ## Suggested Log-Based Metrics
 
 Create log-based counters from JSONL events:

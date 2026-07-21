@@ -248,11 +248,13 @@ class FoundationAccountStateTest(unittest.TestCase):
 
         result = FoundationSnapshotter(fake, ledger).snapshot(
             account_seq="1",
+            include_closed_orders=True,
             max_order_details=1,
         )
 
+        self.assertEqual(result.closed_orders, 1)
         self.assertEqual(result.order_detail_rows, 1)
-        self.assertEqual(fake.detail_order_ids, ["open-1"])
+        self.assertEqual(fake.detail_order_ids, ["closed-1"])
         detail_count = ledger.conn.execute(
             "SELECT COUNT(*) FROM raw_api_response WHERE endpoint LIKE '/api/v1/orders/%'"
         ).fetchone()[0]
@@ -650,7 +652,7 @@ class FoundationAccountStateTest(unittest.TestCase):
         self.assertEqual(raw["request_id"], "body-req-400")
         self.assertEqual(raw["channel"], "rest:/api/v1/orders")
 
-    def test_toss_adapter_blocks_ambiguous_closed_order_listing(self):
+    def test_toss_adapter_allows_explicit_closed_order_listing(self):
         adapter = TossReadOnlyAdapter(
             TossCredentials(
                 client_id="client",
@@ -660,8 +662,37 @@ class FoundationAccountStateTest(unittest.TestCase):
             )
         )
 
-        with self.assertRaisesRegex(RuntimeError, "closed-not-supported"):
-            adapter.get_all_orders(status="CLOSED")
+        result = TossApiResult(
+            endpoint="/api/v1/orders?status=CLOSED&limit=100",
+            status_code=200,
+            body={"result": {"orders": [], "nextCursor": None, "hasNext": False}},
+            raw_response_id="raw-1",
+        )
+        with patch.object(adapter, "get_orders", return_value=result) as get_orders:
+            pages = adapter.get_all_orders(status="CLOSED")
+
+        self.assertEqual(pages, [result])
+        get_orders.assert_called_once_with(
+            status="CLOSED",
+            symbol=None,
+            from_date=None,
+            to_date=None,
+            cursor=None,
+            limit=100,
+        )
+
+    def test_toss_adapter_rejects_unknown_order_status_group(self):
+        adapter = TossReadOnlyAdapter(
+            TossCredentials(
+                client_id="client",
+                client_secret="secret",
+                account_seq="1",
+                base_url="https://example.invalid",
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "OPEN or CLOSED"):
+            adapter.get_all_orders(status="UNKNOWN")
 
 
 if __name__ == "__main__":

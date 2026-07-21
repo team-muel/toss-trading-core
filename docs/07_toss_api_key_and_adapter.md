@@ -90,7 +90,7 @@ Toss 주문 상태는 REST polling으로 관리합니다.
 
 - create 직후 detail/list polling
 - OPEN 주문 주기 대사
-- CLOSED 목록은 OpenAPI 1.2.4가 쿼리 enum에는 노출하지만 `PaginatedOrderResponse`에는 `400 closed-not-supported`라고 명시하므로 호출하지 않음
+- CLOSED 목록은 OpenAPI 1.2.4 내부 설명이 서로 충돌하지만 2026-07-21 실제 GCP 호출에서 200 응답을 확인함. 기본 runner에서는 끄고 명시적 복구·검증 실행에서만 사용
 - 종료 주문은 OPEN일 때 확보한 정확한 `orderId`로 상세 조회
 - rate-limit header 기반 cadence 조정
 - 429 발생 시 `Retry-After` 우선

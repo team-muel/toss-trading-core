@@ -32,6 +32,24 @@ toss-api-env=live
 toss-broker-base-url=https://openapi.tossinvest.com
 ```
 
+## Deployed Secret State — 2026-07-21
+
+The production-lab VM uses the dedicated service account
+`toss-foundation-runner@toss-trading-core-lab.iam.gserviceaccount.com`.
+The default Compute Engine service account is not attached to the VM and its
+former project Editor grant has been removed.
+
+The Toss Client ID and Client Secret were reissued after identity verification.
+For both `toss-client-id` and `toss-client-secret`:
+
+- version 2 is enabled and is the runtime version
+- version 1 is disabled, not destroyed, to preserve a reversible emergency rollback
+- no plaintext key is stored in the repository, VM filesystem, shell history, or documentation
+
+After rotation, the VM completed the v0 read-only audit twice, including once
+after version 1 was disabled. This proves that the runner resolves the enabled
+latest version rather than depending on the retired value.
+
 ## VM Environment
 
 Set these non-secret environment variables on the VM:
@@ -45,6 +63,7 @@ export TOSS_API_ENV_SECRET="toss-api-env"
 export TOSS_BROKER_BASE_URL_SECRET="toss-broker-base-url"
 export FOUNDATION_LOAD_GCP_SECRETS=1
 export FOUNDATION_MAX_ORDER_DETAILS=1
+export FOUNDATION_INCLUDE_CLOSED_ORDERS=0  # explicit recovery only
 export FOUNDATION_TARGET_ORDER_ID=""  # v1에서만 captured orderId 설정
 ```
 
@@ -181,3 +200,9 @@ Expected:
 foundation_audit=ok
 profile=v1-funded-read-only
 ```
+
+The 2026-07-21 production-lab v1 run passed using an exact order ID recovered
+from a bounded CLOSED-order query. The run stored order detail, execution and
+delta, actual commission, settlement, and sellable-quantity evidence, then
+uploaded the v1 SQLite backup to the private bucket. Keep CLOSED lookup disabled
+for the normal scheduled v0 service.
