@@ -206,3 +206,24 @@ from a bounded CLOSED-order query. The run stored order detail, execution and
 delta, actual commission, settlement, and sellable-quantity evidence, then
 uploaded the v1 SQLite backup to the private bucket. Keep CLOSED lookup disabled
 for the normal scheduled v0 service.
+
+## Restore Drill — 2026-07-21
+
+The v1 GCS backup was restored without touching the live database:
+
+```text
+/home/seoje/toss-trading/restore-drills/20260721T100415Z/foundation_account_state.sqlite
+```
+
+Verified evidence:
+
+- SQLite `PRAGMA integrity_check` returned `ok`
+- file mode is `600` and the containing directory is `700`
+- restored size is 413,696 bytes
+- SHA-256 is `ff39fcc2d711784f2fdb9bf05239725eafc66ff57e02f764025fa44c0091d748`
+- `foundation_audit --profile v1-funded-read-only` passed with no blockers
+- target detail, filled execution, execution delta, commission, settlement,
+  and sellable-quantity evidence remained readable from the restored copy
+
+The restored copy is retained as drill evidence and is not used by the live
+runner.

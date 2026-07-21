@@ -96,22 +96,30 @@ approved strategy universe and is not made strategy-eligible by this test.
 
 ## Remaining Gates In Priority Order
 
-1. **P1 — Restore drill.** Restore a private GCS SQLite backup into an isolated
-   temporary path and verify database integrity and audit evidence. Do not
-   overwrite the live database during the drill.
-2. **P1 — Scheduled-run observation.** Observe at least 24 hours of six-hour
+1. **P1 — Scheduled-run observation.** Observe at least 24 hours of six-hour
    timer runs and verify that the notification path is operational.
-3. **P2 — Foundation regression review.** Recheck universe/master 1:1 mapping,
+2. **P2 — Foundation regression review.** Recheck universe/master 1:1 mapping,
    raw-response replay, source-health behavior, and clean-checkout CI.
-4. **P3 — External minimum data stack.** Begin Massive REST, corporate actions,
+3. **P3 — External minimum data stack.** Begin Massive REST, corporate actions,
    FRED, and SEC only after v1 passes.
-5. **P4 — Signal safety and paper planner.** Add feature/signal separation and
+4. **P4 — Signal safety and paper planner.** Add feature/signal separation and
    stale-data gates before any shadow operation.
-6. **P5 — Shadow/live gate.** Complete two weeks of shadow operation and obtain
+5. **P5 — Shadow/live gate.** Complete two weeks of shadow operation and obtain
    a separate explicit approval before considering a micro-live run.
 
 Foundation v1 is complete. The repository and VM remain read-only while the
 next safety and external-data stages are implemented.
+
+## Restore And Observation Status — 2026-07-21
+
+The private v1 backup was restored to an isolated drill directory. SQLite
+integrity and the full v1 audit passed from the restored copy; the live database
+was not overwritten. The restored file remains mode `600` as audit evidence.
+
+The six-hour systemd timer is active, with its next run scheduled for
+2026-07-22 01:18 KST. All four Cloud Monitoring policies are enabled. A local
+observation automation runs daily at 19:00 KST and reviews the preceding 24
+hours of runner success, failure, audit, heartbeat, and backup-upload evidence.
 
 ## Scope
 
