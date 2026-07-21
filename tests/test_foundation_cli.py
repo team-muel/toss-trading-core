@@ -16,6 +16,7 @@ class FoundationCliTest(unittest.TestCase):
         self.assertEqual(args.db, "runtime/foundation_account_state.sqlite")
         self.assertEqual(args.report, "runtime/foundation_account_state_report.txt")
         self.assertTrue(args.include_sellable_quantity)
+        self.assertFalse(args.include_closed_orders)
         self.assertEqual(args.max_order_details, 20)
 
     def test_parser_can_skip_sellable_quantity(self):
@@ -25,6 +26,10 @@ class FoundationCliTest(unittest.TestCase):
     def test_parser_accepts_max_order_details(self):
         args = build_parser().parse_args(["--max-order-details", "1"])
         self.assertEqual(args.max_order_details, 1)
+
+    def test_parser_can_include_closed_orders_explicitly(self):
+        args = build_parser().parse_args(["--include-closed-orders"])
+        self.assertTrue(args.include_closed_orders)
 
     def test_secret_manager_failure_does_not_hide_reason_with_missing_schema(self):
         with TemporaryDirectory() as tmp:

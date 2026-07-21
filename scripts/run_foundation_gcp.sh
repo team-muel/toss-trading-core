@@ -13,6 +13,7 @@ BACKUP_DIR="${FOUNDATION_BACKUP_DIR:-runtime/backups}"
 LOCK_PATH="${FOUNDATION_LOCK_PATH:-runtime/foundation_runner.lock}"
 BUYING_POWER_CURRENCY="${FOUNDATION_BUYING_POWER_CURRENCY:-USD}"
 MAX_ORDER_DETAILS="${FOUNDATION_MAX_ORDER_DETAILS:-1}"
+INCLUDE_CLOSED_ORDERS="${FOUNDATION_INCLUDE_CLOSED_ORDERS:-0}"
 TARGET_ORDER_ID="${FOUNDATION_TARGET_ORDER_ID:-}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
@@ -116,6 +117,9 @@ SNAPSHOT_ARGS=(
 )
 if [[ -n "${TARGET_ORDER_ID}" ]]; then
   SNAPSHOT_ARGS+=(--target-order-id "${TARGET_ORDER_ID}")
+fi
+if [[ "${INCLUDE_CLOSED_ORDERS}" == "1" ]]; then
+  SNAPSHOT_ARGS+=(--include-closed-orders)
 fi
 
 "${PYTHON_BIN}" -m toss_trading.cli.foundation_snapshot "${SNAPSHOT_ARGS[@]}"

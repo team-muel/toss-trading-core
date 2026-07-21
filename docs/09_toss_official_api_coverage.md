@@ -42,8 +42,10 @@ OpenAPI 1.2.4는 `/api/v1/orders`의 `status` enum에 `OPEN`, `CLOSED`를 모두
 노출하고 CLOSED용 cursor/limit 설명도 제공합니다. 그러나 같은 문서의
 `PaginatedOrderResponse` 설명에는 `status=CLOSED`가 `400 closed-not-supported`를
 반환한다고 적혀 있습니다. 이 모순이 공식 문서에서 해소되기 전까지 Foundation은
-CLOSED 목록을 호출하지 않습니다. v1은 주문이 OPEN일 때 `orderId`를 확보하고,
-그 정확한 ID의 `/api/v1/orders/{orderId}` 상세를 같은 snapshot run에서 검증합니다.
+2026-07-21 실제 GCP 계정에서는 `status=CLOSED`가 200과 종료 주문을 반환했습니다.
+따라서 구현은 CLOSED 조회를 명시적 opt-in으로 허용하되, 기본 6시간 runner에서는
+끄고 유지합니다. v1은 OPEN에서 확보하거나 검증된 CLOSED 목록에서 복구한 정확한
+`orderId`의 `/api/v1/orders/{orderId}` 상세를 같은 snapshot run에서 검증합니다.
 
 ## Order Status
 

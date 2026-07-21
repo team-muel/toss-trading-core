@@ -58,6 +58,7 @@ class FoundationSnapshotter:
         account_seq: str | None = None,
         include_sellable_quantity: bool = True,
         include_order_details: bool = True,
+        include_closed_orders: bool = False,
         buying_power_currency: str = "USD",
         max_order_pages: int = 20,
         max_order_details: int = 20,
@@ -135,10 +136,39 @@ class FoundationSnapshotter:
                 execution_snapshot_rows += snapshots
                 execution_delta_rows += deltas
 
+            closed_orders = 0
+            closed_order_results = []
+            if include_closed_orders:
+                for result in self.adapter.get_all_orders(
+                    status="CLOSED", max_pages=max_order_pages
+                ):
+                    closed_order_results.append(result)
+                    closed_orders += self.ledger.ingest_orders(
+                        result.body,
+                        account_seq=resolved_account_seq,
+                        raw_ref=result.raw_response_id,
+                        run_id=run_id,
+                        status_group="CLOSED",
+                    )
+                    snapshots, deltas = self.ledger.ingest_execution_snapshots(
+                        result.body,
+                        account_seq=resolved_account_seq,
+                        raw_ref=result.raw_response_id,
+                        run_id=run_id,
+                        status_group="CLOSED",
+                    )
+                    execution_snapshot_rows += snapshots
+                    execution_delta_rows += deltas
+
             if include_order_details:
                 detail_limit = max(0, max_order_details)
                 seen_order_ids: set[str] = set()
                 detail_order_ids = [target_order_id] if target_order_id else []
+                for result in closed_order_results:
+                    detail_order_ids.extend(
+                        str(order.get("orderId") or "").strip()
+                        for order in _orders_from_body(result.body)
+                    )
                 for result in open_order_results:
                     detail_order_ids.extend(
                         str(order.get("orderId") or "").strip()
@@ -211,7 +241,7 @@ class FoundationSnapshotter:
                 accounts=accounts,
                 holdings=holdings,
                 open_orders=open_orders,
-                closed_orders=0,
+                closed_orders=closed_orders,
                 buying_power_rows=buying_power_rows,
                 commission_rows=commission_rows,
                 sellable_quantity_rows=sellable_quantity_rows,

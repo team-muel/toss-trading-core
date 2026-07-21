@@ -266,11 +266,8 @@ class TossReadOnlyAdapter:
         limit: int = 100,
         max_pages: int = 20,
     ) -> list[TossApiResult]:
-        if status != "OPEN":
-            raise RuntimeError(
-                "Toss CLOSED order listing is disabled: OpenAPI 1.2.4 exposes the query value "
-                "but PaginatedOrderResponse still documents 400 closed-not-supported"
-            )
+        if status not in {"OPEN", "CLOSED"}:
+            raise ValueError("Toss order status group must be OPEN or CLOSED")
         results: list[TossApiResult] = []
         cursor: str | None = None
         seen_cursors: set[str] = set()

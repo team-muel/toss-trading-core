@@ -43,6 +43,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/14_gcp_static_ip_runner.md` | GCP 고정 IP VM, Secret Manager, JSONL runner 운영 절차 |
 | `docs/15_gcp_secret_manager_and_runtime.md` | GCP Secret Manager, VM 환경변수, runtime DB/log 경로 |
 | `docs/16_cloud_monitoring_runner_health.md` | Cloud Logging/Monitoring 기반 runner health 기준 |
+| `docs/17_remediation_and_live_gate.md` | 실제 GCP 배포·보안 조치 현황과 다음 live gate 우선순위 |
 
 ## Repository Layout
 

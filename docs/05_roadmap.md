@@ -14,6 +14,35 @@
 
 이 질문에 예라고 답하기 전에는 전략, 옵션 데이터, NAV 데이터, 뉴스 데이터를 붙이지 않습니다. 현재 범위는 Toss 계좌 원장, 거래 대상 universe, instrument mapping입니다.
 
+## Current Status — 2026-07-21
+
+Foundation v0 운영 기반은 완료되었습니다.
+
+- GCP 고정 외부 IP가 Toss Open API 허용 IP에 등록됨
+- 전용 VM 서비스 계정과 최소 Secret Manager 접근 권한 적용
+- Toss Client ID/Secret 재발급 후 Secret Manager 버전 2만 활성화
+- 6시간 주기의 읽기 전용 systemd runner 운영
+- 실제 VM에서 accounts, holdings, open orders, buying power, commissions 조회가 모두 2xx로 성공
+- `foundation_audit --profile v0-empty-safe` 통과 및 private GCS 백업 업로드 성공
+- Cloud Logging 지표, 실패 경보, 8시간 heartbeat 부재 경보와 이메일 알림 구성
+- GitHub `master` 보호와 필수 CI 검사 적용
+
+2026-07-21 수동 국내주식 주문과 수동 해외주식 주문이 각각 즉시 체결되어 보유종목 2개와 매도 가능 수량 2건이 확인되었습니다. Toss 웹 화면 식별자는 Open API `orderId`가 아니었지만, 실제 `status=CLOSED` 조회가 성공해 해외 주문의 진짜 Open API ID를 복구했습니다. 동일 주문 상세, 체결 snapshot/delta, 실수수료, 결제일을 확인했고 `foundation_audit=ok`, `profile=v1-funded-read-only`로 Foundation v1을 통과했습니다. 검증 종목은 전략 universe 밖이므로 계좌·주문 파이프라인 증거로만 사용하며 전략 매수 대상에는 추가하지 않습니다.
+
+## Next Work Priorities
+
+| Priority | Work | Completion evidence | Dependency |
+| --- | --- | --- | --- |
+| 완료 | Foundation v1 funded read-only | CLOSED 조회로 실제 Open API `orderId`를 복구하고 상세·체결·수수료·결제일 감사 통과 | 2026-07-21 완료 |
+| P1 | 백업 복원 훈련 | GCS 백업을 별도 임시 경로로 복원해 SQLite 무결성과 최신 실행 증거 확인 | v1 전후 어느 때나 가능 |
+| P1 | 운영 관찰 | 최소 24시간 동안 6시간 timer 실행과 이메일 경보 경로가 정상인지 확인 | 현재 운영 설정 |
+| P2 | Foundation 1–5 완료 여부 재점검 | universe/master 1:1 대사와 replay/source-health 회귀 테스트 통과 | v1 통과 권장 |
+| P3 | 외부 데이터 최소 스택 시작 | Massive REST → dividends/splits → FRED → SEC 순서로 구현 | Foundation v1 통과 |
+| P4 | signal safety와 paper planner | feature/signal 분리, stale-data gate, 실제 주문 없는 planner 검증 | 외부 데이터 최소 스택 |
+| P5 | shadow live 2주 후 초소형 live 검토 | 2주간 오류 없는 일일 보고와 별도 live 승인 | 모든 선행 gate |
+
+추가 주문은 필요하지 않습니다. 자동 주문, paper planner, 전략 신호는 다음 안전 단계가 구현될 때까지 계속 차단합니다.
+
 ## Ordered Backlog
 
 | Step | Work Item | Output | Go/No-Go Check |

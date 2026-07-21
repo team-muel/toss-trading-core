@@ -78,6 +78,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip /orders/{orderId} detail calls.",
     )
     parser.add_argument(
+        "--include-closed-orders",
+        action="store_true",
+        help=(
+            "Read CLOSED orders as an explicit diagnostic/recovery action. "
+            "Disabled by default because the OpenAPI 1.2.4 schema text still conflicts "
+            "with the verified server behavior."
+        ),
+    )
+    parser.add_argument(
         "--max-order-pages",
         type=int,
         default=20,
@@ -153,6 +162,7 @@ def main(argv: list[str] | None = None) -> int:
         result = FoundationSnapshotter(adapter, ledger).snapshot(
             include_sellable_quantity=args.include_sellable_quantity,
             include_order_details=args.include_order_details,
+            include_closed_orders=args.include_closed_orders,
             buying_power_currency=args.buying_power_currency,
             max_order_pages=args.max_order_pages,
             max_order_details=args.max_order_details,

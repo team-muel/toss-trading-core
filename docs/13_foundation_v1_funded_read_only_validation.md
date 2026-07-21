@@ -23,9 +23,10 @@ This phase is still read-only. The system does not submit automatic orders. The 
 
 ## Manual Account Event
 
-Use the Toss app, not this system, to create a small real account event. The
-current approved OpenAPI contract does not rely on a CLOSED order list. Capture
-the order ID while the manual order is still OPEN, then validate its detail.
+Use the Toss app, not this system, to create a small real account event. Prefer
+capturing the order ID while the manual order is still OPEN. If it fills first,
+use the verified explicit CLOSED-order recovery path; the normal scheduled
+runner does not enable that path.
 
 Required event shape:
 
@@ -37,6 +38,30 @@ Required event shape:
   commission, and settlement evidence required by v1.
 - Prefer an order size where fees, tax, and settlement fields are visible in the Toss API response.
 - Do not run an automatic order planner in this phase.
+
+### If the OPEN order ID was missed
+
+Do not substitute the encrypted Toss web order-history identifier or its
+numeric display order number for the Open API `orderId`. In the 2026-07-21
+domestic-stock trial, both values returned HTTP 400 from
+`GET /api/v1/orders/{orderId}` and could not satisfy v1.
+
+If the order has already filled and the OPEN list is empty, do not guess an ID.
+Run the bounded CLOSED-order recovery explicitly, select the exact matching
+order, and require its order-detail response in the same v1 snapshot.
+
+The same limitation was confirmed in a 2026-07-21 US-stock trial: an overseas
+order filled before the OPEN snapshot, while the Toss web encrypted identifier
+and display order number were both rejected by the Open API order-detail
+endpoint. Holdings, commission-rate schedule, and sellable quantity remain
+useful preliminary evidence, but they do not replace the exact OPEN-captured
+Open API `orderId`.
+
+On 2026-07-21 the real GCP runtime returned the overseas FILLED order from
+`status=CLOSED`. Its exact ID produced one target order row, one filled row,
+one execution snapshot, one execution delta, one actual commission row, one
+settlement row, and a successful v1 audit with no blockers. No additional
+manual order is required for that validation.
 
 ## Validation Commands
 
