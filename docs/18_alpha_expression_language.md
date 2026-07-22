@@ -88,6 +88,23 @@ adapter 계약(`docs/12`)을 지킵니다: 크리덴셜은 환경변수(`NAVER_H
 `stale` 플래그로 의존 alpha를 비활성화합니다. HTTP fetcher는 주입 가능해서 backtest/test는
 완전히 오프라인으로 돕니다.
 
+## Toss Market Datafield (KOR/US)
+
+`alpha/datafields/toss_market.py`는 Toss의 **read-only 시세** 엔드포인트
+(`GET /api/v1/candles`, `GET /api/v1/prices`)를 datafield로 배선합니다. Toss는
+실행·계좌의 기준원장이지만, 여기서는 시세 read만 decision input으로 씁니다. 주문·계좌
+상태는 건드리지 않습니다.
+
+- `momentum_datafield(symbols, reader, lookback)` — `close[-1]/close[-1-lookback] - 1`
+- `close_panel` / `forward_returns_panel` — 오프라인 백테스트용 패널 (→ `metrics.evaluate`)
+- `TossCandleReader(adapter)` — 기존 `TossReadOnlyAdapter.get_candles`를 재사용하는 기본 reader.
+  reader는 `Callable[[str], candles]`라서 backtest/test는 합성 캔들을 주입해 오프라인으로 돕니다.
+
+크리덴셜은 환경변수(`TOSS_CLIENT_ID` / `TOSS_CLIENT_SECRET`)로만 로드하며 소스·config·로그에
+넣지 않습니다. 실제 값은 워크스페이스 Notion "Toss API" 페이지에 보관하고 `.env` 또는 GCP
+Secret Manager로만 주입합니다. Toss Open API는 IP allowlist가 있으므로 시세 read도 등록된
+runner 환경에서만 성공합니다.
+
 ## 예시 alpha
 
 ```python
@@ -107,6 +124,21 @@ signals = to_signals(positions)   # -> 기존 RiskHub가 그대로 게이팅
 
 이 alpha는 신호까지만 만듭니다. 체결은 기존 gate가 전부 통과된 뒤에야, 그리고
 `live_trading_enabled`가 별도 승인될 때에만 가능합니다.
+
+Toss 시세로 배선한 모멘텀 예시(등록된 runner 환경에서 실데이터, 그 외 오프라인 주입):
+
+```python
+from toss_trading.alpha import Alpha, SimulationSettings, simulate_cross_section, to_signals
+from toss_trading.alpha import operators as ops
+from toss_trading.alpha.datafields import TossCandleReader, momentum_datafield
+
+reader = TossCandleReader(adapter, interval="1d", count=120)   # read-only Toss 어댑터 재사용
+momentum = momentum_datafield(universe, reader, lookback=60)
+alpha = Alpha(name="toss_momentum", expression=lambda ctx: ops.rank(ctx["momentum"]))
+settings = SimulationSettings(universe="TOSS_KR_US_ETF", book_size=1.0,
+                              neutralization="market", truncation=0.2)
+signals = to_signals(simulate_cross_section(alpha, {"momentum": momentum}, settings))
+```
 
 ## Alpha Lifecycle
 
