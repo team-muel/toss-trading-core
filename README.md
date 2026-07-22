@@ -44,6 +44,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/15_gcp_secret_manager_and_runtime.md` | GCP Secret Manager, VM 환경변수, runtime DB/log 경로 |
 | `docs/16_cloud_monitoring_runner_health.md` | Cloud Logging/Monitoring 기반 runner health 기준 |
 | `docs/17_remediation_and_live_gate.md` | 실제 GCP 배포·보안 조치 현황과 다음 live gate 우선순위 |
+| `docs/18_alpha_expression_language.md` | research-only alpha 작성·채점 부록과 foundation 용어 매핑 |
 
 ## Repository Layout
 
@@ -65,6 +66,8 @@ src/toss_trading/
   ledger/
   monitoring/
   risk/
+  alpha/            # research-only alpha authoring (operators, metrics, datafields)
+    datafields/
 ```
 
 ## First Milestone
