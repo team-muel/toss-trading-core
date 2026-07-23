@@ -185,6 +185,15 @@ class TossReadOnlyAdapter:
             "/api/v1/commissions",
         }:
             return "ORDER_INFO"
+        if path == "/api/v1/candles":
+            return "MARKET_DATA_CHART"
+        if path in {
+            "/api/v1/prices",
+            "/api/v1/orderbook",
+            "/api/v1/trades",
+            "/api/v1/price-limits",
+        }:
+            return "MARKET_DATA"
         return "DEFAULT"
 
     def _limiter_for(self, endpoint: str) -> TokenBucket:
@@ -315,6 +324,44 @@ class TossReadOnlyAdapter:
         if query:
             endpoint = f"{endpoint}?{urllib.parse.urlencode(query)}"
         return self._get(endpoint, account_bound=True)
+
+    # ------------------------------------------------------------------ #
+    # Read-only market data (research decision inputs, not account state)
+    # ------------------------------------------------------------------ #
+
+    def get_prices(self, symbols: list[str]) -> TossApiResult:
+        """Current prices for up to 200 symbols (`GET /api/v1/prices`)."""
+        if not symbols:
+            raise ValueError("get_prices requires at least one symbol")
+        if len(symbols) > 200:
+            raise ValueError("Toss /prices accepts at most 200 symbols per call")
+        query = urllib.parse.urlencode({"symbols": ",".join(symbols)})
+        return self._get(f"/api/v1/prices?{query}", account_bound=False)
+
+    def get_candles(
+        self,
+        symbol: str,
+        *,
+        interval: str = "1d",
+        count: int = 100,
+        before: str | None = None,
+        adjusted: bool | None = None,
+    ) -> TossApiResult:
+        """Candle chart for one symbol (`GET /api/v1/candles`).
+
+        Market data is not account-bound.  ``interval`` is ``1m`` or ``1d`` and
+        ``count`` is capped at 200 by Toss.
+        """
+        if interval not in {"1m", "1d"}:
+            raise ValueError("interval must be '1m' or '1d'")
+        if not 1 <= count <= 200:
+            raise ValueError("count must be between 1 and 200")
+        query: dict[str, str | int] = {"symbol": symbol, "interval": interval, "count": count}
+        if before:
+            query["before"] = before
+        if adjusted is not None:
+            query["adjusted"] = "true" if adjusted else "false"
+        return self._get(f"/api/v1/candles?{urllib.parse.urlencode(query)}", account_bound=False)
 
     def _get(self, endpoint: str, *, account_bound: bool) -> TossApiResult:
         if self._access_token is None or time.monotonic() >= self._access_token_expires_at:

@@ -113,3 +113,9 @@ Toss 공식 API는 해외 채권 또는 직접 T-bill 보유/담보 자동화를
 - rate-limit token bucket 정상
 - reconciliation 차이 없음
 - starter/calibrated guardrail 통과
+
+## Research Alpha Authoring
+
+위 엔진 매트릭스를 fast-expression alpha로 작성·채점하는 research-only 방법과 operator/metric
+어휘는 `docs/18_alpha_expression_language.md`를 참고합니다. 그 계층은 신호만 만들고, 산출된
+`Signal`은 여전히 이 문서의 Unified Gate와 `RiskHub`를 그대로 통과해야 합니다.
