@@ -29,21 +29,23 @@ class TokenBucket:
     def acquire(self, tokens: float = 1.0) -> float:
         if tokens <= 0:
             raise ValueError("tokens must be positive")
-        with self._lock or Lock():
-            now = time.monotonic()
-            elapsed = now - float(self.updated_at)
-            self.tokens = min(self.capacity, float(self.tokens) + elapsed * self.refill_per_second)
-            self.updated_at = now
-            if self.tokens >= tokens:
-                self.tokens -= tokens
-                return 0.0
-            needed = tokens - self.tokens
-            wait_seconds = needed / self.refill_per_second
-        time.sleep(wait_seconds)
-        with self._lock or Lock():
-            self.tokens = 0.0
-            self.updated_at = time.monotonic()
-        return wait_seconds
+        waited = 0.0
+        while True:
+            with self._lock or Lock():
+                now = time.monotonic()
+                elapsed = now - float(self.updated_at)
+                self.tokens = min(
+                    self.capacity,
+                    float(self.tokens) + elapsed * self.refill_per_second,
+                )
+                self.updated_at = now
+                if self.tokens >= tokens:
+                    self.tokens -= tokens
+                    return waited
+                needed = tokens - self.tokens
+                wait_seconds = needed / self.refill_per_second
+            time.sleep(wait_seconds)
+            waited += wait_seconds
 
     def update_from_headers(self, headers: dict[str, str]) -> None:
         lower = {key.lower(): value for key, value in headers.items()}

@@ -5,6 +5,7 @@ from typing import Any
 
 from toss_trading.account.ledger import AccountLedger
 from toss_trading.engines import Signal
+from toss_trading.risk import RiskDecision
 
 
 @dataclass(frozen=True)
@@ -28,9 +29,17 @@ class OrderPlanner:
         signal: Signal,
         sizing: dict[str, Any],
         *,
-        ledger: AccountLedger | None = None,
-        account_seq: str | None = None,
+        risk_decision: RiskDecision,
+        ledger: AccountLedger,
+        account_seq: str,
+        allowed_symbols: set[str] | frozenset[str],
     ) -> OrderPlan:
+        if not risk_decision.approved:
+            raise ValueError(f"risk decision rejected order plan: {risk_decision.reason}")
+        if not account_seq.strip():
+            raise ValueError("account_seq is required")
+        if signal.symbol_or_pair not in allowed_symbols:
+            raise ValueError("signal symbol is outside the approved universe")
         has_qty = "qty" in sizing and sizing["qty"] is not None
         has_amount = "order_amount" in sizing and sizing["order_amount"] is not None
         if has_qty == has_amount:
@@ -51,20 +60,17 @@ class OrderPlanner:
             raise ValueError("order_amount must be a finite positive number")
         if limit_px is not None and (not isfinite(float(limit_px)) or float(limit_px) <= 0):
             raise ValueError("limit_px must be a finite positive number")
-        if ledger is not None:
-            if not account_seq:
-                raise ValueError("account_seq is required when reserving client_order_id")
-            ledger.reserve_client_order_id(
-                account_seq=account_seq,
-                client_order_id=client_order_id,
-                request_payload={
-                    "symbol": signal.symbol_or_pair,
-                    "side": signal.side,
-                    "qty": qty,
-                    "order_amount": amount,
-                    "limit_px": limit_px,
-                },
-            )
+        ledger.reserve_client_order_id(
+            account_seq=account_seq,
+            client_order_id=client_order_id,
+            request_payload={
+                "symbol": signal.symbol_or_pair,
+                "side": signal.side,
+                "qty": qty,
+                "order_amount": amount,
+                "limit_px": limit_px,
+            },
+        )
 
         return OrderPlan(
             client_order_id=client_order_id,

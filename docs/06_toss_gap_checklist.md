@@ -64,17 +64,17 @@
 ## Safety Requirements Before Live Adapter
 
 - [ ] 내부 장부와 Toss holdings 대사
-- [ ] `/oauth2/token`이 `access_denied` 또는 IP 제한 없이 성공
+- [x] `/oauth2/token`이 `access_denied` 또는 IP 제한 없이 성공
 - [ ] OPEN 주문 목록과 내부 open order ledger 대사
-- [ ] OpenAPI 1.2.4의 CLOSED 계약 모순 해소 확인 전 CLOSED 목록 호출 금지
-- [ ] OPEN 상태에서 확보한 정확한 `orderId`의 상세 응답으로 종료 상태 검증
-- [ ] 부분체결 snapshot/delta 처리
+- [x] CLOSED 목록은 정기 runner에서 금지하고 명시적 복구 실행에서만 허용
+- [x] OPEN 또는 검증된 CLOSED 복구 경로의 정확한 `orderId` 상세로 종료 상태 검증
+- [x] 부분체결 snapshot/delta 증분 처리와 synthetic 회귀 테스트
 - [ ] `clientOrderId`를 모든 주문에 강제
 - [ ] 주문 timeout 후 중복 주문 방지
 - [ ] `cashBuyingPower` constraint와 내부 available cash 비교
 - [ ] kill switch가 주문 경로보다 상위에 위치
 - [ ] 429 retry와 선제 감속
-- [ ] raw API response replay
+- [x] 실제 v0/v1 GCS 백업 raw API response replay와 profile 감사
 - [ ] external stale source가 의존 엔진을 차단
 - [ ] 장 마감 후 reconciliation report
 

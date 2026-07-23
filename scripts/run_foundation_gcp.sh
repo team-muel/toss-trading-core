@@ -10,12 +10,21 @@ DB_PATH="${FOUNDATION_DB_PATH:-runtime/foundation_account_state.sqlite}"
 REPORT_PATH="${FOUNDATION_REPORT_PATH:-runtime/foundation_account_state_report.txt}"
 JSON_LOG_PATH="${FOUNDATION_JSON_LOG_PATH:-runtime/foundation_runner.jsonl}"
 BACKUP_DIR="${FOUNDATION_BACKUP_DIR:-runtime/backups}"
+LOCAL_BACKUP_RETENTION_DAYS="${FOUNDATION_LOCAL_BACKUP_RETENTION_DAYS:-14}"
 LOCK_PATH="${FOUNDATION_LOCK_PATH:-runtime/foundation_runner.lock}"
 BUYING_POWER_CURRENCY="${FOUNDATION_BUYING_POWER_CURRENCY:-USD}"
 MAX_ORDER_DETAILS="${FOUNDATION_MAX_ORDER_DETAILS:-1}"
 INCLUDE_CLOSED_ORDERS="${FOUNDATION_INCLUDE_CLOSED_ORDERS:-0}"
 TARGET_ORDER_ID="${FOUNDATION_TARGET_ORDER_ID:-}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+CODE_REVISION="${FOUNDATION_CODE_REVISION:-}"
+if [[ -z "${CODE_REVISION}" ]] && command -v git >/dev/null 2>&1; then
+  CODE_REVISION="$(git -C "${ROOT_DIR}" rev-parse --verify HEAD 2>/dev/null || true)"
+fi
+if [[ -z "${CODE_REVISION}" ]]; then
+  CODE_REVISION="unknown"
+fi
+export FOUNDATION_CODE_REVISION="${CODE_REVISION}"
 
 mkdir -p \
   "$(dirname "${DB_PATH}")" \
@@ -39,18 +48,20 @@ json_log() {
   local ts
   ts="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   if [[ -n "${exit_code}" ]]; then
-    printf '{"ts":"%s","event":"%s","profile":"%s","db":"%s","exit_code":%s}\n' \
+    printf '{"ts":"%s","event":"%s","profile":"%s","db":"%s","code_revision":"%s","exit_code":%s}\n' \
       "${ts}" \
       "$(json_escape "${event}")" \
       "$(json_escape "${PROFILE}")" \
       "$(json_escape "${DB_PATH}")" \
+      "$(json_escape "${CODE_REVISION}")" \
       "${exit_code}" >> "${JSON_LOG_PATH}"
   else
-    printf '{"ts":"%s","event":"%s","profile":"%s","db":"%s"}\n' \
+    printf '{"ts":"%s","event":"%s","profile":"%s","db":"%s","code_revision":"%s"}\n' \
       "${ts}" \
       "$(json_escape "${event}")" \
       "$(json_escape "${PROFILE}")" \
-      "$(json_escape "${DB_PATH}")" >> "${JSON_LOG_PATH}"
+      "$(json_escape "${DB_PATH}")" \
+      "$(json_escape "${CODE_REVISION}")" >> "${JSON_LOG_PATH}"
   fi
 }
 
@@ -114,6 +125,7 @@ SNAPSHOT_ARGS=(
   --buying-power-currency "${BUYING_POWER_CURRENCY}"
   --max-order-details "${MAX_ORDER_DETAILS}"
   --json-log "${JSON_LOG_PATH}"
+  --code-revision "${CODE_REVISION}"
 )
 if [[ -n "${TARGET_ORDER_ID}" ]]; then
   SNAPSHOT_ARGS+=(--target-order-id "${TARGET_ORDER_ID}")
@@ -138,6 +150,16 @@ if [[ -n "${FOUNDATION_GCS_BACKUP_URI:-}" ]]; then
   gcloud storage cp "${BACKUP_PATH}" \
     "${FOUNDATION_GCS_BACKUP_URI%/}/$(basename "${BACKUP_PATH}")"
   json_log "foundation_runner_backup_upload_ok"
+fi
+
+if [[ "${LOCAL_BACKUP_RETENTION_DAYS}" =~ ^[0-9]+$ ]]; then
+  find "${BACKUP_DIR}" -type f \
+    -name 'foundation_account_state_*.sqlite' \
+    -mtime "+${LOCAL_BACKUP_RETENTION_DAYS}" \
+    -delete
+else
+  echo "FOUNDATION_LOCAL_BACKUP_RETENTION_DAYS must be a nonnegative integer" >&2
+  exit 64
 fi
 
 json_log "foundation_runner_ok"

@@ -1,0 +1,21 @@
+metrics:
+  - name: foundation_snapshot_ok_count
+    event: foundation_snapshot_ok
+  - name: foundation_snapshot_failed_count
+    event: foundation_snapshot_failed
+  - name: foundation_audit_ok_count
+    event: foundation_audit_ok
+  - name: foundation_audit_failed_count
+    event: foundation_audit_failed
+  - name: gcp_secret_environment_loaded_count
+    event: gcp_secret_environment_loaded
+  - name: foundation_runner_backup_ok_count
+    event: foundation_runner_backup_ok
+  - name: foundation_runner_backup_upload_ok_count
+    event: foundation_runner_backup_upload_ok
+  - name: foundation_runner_lock_busy_count
+    event: foundation_runner_lock_busy
+  - name: foundation_runner_failed_count
+    event: foundation_runner_failed
+  - name: foundation_runner_ok_count
+    event: foundation_runner_ok

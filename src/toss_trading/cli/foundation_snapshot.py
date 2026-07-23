@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from toss_trading.account import AccountLedger, FoundationSnapshotter
@@ -67,8 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--buying-power-currency",
-        default="USD",
-        help="Currency query value for Toss buying-power. Defaults to USD.",
+        action="append",
+        dest="buying_power_currencies",
+        default=None,
+        help=(
+            "Currency query value for Toss buying-power. Repeat for multiple currencies. "
+            "Holding currencies are added automatically; defaults to USD."
+        ),
     )
     parser.add_argument(
         "--skip-order-details",
@@ -128,6 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Known Toss orderId captured while the manual v1 test order was OPEN.",
     )
+    parser.add_argument(
+        "--code-revision",
+        default=os.environ.get("FOUNDATION_CODE_REVISION"),
+        help="Immutable release or Git revision recorded in snapshot_run.",
+    )
     return parser
 
 
@@ -163,11 +174,12 @@ def main(argv: list[str] | None = None) -> int:
             include_sellable_quantity=args.include_sellable_quantity,
             include_order_details=args.include_order_details,
             include_closed_orders=args.include_closed_orders,
-            buying_power_currency=args.buying_power_currency,
+            buying_power_currency=args.buying_power_currencies or ["USD"],
             max_order_pages=args.max_order_pages,
             max_order_details=args.max_order_details,
             target_order_id=args.target_order_id,
             policy_hash=policy_hash,
+            code_revision=args.code_revision,
         )
         lines = [
             "foundation_snapshot=ok",
@@ -182,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             f"order_detail_rows={result.order_detail_rows}",
             f"execution_snapshot_rows={result.execution_snapshot_rows}",
             f"execution_delta_rows={result.execution_delta_rows}",
+            f"cash_event_rows={result.cash_event_rows}",
             "",
             result.explanation.as_text(),
         ]
@@ -200,6 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             order_detail_rows=result.order_detail_rows,
             execution_snapshot_rows=result.execution_snapshot_rows,
             execution_delta_rows=result.execution_delta_rows,
+            cash_event_rows=result.cash_event_rows,
         )
         return 0
     except Exception as exc:

@@ -44,6 +44,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/15_gcp_secret_manager_and_runtime.md` | GCP Secret Manager, VM 환경변수, runtime DB/log 경로 |
 | `docs/16_cloud_monitoring_runner_health.md` | Cloud Logging/Monitoring 기반 runner health 기준 |
 | `docs/17_remediation_and_live_gate.md` | 실제 GCP 배포·보안 조치 현황과 다음 live gate 우선순위 |
+| `docs/18_research_data_and_backtest.md` | 불변 raw/Parquet 데이터 계층과 재현 가능한 momentum baseline |
 
 ## Repository Layout
 
@@ -64,6 +65,7 @@ src/toss_trading/
   execution/
   ledger/
   monitoring/
+  research/
   risk/
 ```
 
@@ -95,10 +97,35 @@ python -m toss_trading.cli.foundation_audit --profile v1-funded-read-only
 대상 주문은 토스 앱에서 직접 제출하고 실제로 소량 체결된 주문이어야 합니다.
 취소만 된 주문은 체결량, 수수료, 결제일 증거가 없어 v1을 통과하지 못합니다.
 
+저장된 raw broker 응답의 독립 replay 검증:
+
+```powershell
+$env:PYTHONPATH='src'
+python -m toss_trading.cli.foundation_replay `
+  --source-db "<복원한 Foundation SQLite>" `
+  --destination-db "<존재하지 않는 새 SQLite 경로>"
+python -m toss_trading.cli.foundation_audit `
+  --db "<새 SQLite 경로>" `
+  --profile v1-funded-read-only
+```
+
+Replay는 원본 또는 운영 DB를 덮어쓰지 않으며, 저장된 응답 hash가 다르면
+즉시 실패합니다. 계좌 식별자는 raw 응답에서 계속 마스킹하고
+`snapshot_run.account_seq`의 내부 대사 키만 복원합니다.
+
 GCP VM runner:
 
 ```bash
 export FOUNDATION_LOAD_GCP_SECRETS=1
 export FOUNDATION_AUDIT_PROFILE=v0-empty-safe
 ./scripts/run_foundation_gcp.sh
+```
+
+Research 데이터와 baseline은 broker 주문 경로와 분리되어 있습니다.
+
+```powershell
+python -m pip install -r requirements-research.lock
+$env:PYTHONPATH='src'
+python -m toss_trading.cli.research_ingest_bars --help
+python -m toss_trading.cli.research_backtest --help
 ```

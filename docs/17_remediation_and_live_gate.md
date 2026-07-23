@@ -35,8 +35,8 @@ approved OpenAPI contract, account binding, reconciliation, and recovery path.
 - the dedicated VM service account has bucket-scoped object write access
 - the systemd runner uses `UMask=0077`, runs every six hours, and does not submit
   orders
-- Cloud Logging metrics and runner/snapshot/audit/heartbeat alert policies are
-  connected to the verified operator email channel
+- six Cloud Monitoring alert policies are enabled and connected to the
+  verified operator email channel
 - GitHub `master` requires the passing CI check, applies the rule to admins,
   blocks force pushes and deletion, and requires linear history
 - Toss Client ID and Client Secret were reissued on 2026-07-21; Secret Manager
@@ -71,7 +71,7 @@ before the read-only runner captured it in the OPEN order list.
   `유효하지 않은 주문 ID 입니다.`
 - execution, commission, and settlement evidence could not be attached to the
   same Open API order detail
-- Foundation v1 therefore remains **not passed**
+- this first domestic-order attempt did not pass Foundation v1 by itself
 
 After the two bounded read-only detail checks, the scheduled v0 service was run
 again successfully and uploaded a fresh private GCS backup. Additional order-ID
@@ -96,30 +96,64 @@ approved strategy universe and is not made strategy-eligible by this test.
 
 ## Remaining Gates In Priority Order
 
-1. **P1 — Scheduled-run observation.** Observe at least 24 hours of six-hour
-   timer runs and verify that the notification path is operational.
-2. **P2 — Foundation regression review.** Recheck universe/master 1:1 mapping,
-   raw-response replay, source-health behavior, and clean-checkout CI.
-3. **P3 — External minimum data stack.** Begin Massive REST, corporate actions,
-   FRED, and SEC only after v1 passes.
-4. **P4 — Signal safety and paper planner.** Add feature/signal separation and
+1. **Completed — Codex 24-hour focused observation.** Closed by user approval
+   on 2026-07-23. This closes only the temporary Codex observation automation.
+2. **Completed — Foundation regression review.** Universe/master mapping,
+   source-health behavior, clean-checkout CI, and real v0/v1 backup raw replay
+   passed on 2026-07-23.
+3. **P3 — Account and order safety.** Complete currency-scoped cash ledger,
+   opening balance, reserved cash, buying-power reconciliation, and EOD report.
+4. **P4 — External minimum data stack.** Begin Massive REST, corporate actions,
+   FRED, and SEC after the account/order safety gate.
+5. **P5 — Signal safety and paper planner.** Add feature/signal separation and
    stale-data gates before any shadow operation.
-5. **P5 — Shadow/live gate.** Complete two weeks of shadow operation and obtain
+6. **P6 — Shadow/live gate.** Complete two weeks of shadow operation and obtain
    a separate explicit approval before considering a micro-live run.
 
 Foundation v1 is complete. The repository and VM remain read-only while the
 next safety and external-data stages are implemented.
 
-## Restore And Observation Status — 2026-07-21
+## Restore And Observation Status — 2026-07-23
 
 The private v1 backup was restored to an isolated drill directory. SQLite
 integrity and the full v1 audit passed from the restored copy; the live database
 was not overwritten. The restored file remains mode `600` as audit evidence.
 
-The six-hour systemd timer is active, with its next run scheduled for
-2026-07-22 01:18 KST. All four Cloud Monitoring policies are enabled. A local
-observation automation runs daily at 19:00 KST and reviews the preceding 24
-hours of runner success, failure, audit, heartbeat, and backup-upload evidence.
+The six-hour `toss-foundation.timer` remains an active operational control.
+All six Cloud Monitoring alert policies also remain enabled with the verified
+operator notification channel.
+
+The temporary Codex automation that reviewed the preceding 24 hours each day
+at 19:00 KST was paused on 2026-07-23 with user approval. Pausing that Codex
+automation does not disable, modify, or replace the VM timer, Cloud Logging,
+Cloud Monitoring policies, or operator email notifications.
+
+## Foundation Replay And Cash Event Status — 2026-07-23
+
+The latest v0 backup and the retained v1 backup were downloaded to an isolated
+temporary directory and replayed into new SQLite databases. Both replays
+verified every stored response hash and passed their matching Foundation audit.
+The live VM database and GCS objects were not modified.
+
+Replay exposed a real normalization gap: raw account identifiers are correctly
+redacted, so a replay must restore only the approved internal
+`snapshot_run.account_seq` key. The replay path now does so without restoring or
+exposing an account number.
+
+Execution deltas now produce idempotent, currency-scoped `TRADE_COST`,
+`TRADE_PROCEEDS`, `COMMISSION_FEE`, and `REGULATORY_FEE` cash events using exact
+decimal text. Synthetic partial-fill-to-full-fill tests prove that only
+incremental amounts are posted. Current OPEN buy orders now reserve their
+remaining notional once per broker order, and an unresolvable notional becomes
+an audit blocker. Independently evidenced opening cash, settlement availability,
+and buying-power reconciliation remain blocked work; cash events and open-order
+reservations alone do not make live trading eligible.
+
+The official OpenAPI 1.2.4 document was downloaded again on 2026-07-23. Its
+SHA-256 still matches the approved value, and it still exposes buying power
+rather than a separate cash-balance endpoint. An independently evidenced
+opening balance is therefore a real external input, not a value the runtime may
+infer from `cashBuyingPower`.
 
 ## Scope
 
@@ -127,3 +161,25 @@ The first strategy, once enabled, is US-listed USD broad ETF momentum only.
 Relative-value, distribution/NAV/ROC, options, short, margin, and Korean/FX
 multi-currency strategies remain research-only until their independent data
 and risk gates exist.
+
+## P0 And Research Foundation Work — 2026-07-23
+
+The next implementation branch keeps all broker writes disabled and addresses
+the audit findings before deployment:
+
+- failed-run execution deltas are backfilled into exact cash events
+- cash-event completeness is audited per principal, commission, tax, and
+  settlement date
+- unresolved historical reconciliation BLOCK records remain blocking until an
+  explicit resolution note is recorded
+- buying power is queried for every observed holding currency
+- snapshot runs and JSON logs record the immutable code revision
+- order plans require an approved RiskDecision, an AccountLedger idempotency
+  reservation, an account, and an approved universe
+- six alert policy templates, ten log-metric definitions, and systemd
+  hardening are checked into the repository
+- a separate immutable raw/Parquet/manifest research data layer and a
+  next-day, cost-aware dual-momentum baseline are implemented
+
+These changes are local branch work until CI, review, merge, and VM release-SHA
+verification complete. They do not authorize or submit a Toss order.

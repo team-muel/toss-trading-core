@@ -1,13 +1,24 @@
 CREATE TABLE IF NOT EXISTS market_bars (
   ts TEXT NOT NULL,
+  available_at TEXT,
+  source_ts TEXT,
+  exchange_local_date TEXT,
+  interval TEXT NOT NULL DEFAULT '1d',
   symbol TEXT NOT NULL,
   venue TEXT,
+  currency TEXT,
+  session_label TEXT,
+  source_timezone TEXT,
+  adjustment TEXT NOT NULL DEFAULT 'raw',
   open REAL,
   high REAL,
   low REAL,
   close REAL,
   volume REAL,
   source TEXT NOT NULL,
+  source_revision TEXT,
+  raw_manifest_id TEXT,
+  schema_version TEXT NOT NULL DEFAULT 'market-bars-v1',
   ingested_at TEXT NOT NULL,
   quality_flag TEXT NOT NULL DEFAULT 'ok',
   PRIMARY KEY (ts, symbol, source)
@@ -245,6 +256,11 @@ CREATE TABLE IF NOT EXISTS feature_snapshot (
   feature_text TEXT,
   lookback_window TEXT,
   source TEXT NOT NULL,
+  available_at TEXT,
+  dataset_manifest_ids TEXT,
+  transformation_version TEXT,
+  parameters_hash TEXT,
+  code_revision TEXT,
   quality_flag TEXT NOT NULL DEFAULT 'ok',
   created_at TEXT NOT NULL
 );
@@ -422,10 +438,27 @@ CREATE TABLE IF NOT EXISTS cash_ledger (
   currency TEXT NOT NULL,
   event_type TEXT NOT NULL,
   amount REAL NOT NULL,
+  amount_decimal TEXT NOT NULL,
   settlement_date TEXT,
   source_ref TEXT,
   tax_relevant INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cash_ledger_source_event
+  ON cash_ledger(source_ref, event_type)
+  WHERE source_ref IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS cash_ledger_genesis (
+  account_seq TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  as_of TEXT NOT NULL,
+  opening_balance REAL NOT NULL,
+  opening_balance_decimal TEXT NOT NULL,
+  evidence_ref TEXT NOT NULL,
+  approved_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (account_seq, currency)
 );
 
 CREATE TABLE IF NOT EXISTS broker_reconciliation_log (
@@ -438,6 +471,8 @@ CREATE TABLE IF NOT EXISTS broker_reconciliation_log (
   difference TEXT,
   status TEXT NOT NULL,
   action_required TEXT,
+  resolved_at TEXT,
+  resolution_note TEXT,
   created_at TEXT NOT NULL
 );
 

@@ -53,6 +53,19 @@ risk_nav = min(current_nav, rolling_20d_avg_nav)
 
 내부 장부는 이벤트 소싱 방식으로 재현 가능해야 합니다. 같은 입력 이벤트를 다시 재생하면 같은 계좌 상태가 나와야 합니다.
 
+2026-07-23 실제 GCS v0·v1 백업을 새 임시 SQLite로 replay했고 두 profile
+모두 감사를 통과했습니다. Replay는 기존 DB를 덮어쓰지 않으며 저장된
+response hash가 달라지면 실패합니다.
+
+```powershell
+python -m toss_trading.cli.foundation_replay `
+  --source-db "<restored.sqlite>" `
+  --destination-db "<new-replay.sqlite>"
+python -m toss_trading.cli.foundation_audit `
+  --db "<new-replay.sqlite>" `
+  --profile v1-funded-read-only
+```
+
 필수 이벤트:
 
 - order submitted

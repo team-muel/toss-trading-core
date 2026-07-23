@@ -12,6 +12,12 @@
 - Account context header: `X-Tossinvest-Account: {accountSeq}`
 - Runtime style: REST API
 
+2026-07-23 `latest/openapi.json`을 다시 다운로드해 같은 SHA-256과
+OpenAPI version `1.2.4`를 확인했습니다. 현재 공식 paths에는 별도 현금
+잔고 또는 balance endpoint가 없고, 현금 관련 주문 전 constraint는
+`GET /api/v1/buying-power`의 `cashBuyingPower`입니다. 따라서 내부 초기
+현금잔고를 이 값에서 역산하지 않습니다.
+
 ## Confirmed API Groups
 
 | Group | Endpoints | Trading Meaning |

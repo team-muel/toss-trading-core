@@ -44,6 +44,25 @@
 4. 변경 전후 정책 파일을 보존합니다.
 5. 손실분포가 나빠지거나 reconciliation 오류가 생기면 즉시 이전 보수 정책으로 되돌립니다.
 
+## Strategy Evidence Gate
+
+운영 가드레일 calibration과 전략 알파 검증은 분리합니다. 주문 로그가
+안정적이어도 전략 기대수익이 입증된 것은 아닙니다.
+
+전략 승격 전 필수 증거:
+
+- 사전에 고정한 가설, universe, benchmark, 비용 모델
+- 데이터 manifest와 code revision으로 재현 가능한 결과
+- train/development/OOS 분리와 walk-forward
+- buy-and-hold, 동일가중, 60/40, 현금성 benchmark 대비 비용후 결과
+- 수수료·세금·slippage 2배 stress
+- 시기별 regime, parameter 주변 구간, 종목 집중도 검증
+- CAGR, 변동성, Sharpe/Sortino, max drawdown, Calmar, turnover 보고
+
+OOS 결과를 확인한 뒤 lookback이나 universe를 반복 조정한 경우 새 가설과
+새 OOS 구간으로 다시 시작합니다. 전략이 기준을 통과하지 못하면 인프라
+완성도와 무관하게 No-Go입니다.
+
 ## Hard Blocks
 
 다음 상황에서는 수치 보정과 무관하게 신규 주문을 막습니다.

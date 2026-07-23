@@ -15,6 +15,7 @@ from toss_trading.data import (
     load_universe,
     validate_universe_mapping,
 )
+from toss_trading.data.universe import InstrumentMapping
 
 
 class FakeTossAdapter:
@@ -181,6 +182,18 @@ class FoundationAccountStateTest(unittest.TestCase):
         missing_cik = [item.ticker for item in mappings if not item.cik]
         self.assertEqual(missing_cik, [])
 
+    def test_universe_mapping_rejects_duplicate_provider_identity(self):
+        universe = load_universe("data/universe.csv")
+        mappings = load_instrument_mappings("data/instrument_master.csv")
+        duplicate = InstrumentMapping(
+            **{
+                **mappings[0].__dict__,
+                "symbol_id": "US:SPY:DUPLICATE",
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one mapping"):
+            validate_universe_mapping(universe, [*mappings, duplicate])
+
     def test_schema_initialization_is_idempotent(self):
         ledger = AccountLedger()
         ledger.init_schema()
@@ -210,8 +223,9 @@ class FoundationAccountStateTest(unittest.TestCase):
         self.assertEqual(result.commission_rows, 1)
         self.assertEqual(result.sellable_quantity_rows, 1)
         self.assertEqual(result.order_detail_rows, 1)
-        self.assertEqual(result.execution_snapshot_rows, 2)
+        self.assertEqual(result.execution_snapshot_rows, 1)
         self.assertEqual(result.execution_delta_rows, 0)
+        self.assertEqual(result.cash_event_rows, 0)
         self.assertEqual(result.explanation.holdings_count, 1)
         self.assertEqual(result.explanation.open_orders_count, 1)
         self.assertEqual(result.explanation.buying_power_by_currency["USD"], "2500")
@@ -225,6 +239,106 @@ class FoundationAccountStateTest(unittest.TestCase):
             "SELECT COUNT(*) FROM raw_api_response WHERE endpoint LIKE '/api/v1/orders/%'"
         ).fetchone()[0]
         self.assertEqual(detail_count, 1)
+
+    def test_snapshotter_queries_buying_power_for_every_holding_currency(self):
+        class MixedCurrencyFakeTossAdapter(FakeTossAdapter):
+            def __init__(self):
+                super().__init__()
+                self.buying_power_queries = []
+
+            def get_holdings(self):
+                body = {
+                    "result": {
+                        "items": [
+                            {
+                                "symbol": "SPY",
+                                "quantity": "1",
+                                "lastPrice": "500",
+                                "averagePurchasePrice": "490",
+                                "marketValue": {
+                                    "purchaseAmount": "490",
+                                    "amount": "500",
+                                    "amountAfterCost": "500",
+                                },
+                                "profitLoss": {
+                                    "amount": "10",
+                                    "amountAfterCost": "10",
+                                    "rate": "0.02",
+                                    "rateAfterCost": "0.02",
+                                },
+                                "cost": {"commission": "0", "tax": "0"},
+                                "currency": "USD",
+                            },
+                            {
+                                "symbol": "A005930",
+                                "quantity": "1",
+                                "lastPrice": "1000",
+                                "averagePurchasePrice": "1000",
+                                "marketValue": {
+                                    "purchaseAmount": "1000",
+                                    "amount": "1000",
+                                    "amountAfterCost": "1000",
+                                },
+                                "profitLoss": {
+                                    "amount": "0",
+                                    "amountAfterCost": "0",
+                                    "rate": "0",
+                                    "rateAfterCost": "0",
+                                },
+                                "cost": {"commission": "0", "tax": "0"},
+                                "currency": "KRW",
+                            },
+                        ]
+                    }
+                }
+                return self._raw("/api/v1/holdings", body)
+
+            def get_buying_power(self, **query):
+                currency = query["currency"]
+                self.buying_power_queries.append(currency)
+                return self._raw(
+                    f"/api/v1/buying-power?currency={currency}",
+                    {
+                        "result": {
+                            "currency": currency,
+                            "cashBuyingPower": "2500",
+                        }
+                    },
+                )
+
+        ledger = AccountLedger()
+        ledger.init_schema()
+        fake = MixedCurrencyFakeTossAdapter()
+        fake.ledger = ledger
+
+        result = FoundationSnapshotter(fake, ledger).snapshot(
+            account_seq="1",
+            buying_power_currency=["USD"],
+        )
+
+        self.assertEqual(fake.buying_power_queries, ["KRW", "USD"])
+        self.assertEqual(
+            result.explanation.buying_power_by_currency,
+            {"KRW": "2500", "USD": "2500"},
+        )
+        self.assertEqual(result.explanation.blockers, [])
+
+    def test_snapshot_records_code_revision(self):
+        ledger = AccountLedger()
+        ledger.init_schema()
+        fake = FakeTossAdapter()
+        fake.ledger = ledger
+
+        result = FoundationSnapshotter(fake, ledger).snapshot(
+            account_seq="1",
+            code_revision="abc123",
+        )
+
+        row = ledger.conn.execute(
+            "SELECT code_revision FROM snapshot_run WHERE run_id = ?",
+            (result.run_id,),
+        ).fetchone()
+        self.assertEqual(row["code_revision"], "abc123")
 
     def test_execution_delta_is_not_duplicated_for_same_cumulative_snapshot(self):
         ledger = AccountLedger()

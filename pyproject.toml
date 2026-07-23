@@ -8,10 +8,19 @@ dependencies = [
   "pyyaml>=6.0,<7",
 ]
 
+[project.scripts]
+toss-research-ingest-bars = "toss_trading.cli.research_ingest_bars:main"
+toss-research-backtest = "toss_trading.cli.research_backtest:main"
+
 [project.optional-dependencies]
 test = [
   "build>=1.2,<2",
   "pytest>=8,<9",
+  "setuptools>=69,<81",
+  "shellcheck-py>=0.10,<0.11",
+]
+research = [
+  "duckdb>=1.4,<2",
 ]
 
 [build-system]
@@ -21,5 +30,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.data-files]
+"share/toss-trading/schemas" = ["schemas/trading_ledger.sql"]
+"share/toss-trading/config" = ["config/default_policy.yaml"]
+"share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]
+norecursedirs = [".git", ".venv", "build", "dist", "tmp"]

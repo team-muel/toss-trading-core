@@ -8,7 +8,7 @@ Do not add Grafana, Metabase, or trading dashboards yet. The current goal is to 
 
 ## Health Sources
 
-The runner produces three local evidence sources:
+The runner produces four local evidence sources:
 
 ```text
 runtime/foundation_account_state.sqlite
@@ -68,12 +68,55 @@ The production-lab project currently has:
 
 - Ops Agent collection of the foundation runner JSONL log
 - all ten suggested log-based event counters
-- alert policies for runner failure, snapshot failure, audit failure, and eight-hour heartbeat absence
+- alert policies for runner failure, snapshot failure, audit failure, runner
+  heartbeat absence, backup-upload heartbeat absence, and runner lock contention
 - a verified operator email notification channel attached to the alert policies
 
 The systemd timer runs the read-only v0 foundation job every six hours. A
 successful manual run after the Toss key rotation emitted successful broker,
 audit, local backup, and Cloud Storage upload evidence.
+
+The checked-in Ops Agent configuration is:
+
+```text
+deploy/ops-agent/toss-foundation.yaml
+```
+
+Install it without changing Secret Manager or runner data:
+
+```bash
+sudo install -m 0644 deploy/ops-agent/toss-foundation.yaml \
+  /etc/google-cloud-ops-agent/config.yaml
+sudo systemctl restart google-cloud-ops-agent
+sudo systemctl is-active google-cloud-ops-agent
+```
+
+Verify that the JSONL receiver is producing structured Cloud Logging entries:
+
+```bash
+gcloud logging read \
+  'resource.type=gce_instance AND jsonPayload.event=foundation_runner_ok' \
+  --project=toss-trading-core-lab \
+  --freshness=24h \
+  --limit=5
+```
+
+All six policy templates and ten log-metric definitions are stored under
+`deploy/monitoring/`. Policy templates contain `__INSTANCE_ID__` and
+`__NOTIFICATION_CHANNEL__` placeholders so a rendered policy is bound to the
+one Foundation VM and the verified operator channel. Never submit an
+unrendered template.
+
+Render the six templates into an isolated directory before comparing them with
+the deployed policies:
+
+```bash
+python scripts/render_foundation_monitoring.py \
+  --output-dir /tmp/toss-foundation-monitoring \
+  --instance-id "<numeric-gce-instance-id>" \
+  --notification-channel \
+  "projects/toss-trading-core-lab/notificationChannels/<channel-id>"
+```
 
 ## Suggested Log-Based Metrics
 
