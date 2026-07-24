@@ -84,5 +84,7 @@ shellcheck-py==0.10.0.1
     # via toss-trading (pyproject.toml)
 typing-extensions==4.16.0
     # via grpcio
+tzdata==2026.3 ; sys_platform == "win32"
+    # via toss-trading (pyproject.toml)
 urllib3==2.7.0
     # via requests

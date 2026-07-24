@@ -1,0 +1,112 @@
+schema_version: research-data-sources-v1
+reviewed_at: "2026-07-24"
+scope: private_internal_research
+redistribution_allowed: false
+
+selection:
+  market_bar_total_return_primary: tiingo_eod
+  broker_cross_check: toss_candles
+  macro_point_in_time: fred_alfred
+  issuer_events_and_identifiers: sec_edgar
+  options_and_corporate_actions_later: massive
+
+providers:
+  tiingo_eod:
+    decision: selected_pending_credential
+    product: Starter
+    price_reviewed: "$0/month"
+    license: Internal Use Only
+    license_acceptance_owner: user
+    permitted_use:
+      - private_personal_research
+      - internal_backtesting
+    prohibited_use:
+      - redistribution
+      - public_display
+      - sharing_raw_or_derived_provider_data
+    capabilities:
+      raw_ohlcv: true
+      split_adjusted_ohlcv: true
+      total_return_ohlcv: true
+      dividends: true
+      splits: true
+    reviewed_limits:
+      unique_symbols_per_month: 500
+      requests_per_hour: 50
+      requests_per_day: 1000
+      monthly_bandwidth_gb: 1
+    credential_env: TIINGO_API_TOKEN
+    official_docs: https://www.tiingo.com/documentation/end-of-day
+    official_pricing: https://www.tiingo.com/about/pricing
+
+  toss_candles:
+    decision: selected_bootstrap_and_cross_check
+    license: provisional_internal_openapi_use
+    permitted_use:
+      - private_account_research
+      - broker_market_data_cross_check
+    prohibited_use:
+      - redistribution_without_written_terms_review
+      - total_return_backtest_input
+    capabilities:
+      raw_ohlcv: true
+      adjusted_ohlcv: true
+      total_return_ohlcv: false
+    normalization_policy:
+      adjusted_false: raw
+      adjusted_true: split_adjusted
+      adjusted_true_quality_flag: estimated
+      reason: exact dividend-adjustment semantics have not been verified
+    credential_env:
+      - TOSS_CLIENT_ID
+      - TOSS_CLIENT_SECRET
+    network_control: registered_gcp_static_ip_only
+    official_docs: https://developers.tossinvest.com/docs
+    official_product_page: https://home.tossinvest.com/en/open-api
+
+  fred_alfred:
+    decision: selected_pending_credential_and_series_review
+    license: series_level_rights_and_attribution_required
+    permitted_use:
+      - approved_series_internal_research
+      - point_in_time_macro_features
+    prohibited_use:
+      - web_scraping
+      - assuming_all_series_are_public_domain
+    capabilities:
+      observations: true
+      vintage_dates: true
+      release_calendar: true
+    credential_env: FRED_API_KEY
+    official_api: https://fred.stlouisfed.org/docs/api/fred/
+    official_terms: https://fred.stlouisfed.org/docs/api/terms_of_use.html
+
+  sec_edgar:
+    decision: selected
+    license: public_access_with_fair_access_and_document_rights_review
+    permitted_use:
+      - ticker_cik_mapping
+      - submissions_and_filing_metadata
+      - issuer_event_research
+    capabilities:
+      submissions_json: true
+      companyfacts_json: true
+      bulk_archives: true
+    authentication_required: false
+    user_agent_required: true
+    maximum_requests_per_second: 10
+    collector_requests_per_second: 8
+    official_api: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
+    official_rate_policy: https://www.sec.gov/filergroup/announcements-old/new-rate-control-limits
+
+  massive:
+    decision: deferred_not_primary_total_return_source
+    reason: aggregate bars are split-adjusted by default but not dividend-adjusted
+    future_scope:
+      - options_snapshots
+      - dividends
+      - splits
+    prohibited_use:
+      - primary_total_return_backtest_bars
+    official_adjustment_policy: https://massive.com/knowledge-base/article/is-massives-stock-data-adjusted-for-splits-or-dividends
+    official_dividend_policy: https://massive.com/knowledge-base/article/does-massive-adjust-historic-dividends-for-splits

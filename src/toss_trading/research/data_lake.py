@@ -189,6 +189,11 @@ class DataLake:
             else _canonical_json(body)
         )
         digest = hashlib.sha256(payload).hexdigest()
+        request_digest = (
+            hashlib.sha256(_canonical_json(request)).hexdigest()
+            if request is not None
+            else None
+        )
         extension = "json" if "json" in media_type else "csv" if "csv" in media_type else "bin"
         ingest_date = retrieved[:10]
         relative = (
@@ -199,8 +204,18 @@ class DataLake:
             / f"{digest}.{extension}"
         )
         self._atomic_write(self.root / relative, payload)
+        identity = ":".join(
+            (
+                "raw",
+                source,
+                dataset,
+                digest,
+                request_digest or "no-request",
+                retrieved,
+            )
+        )
         manifest = DatasetManifest(
-            manifest_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"raw:{digest}")),
+            manifest_id=str(uuid.uuid5(uuid.NAMESPACE_URL, identity)),
             layer="bronze",
             source=source,
             dataset=dataset,
@@ -211,9 +226,7 @@ class DataLake:
             byte_count=len(payload),
             media_type=media_type,
             relative_path=relative.as_posix(),
-            request_sha256=hashlib.sha256(_canonical_json(request)).hexdigest()
-            if request is not None
-            else None,
+            request_sha256=request_digest,
             license_tag=license_tag,
             code_revision=code_revision,
         )
