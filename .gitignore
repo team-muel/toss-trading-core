@@ -12,6 +12,7 @@ build/
 !.env.example
 /runtime/
 /research_data/
+/tmp/
 *.sqlite
 *.sqlite3
 *.sqlite-wal
