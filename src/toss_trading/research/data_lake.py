@@ -305,31 +305,38 @@ class DataLake:
                         )
                         """
                     )
-                    connection.executemany(
-                        "INSERT INTO bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        [
-                            (
-                                item.symbol,
-                                item.event_time_utc,
-                                item.available_at,
-                                item.exchange_local_date,
-                                item.interval,
-                                item.open,
-                                item.high,
-                                item.low,
-                                item.close,
-                                item.volume,
-                                item.currency,
-                                item.session,
-                                item.adjustment,
-                                item.source,
-                                item.source_revision,
-                                item.raw_manifest_id,
-                                item.quality_flag,
-                            )
-                            for item in group
-                        ],
-                    )
+                    connection.execute("BEGIN TRANSACTION")
+                    try:
+                        connection.executemany(
+                            "INSERT INTO bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            [
+                                (
+                                    item.symbol,
+                                    item.event_time_utc,
+                                    item.available_at,
+                                    item.exchange_local_date,
+                                    item.interval,
+                                    item.open,
+                                    item.high,
+                                    item.low,
+                                    item.close,
+                                    item.volume,
+                                    item.currency,
+                                    item.session,
+                                    item.adjustment,
+                                    item.source,
+                                    item.source_revision,
+                                    item.raw_manifest_id,
+                                    item.quality_flag,
+                                )
+                                for item in group
+                            ],
+                        )
+                    except Exception:
+                        connection.execute("ROLLBACK")
+                        raise
+                    else:
+                        connection.execute("COMMIT")
                     escaped = str(temporary).replace("'", "''")
                     connection.execute(
                         f"COPY bars TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)"
