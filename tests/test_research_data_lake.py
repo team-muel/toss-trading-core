@@ -94,6 +94,13 @@ class ResearchDataLakeTest(unittest.TestCase):
             self.assertIn("adjustment=total_return", manifest.relative_path)
             self.assertTrue((Path(tmp) / manifest.relative_path).is_file())
 
+            repeated = lake.write_market_bars(
+                [market_bar()],
+                code_revision="abc123",
+                license_tag="test-only",
+            )
+            self.assertEqual(repeated, manifests)
+
 
 if __name__ == "__main__":
     unittest.main()

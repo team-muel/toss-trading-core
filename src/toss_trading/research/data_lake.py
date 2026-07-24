@@ -166,6 +166,14 @@ class DataLake:
         self._atomic_write(path, _canonical_json(asdict(manifest)))
         return path
 
+    def _read_manifest(self, manifest_id: str) -> DatasetManifest | None:
+        path = self.root / "catalog" / "manifests" / f"{manifest_id}.json"
+        if not path.exists():
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["parent_manifest_ids"] = tuple(payload.get("parent_manifest_ids", ()))
+        return DatasetManifest(**payload)
+
     def store_raw(
         self,
         *,
@@ -330,10 +338,29 @@ class DataLake:
                     connection.close()
                 os.replace(temporary, output)
             parquet_digest = hashlib.sha256(output.read_bytes()).hexdigest()
+            legacy_manifest_id = str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"silver:{parquet_digest}")
+            )
+            manifest_id = str(
+                uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    f"silver:{parquet_digest}:{code_revision}:{license_tag}",
+                )
+            )
+            existing = self._read_manifest(manifest_id) or self._read_manifest(
+                legacy_manifest_id
+            )
+            if (
+                existing is not None
+                and existing.content_sha256 == parquet_digest
+                and existing.relative_path == relative.as_posix()
+                and existing.code_revision == code_revision
+                and existing.license_tag == license_tag
+            ):
+                manifests.append(existing)
+                continue
             manifest = DatasetManifest(
-                manifest_id=str(
-                    uuid.uuid5(uuid.NAMESPACE_URL, f"silver:{parquet_digest}")
-                ),
+                manifest_id=manifest_id,
                 layer="silver",
                 source=source,
                 dataset="market_bars",
