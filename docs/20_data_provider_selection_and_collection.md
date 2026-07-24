@@ -138,3 +138,54 @@ python -m toss_trading.cli.research_validate_bars `
 - 거래소 캘린더, benchmark, USD/KRW 환율, 세금·수수료 시계열을 추가해야
   실제 순수익 비교가 가능하다.
 - FRED/ALFRED는 API 키와 series별 권리 registry가 준비될 때까지 수집하지 않는다.
+
+## 2026-07-24 실제 수집 결과
+
+승인된 고정 IP VM에서 운영 서비스와 분리된 임시 경로를 사용했다.
+`toss-foundation.timer`, 현재 release symlink와 Cloud Monitoring 경보는 변경하지
+않았다.
+
+- 요청 universe: 15개 ETF
+- 수집 성공: 14개
+- 공급자 미지원: `SPLG` (`404 stock-not-found`)
+- 원본 page: raw 347개, adjusted 347개
+- bundle SHA-256:
+  - raw:
+    `738b36fc6da9c33c943b221a68962bbb628de98f012e3f23bbc09abad5e4bb7f`
+  - adjusted:
+    `5c252c49e4748643a1b527592fb68f50bdf9ac3b0c08ed0f40d4777f2b4ab512`
+- 확정 세션 cutoff: `2026-07-23`
+- 정규화 결과: raw 67,794행, split-adjusted estimated 67,794행
+- 전체 QA: 중복 0행, OHLC/시간 오류 0행, adjustment key 불일치 0행
+- manifest code revision:
+  `a14483bba769ee198d5b2205eb3579f4f03b3e09`
+
+현재 coverage:
+
+| symbol | raw rows | first date | last date |
+|---|---:|---|---|
+| BIL | 4,818 | 2007-05-30 | 2026-07-23 |
+| GLD | 5,452 | 2004-11-18 | 2026-07-23 |
+| IVV | 5,674 | 2004-01-02 | 2026-07-23 |
+| QQQ | 5,674 | 2004-01-02 | 2026-07-23 |
+| SCHD | 3,709 | 2011-10-20 | 2026-07-23 |
+| SGOV | 1,546 | 2020-05-28 | 2026-07-23 |
+| SHV | 4,913 | 2007-01-11 | 2026-07-23 |
+| SMH | 3,666 | 2011-12-21 | 2026-07-23 |
+| SPY | 5,674 | 2004-01-02 | 2026-07-23 |
+| TLT | 5,674 | 2004-01-02 | 2026-07-23 |
+| VOO | 3,991 | 2010-09-09 | 2026-07-23 |
+| VTV | 5,655 | 2004-01-30 | 2026-07-23 |
+| XLP | 5,674 | 2004-01-02 | 2026-07-23 |
+| XLU | 5,674 | 2004-01-02 | 2026-07-23 |
+
+Toss가 뉴욕 장 시작 전에도 당일 일봉을 반환하는 것을 확인했으므로 수집 시각의
+당일 행은 bronze에만 보존하고 silver에서는 제외했다. `SMH` coverage가
+2011-12-21부터 시작하는 이유와 `SPLG`의 Toss vendor symbol은 별도 매핑 검증
+대상이다.
+
+Tiingo는 주 공급자로 선정했지만 계정 약관 수락과
+`TIINGO_API_TOKEN` 등록 전이므로 아직 실제 raw/total-return 수집을 시작하지
+않았다. SEC는 개인 연락처를 외부 전송하지 않는 URL형 User-Agent로 시도했을 때
+403이어서, 사용자가 SEC에 보낼 연락 이메일을 명시적으로 승인하기 전까지
+중단했다.
