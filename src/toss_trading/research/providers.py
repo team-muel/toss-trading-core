@@ -200,6 +200,7 @@ def ingest_toss_candle_bundle(
     *,
     code_revision: str,
     license_tag: str = TOSS_LICENSE_TAG,
+    through_date: str | None = None,
 ) -> tuple[list[DatasetManifest], list[DatasetManifest], int]:
     if bundle.get("schema_version") != "toss-candle-bundle-v1":
         raise ValueError("unsupported Toss candle bundle schema")
@@ -211,6 +212,7 @@ def ingest_toss_candle_bundle(
     if not isinstance(adjusted, bool):
         raise ValueError("Toss candle bundle is missing a boolean adjusted flag")
     start = date.fromisoformat(str(request["start_date"]))
+    end = date.fromisoformat(through_date) if through_date else None
     interval = str(request["interval"])
     adjustment = "split_adjusted" if adjusted else "raw"
     quality_flag = "estimated" if adjusted else "ok"
@@ -248,7 +250,8 @@ def ingest_toss_candle_bundle(
             if not isinstance(candle, dict):
                 continue
             event_time, exchange_date = _provider_timestamp(str(candle["timestamp"]))
-            if date.fromisoformat(exchange_date) < start:
+            session_date = date.fromisoformat(exchange_date)
+            if session_date < start or (end is not None and session_date > end):
                 continue
             row = MarketBar(
                 symbol=symbol,
