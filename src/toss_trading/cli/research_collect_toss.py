@@ -56,6 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest.add_argument("--input", required=True)
     ingest.add_argument("--output-root", default="research_data")
+    ingest.add_argument(
+        "--through-date",
+        help="Last completed exchange session to include in normalized bars.",
+    )
     ingest.add_argument("--license-tag", default=TOSS_LICENSE_TAG)
     ingest.add_argument(
         "--code-revision",
@@ -107,6 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         bundle,
         code_revision=args.code_revision,
         license_tag=args.license_tag,
+        through_date=args.through_date,
     )
     print(
         json.dumps(

@@ -86,6 +86,63 @@ def main(argv: list[str] | None = None) -> int:
                 "SELECT DISTINCT adjustment FROM bars ORDER BY adjustment"
             ).fetchall()
         }
+        coverage_rows = connection.execute(
+            """
+            SELECT
+              candidate.source,
+              candidate.adjustment,
+              (
+                SELECT COUNT(*)
+                FROM bars adjusted
+                WHERE adjusted.source = candidate.source
+                  AND adjusted.adjustment = candidate.adjustment
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM bars raw
+                    WHERE raw.source = adjusted.source
+                      AND raw.adjustment = 'raw'
+                      AND raw.symbol = adjusted.symbol
+                      AND raw.event_time_utc = adjusted.event_time_utc
+                      AND raw.interval = adjusted.interval
+                  )
+              ) AS missing_raw,
+              (
+                SELECT COUNT(*)
+                FROM bars raw
+                WHERE raw.source = candidate.source
+                  AND raw.adjustment = 'raw'
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM bars adjusted
+                    WHERE adjusted.source = raw.source
+                      AND adjusted.adjustment = candidate.adjustment
+                      AND adjusted.symbol = raw.symbol
+                      AND adjusted.event_time_utc = raw.event_time_utc
+                      AND adjusted.interval = raw.interval
+                  )
+              ) AS missing_adjusted
+            FROM (
+              SELECT DISTINCT source, adjustment
+              FROM bars
+              WHERE adjustment <> 'raw'
+            ) AS candidate
+            ORDER BY candidate.source, candidate.adjustment
+            """
+        ).fetchall()
+        symbol_rows = connection.execute(
+            """
+            SELECT
+              source,
+              adjustment,
+              symbol,
+              COUNT(*) AS rows,
+              MIN(exchange_local_date)::VARCHAR AS first_date,
+              MAX(exchange_local_date)::VARCHAR AS last_date
+            FROM bars
+            GROUP BY source, adjustment, symbol
+            ORDER BY source, adjustment, symbol
+            """
+        ).fetchall()
     finally:
         connection.close()
 
@@ -95,14 +152,29 @@ def main(argv: list[str] | None = None) -> int:
     }
     missing_symbols = sorted(expected_symbols - symbols)
     missing_adjustments = sorted(required_adjustments - adjustments)
+    coverage_mismatch_rows = sum(
+        missing_raw + missing_adjusted
+        for _, _, missing_raw, missing_adjusted in coverage_rows
+    )
     ok = not (
         duplicate_count
         or invalid_count
+        or coverage_mismatch_rows
         or missing_symbols
         or missing_adjustments
     )
     result = {
         "adjustments": sorted(adjustments),
+        "coverage": [
+            {
+                "source": source,
+                "adjustment": adjustment,
+                "missing_raw": missing_raw,
+                "missing_adjusted": missing_adjusted,
+            }
+            for source, adjustment, missing_raw, missing_adjusted in coverage_rows
+        ],
+        "coverage_mismatch_rows": coverage_mismatch_rows,
         "duplicate_rows": duplicate_count,
         "invalid_rows": invalid_count,
         "missing_adjustments": missing_adjustments,
@@ -127,6 +199,17 @@ def main(argv: list[str] | None = None) -> int:
                 first_date,
                 last_date,
             ) in summary_rows
+        ],
+        "symbol_summary": [
+            {
+                "source": source,
+                "adjustment": adjustment,
+                "symbol": symbol,
+                "rows": rows,
+                "first_date": first_date,
+                "last_date": last_date,
+            }
+            for source, adjustment, symbol, rows, first_date, last_date in symbol_rows
         ],
         "symbols": sorted(symbols),
     }

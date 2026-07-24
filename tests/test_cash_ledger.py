@@ -112,9 +112,10 @@ class CashLedgerTest(unittest.TestCase):
 
         rows = self.ledger.conn.execute(
             """
-            SELECT event_type, amount_decimal, settlement_date
-            FROM cash_ledger
-            ORDER BY ts, event_type, id
+            SELECT c.event_type, c.amount_decimal, c.settlement_date
+            FROM cash_ledger AS c
+            JOIN execution_delta_log AS d ON d.id = c.source_ref
+            ORDER BY d.created_at, d.id, c.event_type, c.id
             """
         ).fetchall()
         self.assertEqual(

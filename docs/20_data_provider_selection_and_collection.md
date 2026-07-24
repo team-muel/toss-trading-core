@@ -75,6 +75,7 @@ $env:PYTHONPATH='src'
 python -m toss_trading.cli.research_collect_toss ingest `
   --input toss-candles-raw.json `
   --output-root research_data `
+  --through-date '<last-completed-US-session>' `
   --code-revision '<git-sha>'
 ```
 

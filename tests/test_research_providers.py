@@ -55,7 +55,7 @@ class FakeTossAdapter:
                 "result": {
                     "candles": [
                         {
-                            "timestamp": "2025-12-31T14:00:00+09:00",
+                            "timestamp": "2026-01-01T14:00:00+09:00",
                             "openPrice": "98",
                             "highPrice": "101",
                             "lowPrice": "97",
@@ -149,6 +149,7 @@ class ResearchProviderTest(unittest.TestCase):
                 lake,
                 bundle,
                 code_revision="abc123",
+                through_date="2026-01-02",
             )
             self.assertEqual(len(raw), 2)
             self.assertEqual(rows, 1)
