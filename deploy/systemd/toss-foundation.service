@@ -9,6 +9,17 @@ User=seoje
 Group=seoje
 WorkingDirectory=/home/seoje/toss-trading/current
 UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+ReadWritePaths=/home/seoje/toss-trading/runtime
 Environment=GCP_PROJECT_ID=toss-trading-core-lab
 Environment=TOSS_CLIENT_ID_SECRET=toss-client-id
 Environment=TOSS_CLIENT_SECRET_SECRET=toss-client-secret
@@ -23,8 +34,10 @@ Environment=FOUNDATION_DB_PATH=/home/seoje/toss-trading/runtime/foundation_accou
 Environment=FOUNDATION_REPORT_PATH=/home/seoje/toss-trading/runtime/foundation_account_state_report.txt
 Environment=FOUNDATION_JSON_LOG_PATH=/home/seoje/toss-trading/runtime/foundation_runner.jsonl
 Environment=FOUNDATION_BACKUP_DIR=/home/seoje/toss-trading/runtime/backups
+Environment=FOUNDATION_LOCAL_BACKUP_RETENTION_DAYS=14
 Environment=FOUNDATION_LOCK_PATH=/home/seoje/toss-trading/runtime/foundation_runner.lock
 Environment=FOUNDATION_GCS_BACKUP_URI=gs://toss-trading-core-lab-foundation-backups/foundation
+Environment=CLOUDSDK_CONFIG=/home/seoje/toss-trading/runtime/gcloud
 Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python
 ExecStart=/home/seoje/toss-trading/current/scripts/run_foundation_gcp.sh
 

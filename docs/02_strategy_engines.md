@@ -27,6 +27,24 @@ Toss live 자동화 대상은 국내/미국 주식 및 ETF 현물 주문입니�
 - drawdown 관리가 목적이지 고빈도 alpha 수확이 아님
 - FRED 금리는 현금 대기 비용과 hurdle 보조로만 사용
 
+### 사전등록 연구 Baseline v1
+
+첫 구현은 `broad_etf_dual_momentum_v1` 하나로 제한합니다.
+
+- 입력은 배당·분할을 포함한 `total_return` 일봉
+- 252 거래일 lookback, 최근 21 거래일 skip
+- 월말 종가까지의 이용 가능한 데이터로 신호 계산
+- 다음 거래일부터 목표 비중 적용
+- 절대 모멘텀 0 초과 후보 중 상대 모멘텀 상위 1개
+- 통과 후보가 없으면 `SGOV`
+- commission 1.5 bps와 slippage 2.0 bps를 turnover에 적용
+- SPY buy-and-hold, 동일가중, 60/40, 현금성 benchmark와 비교
+
+이 수치는 수익을 보장하는 calibrated policy가 아니라 하나의 falsifiable
+baseline입니다. OOS를 확인한 뒤 이 숫자를 최적화해 소급 변경하지 않습니다.
+실험 config, 입력 manifest와 code revision은 `gold/experiments`에 함께
+기록합니다.
+
 ## Homogeneous ETF Relative Value Long-Only
 
 이상적인 ETF relative value는 long/short지만 Toss live MVP에서는 short leg를 쓰지 않습니다.

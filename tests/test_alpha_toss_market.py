@@ -91,7 +91,11 @@ class TossMarketDatafieldTest(unittest.TestCase):
 
         policy = {
             "runtime": {"live_trading_enabled": False},
-            "starter_guardrails": {"max_open_orders": 10, "single_trade_max_loss_nav_pct": 10.0},
+            "starter_guardrails": {
+                "max_open_orders": 10,
+                "single_trade_max_loss_nav_pct": 10.0,
+                "single_live_order_notional_nav_pct": 100.0,
+            },
         }
         state = {
             "kill_switch_state": "NORMAL",
@@ -100,6 +104,10 @@ class TossMarketDatafieldTest(unittest.TestCase):
             "rate_limit_ok": True,
             "open_orders_count": 0,
             "nav": 1.0,
+            "drawdown_pct": 0.0,
+            "proposed_order_notional": signals[0].target_weight,
+            "available_cash": 1.0,
+            "allowed_symbols": set(momentum),
         }
         decision = RiskHub(policy).evaluate_signal(signals[0], state)
         self.assertTrue(decision.approved, decision.reason)

@@ -9,6 +9,7 @@
 | Field | Meaning |
 | --- | --- |
 | `event_time_utc` | 데이터가 의미하는 UTC 시각 |
+| `available_at` | 해당 값이 전략에 실제 사용 가능해진 시각 |
 | `source_ts` | provider가 준 원본 timestamp |
 | `received_at` | 시스템 수신 시각 |
 | `exchange_local_date` | 해당 거래소 기준 날짜 |
@@ -81,6 +82,11 @@
 
 OHLCV bar 저장소입니다. Toss와 외부 provider 모두 들어올 수 있으므로 `source`와 timestamp metadata가 필수입니다.
 
+연구용 대량 시계열의 canonical 저장소는 Foundation SQLite가 아니라
+`research_data/silver`의 Parquet입니다. `interval`, `adjustment`,
+`available_at`, `source_revision`, `raw_manifest_id`, `schema_version`을
+반드시 보존합니다. raw와 total-return 값을 같은 key로 덮어쓰지 않습니다.
+
 ### options_chain_snapshot
 
 Toss 공식 API는 옵션 chain과 Greeks를 제공하지 않습니다. 이 테이블은 research 또는 risk input 전용입니다.
@@ -95,6 +101,11 @@ Toss 공식 API는 옵션 chain과 Greeks를 제공하지 않습니다. 이 테�
 - `iv`, `delta`, `gamma`, `vega`
 - `oi`, `volume`
 - `source`
+- `available_at`
+- `dataset_manifest_ids`
+- `transformation_version`
+- `parameters_hash`
+- `code_revision`
 - `quality_flag`
 
 ### external_event_log
@@ -260,6 +271,17 @@ Toss 주문 상세의 누적 execution snapshot입니다.
 ### cash_ledger
 
 내부 현금 보조장부입니다. Toss `cashBuyingPower`를 현금처럼 저장하지 않습니다.
+
+체결 기반 `TRADE_COST`, `TRADE_PROCEEDS`, `COMMISSION_FEE`,
+`REGULATORY_FEE` 이벤트는 `execution_delta_log`에서 파생하며
+`amount_decimal`로 정확한 금액 문자열을 보존합니다. 동일 execution
+delta와 event type 조합은 결정적 ID를 사용해 한 번만 반영합니다. 초기
+현금잔고는 추정하거나 `cashBuyingPower`에서 역산하지 않습니다.
+
+현재 OPEN 매수 주문의 예약현금은 같은 run의 주문을 `broker_order_id`별로
+중복 제거한 뒤 미체결 수량×지정가 또는 남은 주문금액으로 계산합니다.
+가격·통화·주문금액을 확정할 수 없으면 신규 주문 허용값을 만들지 않고
+reconciliation blocker로 처리합니다.
 
 필수 event type:
 

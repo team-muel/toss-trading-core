@@ -18,6 +18,7 @@ class FoundationCliTest(unittest.TestCase):
         self.assertTrue(args.include_sellable_quantity)
         self.assertFalse(args.include_closed_orders)
         self.assertEqual(args.max_order_details, 20)
+        self.assertIsNone(args.buying_power_currencies)
 
     def test_parser_can_skip_sellable_quantity(self):
         args = build_parser().parse_args(["--skip-sellable-quantity"])
@@ -30,6 +31,17 @@ class FoundationCliTest(unittest.TestCase):
     def test_parser_can_include_closed_orders_explicitly(self):
         args = build_parser().parse_args(["--include-closed-orders"])
         self.assertTrue(args.include_closed_orders)
+
+    def test_parser_accepts_multiple_buying_power_currencies(self):
+        args = build_parser().parse_args(
+            [
+                "--buying-power-currency",
+                "USD",
+                "--buying-power-currency",
+                "KRW",
+            ]
+        )
+        self.assertEqual(args.buying_power_currencies, ["USD", "KRW"])
 
     def test_secret_manager_failure_does_not_hide_reason_with_missing_schema(self):
         with TemporaryDirectory() as tmp:

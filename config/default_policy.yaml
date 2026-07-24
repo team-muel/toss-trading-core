@@ -103,8 +103,24 @@ option_carry:
   disabled_reason: "Toss Open API docs do not provide options chain, Greeks, or options order endpoints."
   calibration_required: true
 
+broad_etf_dual_momentum:
+  enabled: false
+  research_enabled: true
+  live_orders_enabled: false
+  baseline_version: broad_etf_dual_momentum_v1
+  lookback_trading_days: 252
+  skip_recent_trading_days: 21
+  rebalance_frequency: month_end
+  execution_delay_trading_days: 1
+  top_k: 1
+  minimum_absolute_momentum: 0.0
+  cash_symbol: SGOV
+  commission_bps: 1.5
+  slippage_bps: 2.0
+  disabled_reason: "Research baseline must pass point-in-time OOS and paper gates."
+
 etf_relative_value:
-  enabled: true
+  enabled: false
   live_orders_enabled: false
   calibration_required: true
   lookback_days: null
@@ -116,14 +132,14 @@ etf_relative_value:
   live_scope_note: "Toss live MVP allows long-only cash/ETF switching until borrow and short mechanics are verified elsewhere."
 
 distribution_filter:
-  enabled: true
+  enabled: false
   calibration_required: true
   block_dividend_capture_before_ex_date: true
   nav_premium_warning_pct: null
   reduce_weight_when_roc_unknown: true
 
 tbill_collateral:
-  enabled: true
+  enabled: false
   live_orders_enabled: false
   mode: accounting_only
   disabled_reason: "Toss Open API holdings exclude overseas bonds; T-bill collateral automation is out of official scope."

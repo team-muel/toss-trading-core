@@ -1,6 +1,8 @@
 from pathlib import Path
 import unittest
 
+import yaml
+
 
 STABLE_CLOUD_MONITORING_EVENTS = [
     "foundation_runner_start",
@@ -24,6 +26,14 @@ class GcpRunnerFilesTest(unittest.TestCase):
             "docs/16_cloud_monitoring_runner_health.md",
             "scripts/load_gcp_secrets.sh",
             "scripts/run_foundation_gcp.sh",
+            "deploy/ops-agent/toss-foundation.yaml",
+            "deploy/monitoring/foundation-backup-upload-heartbeat.yaml",
+            "deploy/monitoring/foundation-runner-lock-busy.yaml",
+            "deploy/monitoring/foundation-runner-failed.yaml",
+            "deploy/monitoring/foundation-snapshot-failed.yaml",
+            "deploy/monitoring/foundation-audit-failed.yaml",
+            "deploy/monitoring/foundation-runner-heartbeat.yaml",
+            "deploy/monitoring/log-metrics.yaml",
             "deploy/systemd/toss-foundation.service",
             "deploy/systemd/toss-foundation.timer",
         ]:
@@ -35,6 +45,8 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("source \"scripts/load_gcp_secrets.sh\"", runner)
         self.assertIn("FOUNDATION_JSON_LOG_PATH", runner)
         self.assertIn("FOUNDATION_BACKUP_DIR", runner)
+        self.assertIn("FOUNDATION_LOCAL_BACKUP_RETENTION_DAYS", runner)
+        self.assertIn("FOUNDATION_CODE_REVISION", runner)
         self.assertIn("FOUNDATION_LOCK_PATH", runner)
         self.assertIn("FOUNDATION_MAX_ORDER_DETAILS", runner)
         self.assertIn("FOUNDATION_INCLUDE_CLOSED_ORDERS", runner)
@@ -92,10 +104,84 @@ class GcpRunnerFilesTest(unittest.TestCase):
         )
 
         self.assertIn("UMask=0077", service)
+        self.assertIn("NoNewPrivileges=true", service)
+        self.assertIn("ProtectSystem=strict", service)
+        self.assertIn("ReadWritePaths=/home/seoje/toss-trading/runtime", service)
         self.assertIn("FOUNDATION_AUDIT_PROFILE=v0-empty-safe", service)
         self.assertIn("FOUNDATION_LOAD_GCP_SECRETS=1", service)
         self.assertIn("OnUnitActiveSec=6h", timer)
         self.assertIn("Persistent=true", timer)
+
+    def test_ops_agent_collects_and_parses_foundation_jsonl(self):
+        config = Path("deploy/ops-agent/toss-foundation.yaml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "/home/seoje/toss-trading/runtime/foundation_runner.jsonl", config
+        )
+        self.assertIn("type: parse_json", config)
+        self.assertIn("toss_foundation_pipeline", config)
+
+    def test_additional_monitoring_policies_cover_backup_and_overlap(self):
+        backup_policy = Path(
+            "deploy/monitoring/foundation-backup-upload-heartbeat.yaml"
+        ).read_text(encoding="utf-8")
+        lock_policy = Path(
+            "deploy/monitoring/foundation-runner-lock-busy.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("foundation_runner_backup_upload_ok_count", backup_policy)
+        self.assertIn("conditionAbsent", backup_policy)
+        self.assertIn("foundation_runner_lock_busy_count", lock_policy)
+        self.assertIn("conditionThreshold", lock_policy)
+
+    def test_deployment_yaml_is_parseable(self):
+        paths = [
+            "deploy/ops-agent/toss-foundation.yaml",
+            "deploy/monitoring/foundation-backup-upload-heartbeat.yaml",
+            "deploy/monitoring/foundation-runner-lock-busy.yaml",
+            "deploy/monitoring/foundation-runner-failed.yaml",
+            "deploy/monitoring/foundation-snapshot-failed.yaml",
+            "deploy/monitoring/foundation-audit-failed.yaml",
+            "deploy/monitoring/foundation-runner-heartbeat.yaml",
+            "deploy/monitoring/log-metrics.yaml",
+        ]
+        for path in paths:
+            payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+            self.assertIsInstance(payload, dict, path)
+
+        policy_paths = [
+            path
+            for path in paths
+            if path.startswith("deploy/monitoring/foundation-")
+        ]
+        self.assertEqual(len(policy_paths), 6)
+        for path in policy_paths:
+            text = Path(path).read_text(encoding="utf-8")
+            self.assertIn("__INSTANCE_ID__", text)
+            self.assertIn("__NOTIFICATION_CHANNEL__", text)
+
+        metrics = yaml.safe_load(
+            Path("deploy/monitoring/log-metrics.yaml").read_text(encoding="utf-8")
+        )["metrics"]
+        self.assertEqual(len(metrics), 10)
+        self.assertEqual(
+            {item["event"] for item in metrics},
+            (
+                set(STABLE_CLOUD_MONITORING_EVENTS)
+                | {
+                    "foundation_runner_backup_ok",
+                    "foundation_runner_backup_upload_ok",
+                    "foundation_runner_lock_busy",
+                }
+            )
+            - {
+                "foundation_runner_start",
+                "foundation_snapshot_start",
+                "foundation_audit_start",
+            },
+        )
 
 
 if __name__ == "__main__":

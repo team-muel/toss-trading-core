@@ -2,11 +2,28 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import replace
-from typing import Any
+from typing import Any, Protocol
 
 from toss_trading.account.ledger import AccountLedger, AccountStateExplanation
-from toss_trading.broker.toss import TossReadOnlyAdapter
 from toss_trading.contracts import require_accounts
+
+
+class ReadOnlyAccountAdapter(Protocol):
+    run_id: str | None
+
+    def get_accounts(self): ...
+
+    def get_holdings(self): ...
+
+    def get_all_orders(self, status: str, **query): ...
+
+    def get_order(self, order_id: str): ...
+
+    def get_buying_power(self, **query): ...
+
+    def get_commissions(self, **query): ...
+
+    def get_sellable_quantity(self, **query): ...
 
 
 @dataclass(frozen=True)
@@ -22,6 +39,7 @@ class FoundationSnapshotResult:
     order_detail_rows: int
     execution_snapshot_rows: int
     execution_delta_rows: int
+    cash_event_rows: int
     explanation: AccountStateExplanation
 
 
@@ -48,7 +66,7 @@ def _orders_from_body(body: Any) -> list[dict[str, Any]]:
 class FoundationSnapshotter:
     """Reads Toss account state, stores raw/normalized snapshots, and explains it."""
 
-    def __init__(self, adapter: TossReadOnlyAdapter, ledger: AccountLedger) -> None:
+    def __init__(self, adapter: ReadOnlyAccountAdapter, ledger: AccountLedger) -> None:
         self.adapter = adapter
         self.ledger = ledger
 
@@ -59,16 +77,18 @@ class FoundationSnapshotter:
         include_sellable_quantity: bool = True,
         include_order_details: bool = True,
         include_closed_orders: bool = False,
-        buying_power_currency: str = "USD",
+        buying_power_currency: str | list[str] | tuple[str, ...] = "USD",
         max_order_pages: int = 20,
         max_order_details: int = 20,
         target_order_id: str | None = None,
         policy_hash: str | None = None,
+        code_revision: str | None = None,
     ) -> FoundationSnapshotResult:
         run_id = self.ledger.begin_snapshot_run(
             account_seq=account_seq,
             target_order_id=target_order_id,
             policy_hash=policy_hash,
+            code_revision=code_revision,
         )
         try:
             if hasattr(self.adapter, "run_id"):
@@ -99,7 +119,7 @@ class FoundationSnapshotter:
                     "requested account_seq is not present in the current Toss accounts response"
                 )
             if adapter_account_seq and adapter_account_seq != resolved_account_seq:
-                if not isinstance(self.adapter, TossReadOnlyAdapter):
+                if not hasattr(self.adapter, "with_account"):
                     raise RuntimeError("adapter account differs from requested account_seq")
                 self.adapter = self.adapter.with_account(resolved_account_seq)
                 self.adapter.run_id = run_id
@@ -196,13 +216,36 @@ class FoundationSnapshotter:
                     execution_snapshot_rows += snapshots
                     execution_delta_rows += deltas
 
-            buying_power_result = self.adapter.get_buying_power(currency=buying_power_currency)
-            buying_power_rows = self.ledger.ingest_buying_power(
-                buying_power_result.body,
-                account_seq=resolved_account_seq,
-                raw_ref=buying_power_result.raw_response_id,
-                run_id=run_id,
+            configured_currencies = (
+                {buying_power_currency.strip().upper()}
+                if isinstance(buying_power_currency, str)
+                else {
+                    str(currency).strip().upper()
+                    for currency in buying_power_currency
+                    if str(currency).strip()
+                }
             )
+            holding_currencies = {
+                str(row["currency"]).strip().upper()
+                for row in self.ledger.conn.execute(
+                    """
+                    SELECT DISTINCT currency
+                    FROM holding_snapshot
+                    WHERE account_seq = ? AND run_id = ? AND currency IS NOT NULL
+                    """,
+                    (resolved_account_seq, run_id),
+                ).fetchall()
+                if str(row["currency"]).strip()
+            }
+            buying_power_rows = 0
+            for currency in sorted(configured_currencies | holding_currencies):
+                buying_power_result = self.adapter.get_buying_power(currency=currency)
+                buying_power_rows += self.ledger.ingest_buying_power(
+                    buying_power_result.body,
+                    account_seq=resolved_account_seq,
+                    raw_ref=buying_power_result.raw_response_id,
+                    run_id=run_id,
+                )
             commissions_result = self.adapter.get_commissions()
             commission_rows = self.ledger.ingest_commissions(
                 commissions_result.body,
@@ -234,6 +277,11 @@ class FoundationSnapshotter:
                         run_id=run_id,
                     )
 
+            # Backfill every unposted execution delta, including a previous run
+            # that failed after persisting a fill but before cash posting.
+            cash_event_rows = self.ledger.post_execution_cash_events(
+                account_seq=resolved_account_seq,
+            )
             self.ledger.finish_snapshot_run(run_id, account_seq=resolved_account_seq)
             explanation = self.ledger.explain_account_state(resolved_account_seq, run_id=run_id)
             return FoundationSnapshotResult(
@@ -248,6 +296,7 @@ class FoundationSnapshotter:
                 order_detail_rows=order_detail_rows,
                 execution_snapshot_rows=execution_snapshot_rows,
                 execution_delta_rows=execution_delta_rows,
+                cash_event_rows=cash_event_rows,
                 explanation=explanation,
             )
         except Exception as exc:

@@ -126,6 +126,7 @@ def _schema_failure(db_path: str | Path) -> str | None:
             "sellable_quantity_snapshot",
             "execution_snapshot_log",
             "execution_delta_log",
+            "cash_ledger",
             "broker_reconciliation_log",
         }
         existing = {
@@ -342,6 +343,22 @@ def audit_foundation_db(
                 """,
                 (run_id, account_seq, target_order_id, target_order_id),
             )
+            cash_event_rows = _count(
+                conn,
+                """
+                SELECT COUNT(*)
+                FROM cash_ledger AS c
+                JOIN execution_delta_log AS d ON d.id = c.source_ref
+                WHERE d.run_id = ? AND d.account_seq = ?
+                  AND (? = '' OR d.order_id = ?)
+                """,
+                (run_id, account_seq, target_order_id, target_order_id),
+            )
+            cash_event_gaps = ledger.cash_event_gaps(account_seq=account_seq)
+            reserved_cash = ledger.reserved_open_buy_cash(
+                account_seq=account_seq,
+                run_id=run_id,
+            )
             settlement_rows = _count(
                 conn,
                 """
@@ -379,21 +396,21 @@ def audit_foundation_db(
                 FROM broker_reconciliation_log
                 WHERE account_seq = ?
                   AND status = 'BLOCK'
-                  AND ts >= ? AND ts <= ?
+                  AND resolved_at IS NULL
                 """,
-                (account_seq, run["started_at"], run["completed_at"]),
+                (account_seq,),
             )
             latest_reconciliation_block = conn.execute(
                 """
-                SELECT item_type, difference, action_required
+                SELECT id, item_type, difference, action_required
                 FROM broker_reconciliation_log
                 WHERE account_seq = ?
                   AND status = 'BLOCK'
-                  AND ts >= ? AND ts <= ?
+                  AND resolved_at IS NULL
                 ORDER BY ts DESC, created_at DESC
                 LIMIT 1
                 """,
-                (account_seq, run["started_at"], run["completed_at"]),
+                (account_seq,),
             ).fetchone()
             unknown_order_status_rows = conn.execute(
                 """
@@ -428,6 +445,18 @@ def audit_foundation_db(
             lines.append(f"account[{account_seq}].target_filled_rows={target_filled_rows}")
             lines.append(f"account[{account_seq}].execution_rows={execution_rows}")
             lines.append(f"account[{account_seq}].execution_delta_rows={execution_delta_rows}")
+            lines.append(f"account[{account_seq}].cash_event_rows={cash_event_rows}")
+            lines.append(
+                f"account[{account_seq}].cash_event_gaps={cash_event_gaps or ['none']}"
+            )
+            lines.append(
+                f"account[{account_seq}].reserved_open_buy_cash="
+                f"{reserved_cash.amount_by_currency}"
+            )
+            lines.append(
+                f"account[{account_seq}].reserved_cash_blockers="
+                f"{reserved_cash.blockers or ['none']}"
+            )
             lines.append(f"account[{account_seq}].commission_rows={commission_rows}")
             lines.append(f"account[{account_seq}].settlement_rows={settlement_rows}")
             lines.append(f"account[{account_seq}].sellable_quantity_rows={sellable_rows}")
@@ -454,9 +483,16 @@ def audit_foundation_db(
                 failures.append(f"account[{account_seq}].missing_normalized_buying_power")
             if explanation.blockers:
                 failures.extend(f"account[{account_seq}].{item}" for item in explanation.blockers)
+            failures.extend(
+                f"account[{account_seq}].{item}" for item in reserved_cash.blockers
+            )
+            failures.extend(
+                f"account[{account_seq}].{item}" for item in cash_event_gaps
+            )
             if latest_reconciliation_block is not None:
                 failures.append(
                     f"account[{account_seq}].broker_reconciliation_block:"
+                    f"{latest_reconciliation_block['id']}:"
                     f"{latest_reconciliation_block['item_type']}:"
                     f"{latest_reconciliation_block['difference']}:"
                     f"{latest_reconciliation_block['action_required']}"

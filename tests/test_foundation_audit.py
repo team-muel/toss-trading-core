@@ -215,8 +215,60 @@ class FoundationAuditTest(unittest.TestCase):
 
             self.assertFalse(result.ok)
             self.assertIn("reconciliation_block_rows=1", result.as_text())
-            self.assertIn("broker_reconciliation_block:execution_snapshot", result.as_text())
+            self.assertIn(
+                "broker_reconciliation_block:block-1:execution_snapshot",
+                result.as_text(),
+            )
             self.assertIn("negative_execution_delta", result.as_text())
+
+    def test_audit_keeps_historical_block_until_explicit_resolution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "foundation.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.conn.execute(
+                """
+                INSERT INTO broker_reconciliation_log (
+                  id, ts, account_seq, item_type, broker_value, internal_value,
+                  difference, status, action_required, created_at
+                ) VALUES (
+                  'historical-block', '2020-01-01T00:00:00+00:00', '1',
+                  'cash', '100', '90', '10', 'BLOCK',
+                  'reconcile_before_live', '2020-01-01T00:00:00+00:00'
+                )
+                """
+            )
+            ledger.conn.commit()
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            FoundationSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.close()
+
+            blocked = audit_foundation_db(db_path=db_path)
+            self.assertFalse(blocked.ok)
+            self.assertIn("historical-block:cash:10", blocked.as_text())
+
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.resolve_reconciliation_block(
+                "historical-block",
+                note="matched against approved broker statement",
+            )
+            ledger.close()
+
+            resolved = audit_foundation_db(db_path=db_path)
+            self.assertTrue(resolved.ok, resolved.as_text())
 
     def test_audit_fails_when_unknown_order_status_exists(self):
         with tempfile.TemporaryDirectory() as tmp:

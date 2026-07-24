@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from toss_trading.data.universe import InstrumentMapping
+from toss_trading.resources import resolve_resource
 from toss_trading.contracts import (
     commission_rate_items,
     holdings_items,
@@ -99,11 +100,16 @@ def _float_or_zero(value: Any) -> float:
     return _float(value) or 0.0
 
 
-def _same_optional_float(left: Any, right: float | None) -> bool:
-    left_float = _float(left)
-    if left_float is None or right is None:
-        return left_float is None and right is None
-    return left_float == right
+def _stored_decimal(row: sqlite3.Row, decimal_key: str, numeric_key: str) -> Decimal:
+    value = row[decimal_key] if row[decimal_key] is not None else row[numeric_key]
+    return Decimal(str(value))
+
+
+def _same_optional_decimal(left: Any, right: str | None) -> bool:
+    left_text = _decimal_text(left)
+    if left_text is None or right is None:
+        return left_text is None and right is None
+    return Decimal(left_text) == Decimal(right)
 
 
 def _endpoint_like_pattern(endpoint: str) -> str:
@@ -156,6 +162,12 @@ class AccountStateExplanation:
         return "\n".join(self.lines)
 
 
+@dataclass(frozen=True)
+class ReservedCashResult:
+    amount_by_currency: dict[str, str]
+    blockers: list[str]
+
+
 class AccountLedger:
     """SQLite-backed foundation ledger for Toss account state snapshots."""
 
@@ -172,7 +184,7 @@ class AccountLedger:
         self.conn.close()
 
     def init_schema(self, schema_path: str | Path = "schemas/trading_ledger.sql") -> None:
-        sql = Path(schema_path).read_text(encoding="utf-8")
+        sql = resolve_resource(schema_path).read_text(encoding="utf-8")
         self.conn.executescript(sql)
         self._migrate_schema()
         self.conn.commit()
@@ -283,6 +295,106 @@ class AccountLedger:
                 """
             )
             self.conn.execute("PRAGMA user_version = 1")
+            version = 1
+        if version < 2:
+            existing = {
+                row["name"]
+                for row in self.conn.execute("PRAGMA table_info(cash_ledger)").fetchall()
+            }
+            if "amount_decimal" not in existing:
+                self.conn.execute("ALTER TABLE cash_ledger ADD COLUMN amount_decimal TEXT")
+                self.conn.execute(
+                    """
+                    UPDATE cash_ledger
+                    SET amount_decimal = CAST(amount AS TEXT)
+                    WHERE amount_decimal IS NULL
+                    """
+                )
+            self.conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_cash_ledger_account_currency_settlement
+                ON cash_ledger(account_seq, currency, settlement_date, ts)
+                """
+            )
+            self.conn.execute("PRAGMA user_version = 2")
+            version = 2
+        if version < 3:
+            reconciliation_columns = {
+                row["name"]
+                for row in self.conn.execute(
+                    "PRAGMA table_info(broker_reconciliation_log)"
+                ).fetchall()
+            }
+            for column in ("resolved_at TEXT", "resolution_note TEXT"):
+                name = column.split()[0]
+                if name not in reconciliation_columns:
+                    self.conn.execute(
+                        f"ALTER TABLE broker_reconciliation_log ADD COLUMN {column}"
+                    )
+            self.conn.executescript(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_cash_ledger_source_event
+                  ON cash_ledger(source_ref, event_type)
+                  WHERE source_ref IS NOT NULL;
+                CREATE TABLE IF NOT EXISTS cash_ledger_genesis (
+                  account_seq TEXT NOT NULL,
+                  currency TEXT NOT NULL,
+                  as_of TEXT NOT NULL,
+                  opening_balance REAL NOT NULL,
+                  opening_balance_decimal TEXT NOT NULL,
+                  evidence_ref TEXT NOT NULL,
+                  approved_by TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  PRIMARY KEY (account_seq, currency)
+                );
+                CREATE INDEX IF NOT EXISTS idx_reconciliation_unresolved
+                  ON broker_reconciliation_log(account_seq, status, resolved_at, ts DESC);
+                """
+            )
+            self.conn.execute("PRAGMA user_version = 3")
+            version = 3
+        if version < 4:
+            for table, columns in {
+                "market_bars": [
+                    "available_at TEXT",
+                    "source_ts TEXT",
+                    "exchange_local_date TEXT",
+                    "interval TEXT NOT NULL DEFAULT '1d'",
+                    "currency TEXT",
+                    "session_label TEXT",
+                    "source_timezone TEXT",
+                    "adjustment TEXT NOT NULL DEFAULT 'raw'",
+                    "source_revision TEXT",
+                    "raw_manifest_id TEXT",
+                    "schema_version TEXT NOT NULL DEFAULT 'market-bars-v1'",
+                ],
+                "feature_snapshot": [
+                    "available_at TEXT",
+                    "dataset_manifest_ids TEXT",
+                    "transformation_version TEXT",
+                    "parameters_hash TEXT",
+                    "code_revision TEXT",
+                ],
+            }.items():
+                existing = {
+                    row["name"]
+                    for row in self.conn.execute(
+                        f"PRAGMA table_info({table})"
+                    ).fetchall()
+                }
+                for column in columns:
+                    name = column.split()[0]
+                    if name not in existing:
+                        self.conn.execute(
+                            f"ALTER TABLE {table} ADD COLUMN {column}"
+                        )
+            self.conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS uq_market_bars_point_in_time
+                  ON market_bars(ts, symbol, source, interval, adjustment)
+                """
+            )
+            self.conn.execute("PRAGMA user_version = 4")
 
     def begin_snapshot_run(
         self,
@@ -382,13 +494,17 @@ class AccountLedger:
         request_hash = _json_hash(request_payload)
         row = self.conn.execute(
             """
-            SELECT request_hash
+            SELECT account_seq, request_hash
             FROM client_order_id_registry
-            WHERE client_order_id = ? AND account_seq = ?
+            WHERE client_order_id = ?
             """,
-            (client_order_id, account_seq),
+            (client_order_id,),
         ).fetchone()
         if row is not None:
+            if row["account_seq"] != account_seq:
+                raise ValueError(
+                    "client_order_id is already reserved for a different account"
+                )
             if row["request_hash"] == request_hash:
                 return True
             raise ValueError("client_order_id is already reserved for a different payload")
@@ -807,8 +923,10 @@ class AccountLedger:
             filled_amount_decimal = _decimal_text(_get(execution, "filledAmount"))
             if filled_qty_decimal is None or filled_amount_decimal is None:
                 continue
-            filled_qty = float(filled_qty_decimal)
-            filled_amount = float(filled_amount_decimal)
+            filled_qty_value = Decimal(filled_qty_decimal)
+            filled_amount_value = Decimal(filled_amount_decimal)
+            filled_qty = float(filled_qty_value)
+            filled_amount = float(filled_amount_value)
             order_id = broker_order_id
             previous = self.conn.execute(
                 """
@@ -822,8 +940,10 @@ class AccountLedger:
             ).fetchone()
             commission_decimal = _decimal_text(_get(execution, "commission")) or "0"
             tax_decimal = _decimal_text(_get(execution, "tax")) or "0"
-            cumulative_commission = float(commission_decimal)
-            cumulative_tax = float(tax_decimal)
+            cumulative_commission_value = Decimal(commission_decimal)
+            cumulative_tax_value = Decimal(tax_decimal)
+            cumulative_commission = float(cumulative_commission_value)
+            cumulative_tax = float(cumulative_tax_value)
             order_status = str(_get(item, "status", default="UNKNOWN"))
             average_filled_price_decimal = _decimal_text(
                 _get(execution, "averageFilledPrice")
@@ -836,24 +956,46 @@ class AccountLedger:
             settlement_date = _get(execution, "settlementDate")
 
             if previous is not None:
+                previous_qty = _stored_decimal(
+                    previous,
+                    "cumulative_filled_qty_decimal",
+                    "cumulative_filled_qty",
+                )
+                previous_amount = _stored_decimal(
+                    previous,
+                    "cumulative_filled_amount_decimal",
+                    "cumulative_filled_amount",
+                )
+                previous_commission = _stored_decimal(
+                    previous,
+                    "cumulative_commission_decimal",
+                    "cumulative_commission",
+                )
+                previous_tax = _stored_decimal(
+                    previous,
+                    "cumulative_tax_decimal",
+                    "cumulative_tax",
+                )
                 unchanged = (
-                    float(previous["cumulative_filled_qty"]) == filled_qty
-                    and float(previous["cumulative_filled_amount"]) == filled_amount
-                    and _same_optional_float(
-                        previous["average_filled_price"],
-                        average_filled_price,
+                    previous_qty == filled_qty_value
+                    and previous_amount == filled_amount_value
+                    and _same_optional_decimal(
+                        previous["average_filled_price_decimal"]
+                        if previous["average_filled_price_decimal"] is not None
+                        else previous["average_filled_price"],
+                        average_filled_price_decimal,
                     )
-                    and float(previous["cumulative_commission"] or 0) == cumulative_commission
-                    and float(previous["cumulative_tax"] or 0) == cumulative_tax
+                    and previous_commission == cumulative_commission_value
+                    and previous_tax == cumulative_tax_value
                     and previous["order_status"] == order_status
                     and previous["settlement_date"] == settlement_date
                 )
-                delta_qty = filled_qty - float(previous["cumulative_filled_qty"])
-                delta_amount = filled_amount - float(previous["cumulative_filled_amount"])
-                delta_commission = cumulative_commission - float(
-                    previous["cumulative_commission"] or 0
-                )
-                delta_tax = cumulative_tax - float(previous["cumulative_tax"] or 0)
+                if unchanged and previous["run_id"] == run_id:
+                    continue
+                delta_qty = filled_qty_value - previous_qty
+                delta_amount = filled_amount_value - previous_amount
+                delta_commission = cumulative_commission_value - previous_commission
+                delta_tax = cumulative_tax_value - previous_tax
                 if min(delta_qty, delta_amount, delta_commission, delta_tax) < 0:
                     self.conn.execute(
                         """
@@ -880,10 +1022,10 @@ class AccountLedger:
                 snapshot_seq = int(previous["snapshot_seq"]) + 1
                 from_snapshot_id = previous["id"]
             else:
-                delta_qty = filled_qty
-                delta_amount = filled_amount
-                delta_commission = cumulative_commission
-                delta_tax = cumulative_tax
+                delta_qty = filled_qty_value
+                delta_amount = filled_amount_value
+                delta_commission = cumulative_commission_value
+                delta_tax = cumulative_tax_value
                 snapshot_seq = 1
                 from_snapshot_id = None
 
@@ -946,16 +1088,16 @@ class AccountLedger:
                         broker_order_id,
                         from_snapshot_id,
                         snapshot_id,
-                        delta_qty,
-                        delta_amount,
-                        delta_commission,
-                        delta_tax,
+                        float(delta_qty),
+                        float(delta_amount),
+                        float(delta_commission),
+                        float(delta_tax),
                         now,
                         _get(item, "currency"),
-                        format(Decimal(str(delta_qty)), "f"),
-                        format(Decimal(str(delta_amount)), "f"),
-                        format(Decimal(str(delta_commission)), "f"),
-                        format(Decimal(str(delta_tax)), "f"),
+                        format(delta_qty, "f"),
+                        format(delta_amount, "f"),
+                        format(delta_commission, "f"),
+                        format(delta_tax, "f"),
                     ),
                 )
                 inserted_deltas += 1
@@ -1054,6 +1196,330 @@ class AccountLedger:
         )
         self.conn.commit()
         return len(rows)
+
+    def post_execution_cash_events(
+        self,
+        *,
+        account_seq: str,
+        run_id: str | None = None,
+    ) -> int:
+        """Post exact, idempotent cash events from execution deltas.
+
+        This derives only trade principal, commission, and tax movements. It
+        does not invent an opening cash balance or treat broker buying power as
+        cash. Settlement-aware available cash therefore remains blocked until
+        an independently reconciled opening balance exists.
+        """
+
+        params: list[Any] = [account_seq]
+        run_filter = ""
+        if run_id is not None:
+            run_filter = "AND d.run_id = ?"
+            params.append(run_id)
+        deltas = self.conn.execute(
+            f"""
+            SELECT d.*
+            FROM execution_delta_log AS d
+            WHERE d.account_seq = ?
+              {run_filter}
+            ORDER BY d.ts, d.created_at, d.id
+            """,
+            tuple(params),
+        ).fetchall()
+
+        rows: list[tuple[Any, ...]] = []
+        for delta in deltas:
+            order = self.conn.execute(
+                """
+                SELECT side, settlement_date, currency
+                FROM broker_order_snapshot
+                WHERE account_seq = ? AND broker_order_id = ?
+                ORDER BY
+                  CASE WHEN run_id = ? THEN 0 ELSE 1 END,
+                  created_at DESC,
+                  ts DESC
+                LIMIT 1
+                """,
+                (account_seq, delta["broker_order_id"], delta["run_id"]),
+            ).fetchone()
+            if order is None:
+                raise ValueError(
+                    f"execution delta has no matching broker order: {delta['broker_order_id']}"
+                )
+            side = str(order["side"] or "").upper()
+            if side not in {"BUY", "SELL"}:
+                raise ValueError(
+                    f"execution delta has no supported order side: {delta['broker_order_id']}"
+                )
+            currency = str(delta["currency"] or order["currency"] or "").upper()
+            if not currency:
+                raise ValueError(
+                    f"execution delta has no currency: {delta['broker_order_id']}"
+                )
+
+            principal = Decimal(str(delta["delta_filled_amount_decimal"]))
+            commission = Decimal(str(delta["delta_commission_decimal"] or "0"))
+            tax = Decimal(str(delta["delta_tax_decimal"] or "0"))
+            if min(principal, commission, tax) < 0:
+                raise ValueError(
+                    f"execution delta contains a negative cash component: {delta['id']}"
+                )
+
+            events = [
+                (
+                    "TRADE_COST" if side == "BUY" else "TRADE_PROCEEDS",
+                    -principal if side == "BUY" else principal,
+                    0,
+                ),
+                ("COMMISSION_FEE", -commission, 0),
+                ("REGULATORY_FEE", -tax, 1),
+            ]
+            for event_type, amount, tax_relevant in events:
+                if amount == 0:
+                    continue
+                amount_decimal = format(amount, "f")
+                event_id = str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"toss-cash-ledger:{delta['id']}:{event_type}",
+                    )
+                )
+                rows.append(
+                    (
+                        event_id,
+                        delta["ts"],
+                        account_seq,
+                        currency,
+                        event_type,
+                        float(amount),
+                        amount_decimal,
+                        order["settlement_date"],
+                        delta["id"],
+                        tax_relevant,
+                        utc_now(),
+                    )
+                )
+
+        changes_before = self.conn.total_changes
+        self.conn.executemany(
+            """
+            INSERT INTO cash_ledger (
+              id, ts, account_seq, currency, event_type, amount, amount_decimal,
+              settlement_date, source_ref, tax_relevant, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              settlement_date = excluded.settlement_date
+            WHERE cash_ledger.settlement_date IS NOT excluded.settlement_date
+            """,
+            rows,
+        )
+        self.conn.commit()
+        return self.conn.total_changes - changes_before
+
+    def cash_event_gaps(self, *, account_seq: str) -> list[str]:
+        """Return exact missing or inconsistent cash events for every execution delta."""
+
+        gaps: list[str] = []
+        deltas = self.conn.execute(
+            """
+            SELECT *
+            FROM execution_delta_log
+            WHERE account_seq = ?
+            ORDER BY ts, created_at, id
+            """,
+            (account_seq,),
+        ).fetchall()
+        for delta in deltas:
+            order = self.conn.execute(
+                """
+                SELECT side, settlement_date, currency
+                FROM broker_order_snapshot
+                WHERE account_seq = ? AND broker_order_id = ?
+                ORDER BY
+                  CASE WHEN run_id = ? THEN 0 ELSE 1 END,
+                  created_at DESC,
+                  ts DESC
+                LIMIT 1
+                """,
+                (account_seq, delta["broker_order_id"], delta["run_id"]),
+            ).fetchone()
+            if order is None:
+                gaps.append(f"execution_cash_missing_order:{delta['id']}")
+                continue
+            side = str(order["side"] or "").upper()
+            if side not in {"BUY", "SELL"}:
+                gaps.append(f"execution_cash_invalid_side:{delta['id']}")
+                continue
+            expected: dict[str, Decimal] = {}
+            principal = Decimal(str(delta["delta_filled_amount_decimal"]))
+            commission = Decimal(str(delta["delta_commission_decimal"] or "0"))
+            tax = Decimal(str(delta["delta_tax_decimal"] or "0"))
+            if principal:
+                expected[
+                    "TRADE_COST" if side == "BUY" else "TRADE_PROCEEDS"
+                ] = -principal if side == "BUY" else principal
+            if commission:
+                expected["COMMISSION_FEE"] = -commission
+            if tax:
+                expected["REGULATORY_FEE"] = -tax
+
+            actual_rows = self.conn.execute(
+                """
+                SELECT event_type, amount_decimal, settlement_date
+                FROM cash_ledger
+                WHERE source_ref = ?
+                """,
+                (delta["id"],),
+            ).fetchall()
+            actual = {str(row["event_type"]): row for row in actual_rows}
+            if len(actual) != len(actual_rows):
+                gaps.append(f"execution_cash_duplicate_event:{delta['id']}")
+            for event_type, amount in expected.items():
+                row = actual.get(event_type)
+                if row is None:
+                    gaps.append(
+                        f"execution_cash_event_missing:{delta['id']}:{event_type}"
+                    )
+                    continue
+                if Decimal(str(row["amount_decimal"])) != amount:
+                    gaps.append(
+                        f"execution_cash_amount_mismatch:{delta['id']}:{event_type}"
+                    )
+                if row["settlement_date"] != order["settlement_date"]:
+                    gaps.append(
+                        f"execution_cash_settlement_mismatch:{delta['id']}:{event_type}"
+                    )
+            unexpected = sorted(set(actual) - set(expected))
+            for event_type in unexpected:
+                gaps.append(
+                    f"execution_cash_unexpected_event:{delta['id']}:{event_type}"
+                )
+        return gaps
+
+    def record_cash_ledger_genesis(
+        self,
+        *,
+        account_seq: str,
+        currency: str,
+        as_of: str,
+        opening_balance: str,
+        evidence_ref: str,
+        approved_by: str,
+    ) -> None:
+        """Record an explicit opening balance without inferring it from buying power."""
+
+        amount_text = _decimal_text(opening_balance)
+        if amount_text is None:
+            raise ValueError("opening_balance must be a finite decimal")
+        if not evidence_ref.strip() or not approved_by.strip():
+            raise ValueError("evidence_ref and approved_by are required")
+        normalized_currency = currency.strip().upper()
+        if not normalized_currency:
+            raise ValueError("currency is required")
+        self.conn.execute(
+            """
+            INSERT INTO cash_ledger_genesis (
+              account_seq, currency, as_of, opening_balance,
+              opening_balance_decimal, evidence_ref, approved_by, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(account_seq, currency) DO UPDATE SET
+              as_of = excluded.as_of,
+              opening_balance = excluded.opening_balance,
+              opening_balance_decimal = excluded.opening_balance_decimal,
+              evidence_ref = excluded.evidence_ref,
+              approved_by = excluded.approved_by,
+              created_at = excluded.created_at
+            """,
+            (
+                account_seq,
+                normalized_currency,
+                as_of,
+                float(Decimal(amount_text)),
+                amount_text,
+                evidence_ref,
+                approved_by,
+                utc_now(),
+            ),
+        )
+        self.conn.commit()
+
+    def resolve_reconciliation_block(self, reconciliation_id: str, *, note: str) -> None:
+        if not note.strip():
+            raise ValueError("resolution note is required")
+        cursor = self.conn.execute(
+            """
+            UPDATE broker_reconciliation_log
+            SET resolved_at = ?, resolution_note = ?
+            WHERE id = ? AND status = 'BLOCK' AND resolved_at IS NULL
+            """,
+            (utc_now(), note.strip(), reconciliation_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("unresolved reconciliation block not found")
+        self.conn.commit()
+
+    def reserved_open_buy_cash(
+        self,
+        *,
+        account_seq: str,
+        run_id: str,
+    ) -> ReservedCashResult:
+        """Calculate conservative cash reservations for current OPEN buys."""
+
+        rows = self.conn.execute(
+            """
+            WITH ranked_orders AS (
+              SELECT
+                *,
+                ROW_NUMBER() OVER (
+                  PARTITION BY broker_order_id
+                  ORDER BY created_at DESC, ts DESC, id DESC
+                ) AS row_rank
+              FROM broker_order_snapshot
+              WHERE run_id = ? AND account_seq = ?
+                AND status IN (
+                  'PENDING', 'PENDING_CANCEL', 'PENDING_REPLACE', 'PARTIAL_FILLED'
+                )
+            )
+            SELECT *
+            FROM ranked_orders
+            WHERE row_rank = 1 AND UPPER(COALESCE(side, '')) = 'BUY'
+            ORDER BY broker_order_id
+            """,
+            (run_id, account_seq),
+        ).fetchall()
+        totals: dict[str, Decimal] = {}
+        blockers: list[str] = []
+        for row in rows:
+            order_id = str(row["broker_order_id"])
+            currency = str(row["currency"] or "").upper()
+            if not currency:
+                blockers.append(f"open_buy_missing_currency:{order_id}")
+                continue
+            order_amount_text = _decimal_text(row["order_amount_decimal"])
+            filled_amount_text = _decimal_text(row["cumulative_filled_amount_decimal"]) or "0"
+            if order_amount_text is not None:
+                remaining = Decimal(order_amount_text) - Decimal(filled_amount_text)
+            else:
+                quantity_text = _decimal_text(row["quantity_decimal"])
+                filled_qty_text = _decimal_text(row["cumulative_filled_qty_decimal"]) or "0"
+                price_text = _decimal_text(row["price_decimal"])
+                if quantity_text is None or price_text is None:
+                    blockers.append(f"open_buy_notional_not_resolvable:{order_id}")
+                    continue
+                remaining_qty = Decimal(quantity_text) - Decimal(filled_qty_text)
+                remaining = remaining_qty * Decimal(price_text)
+            if remaining < 0:
+                blockers.append(f"open_buy_negative_remaining_notional:{order_id}")
+                continue
+            totals[currency] = totals.get(currency, Decimal("0")) + remaining
+        return ReservedCashResult(
+            amount_by_currency={
+                currency: format(amount, "f")
+                for currency, amount in sorted(totals.items())
+            },
+            blockers=blockers,
+        )
 
     def latest_complete_run(self, account_seq: str) -> sqlite3.Row | None:
         return self.conn.execute(
@@ -1163,6 +1629,8 @@ class AccountLedger:
             for row in buying_power_rows
             if row["cash_buying_power_decimal"] is not None
         }
+        for currency in sorted(set(market_value) - set(buying_power)):
+            blockers.append(f"missing_buying_power_currency:{currency}")
         lines = [
             f"account_seq={account_seq}",
             f"snapshot_run_id={resolved_run_id or 'none'}",

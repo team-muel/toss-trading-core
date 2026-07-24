@@ -6,9 +6,11 @@ from typing import Any
 
 import yaml
 
+from toss_trading.resources import resolve_resource
+
 
 def load_policy(path: str | Path = "config/default_policy.yaml") -> tuple[dict[str, Any], str]:
-    payload = Path(path).read_bytes()
+    payload = resolve_resource(path).read_bytes()
     policy = yaml.safe_load(payload)
     if not isinstance(policy, dict):
         raise ValueError("policy must be a YAML object")
