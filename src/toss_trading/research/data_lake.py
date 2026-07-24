@@ -264,9 +264,8 @@ class DataLake:
 
         manifests: list[DatasetManifest] = []
         for (source, interval, adjustment, year), group in sorted(groups.items()):
-            content_digest = hashlib.sha256(
-                _canonical_json([asdict(item) for item in group])
-            ).hexdigest()
+            group_payload = _canonical_json([asdict(item) for item in group])
+            content_digest = hashlib.sha256(group_payload).hexdigest()
             relative = (
                 Path("silver")
                 / "market_bars"
@@ -280,69 +279,52 @@ class DataLake:
             output.parent.mkdir(parents=True, exist_ok=True)
             if not output.exists():
                 temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
+                json_handle = tempfile.NamedTemporaryFile(
+                    dir=output.parent,
+                    prefix=".rows-",
+                    suffix=".json",
+                    delete=False,
+                )
+                json_input = Path(json_handle.name)
+                with json_handle:
+                    json_handle.write(group_payload)
                 connection = duckdb.connect()
                 try:
+                    escaped_input = str(json_input).replace("'", "''")
                     connection.execute(
-                        """
-                        CREATE TABLE bars (
-                          symbol VARCHAR,
-                          event_time_utc TIMESTAMPTZ,
-                          available_at TIMESTAMPTZ,
-                          exchange_local_date DATE,
-                          interval VARCHAR,
-                          open DECIMAL(38, 12),
-                          high DECIMAL(38, 12),
-                          low DECIMAL(38, 12),
-                          close DECIMAL(38, 12),
-                          volume DECIMAL(38, 12),
-                          currency VARCHAR,
-                          session VARCHAR,
-                          adjustment VARCHAR,
-                          source VARCHAR,
-                          source_revision VARCHAR,
-                          raw_manifest_id VARCHAR,
-                          quality_flag VARCHAR
-                        )
+                        f"""
+                        CREATE TABLE bars AS
+                        SELECT
+                          CAST(symbol AS VARCHAR) AS symbol,
+                          CAST(event_time_utc AS TIMESTAMPTZ) AS event_time_utc,
+                          CAST(available_at AS TIMESTAMPTZ) AS available_at,
+                          CAST(exchange_local_date AS DATE) AS exchange_local_date,
+                          CAST(interval AS VARCHAR) AS interval,
+                          CAST(open AS DECIMAL(38, 12)) AS open,
+                          CAST(high AS DECIMAL(38, 12)) AS high,
+                          CAST(low AS DECIMAL(38, 12)) AS low,
+                          CAST(close AS DECIMAL(38, 12)) AS close,
+                          CAST(volume AS DECIMAL(38, 12)) AS volume,
+                          CAST(currency AS VARCHAR) AS currency,
+                          CAST(session AS VARCHAR) AS session,
+                          CAST(adjustment AS VARCHAR) AS adjustment,
+                          CAST(source AS VARCHAR) AS source,
+                          CAST(source_revision AS VARCHAR) AS source_revision,
+                          CAST(raw_manifest_id AS VARCHAR) AS raw_manifest_id,
+                          CAST(quality_flag AS VARCHAR) AS quality_flag
+                        FROM read_json_auto('{escaped_input}', format='array')
                         """
                     )
-                    connection.execute("BEGIN TRANSACTION")
-                    try:
-                        connection.executemany(
-                            "INSERT INTO bars VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            [
-                                (
-                                    item.symbol,
-                                    item.event_time_utc,
-                                    item.available_at,
-                                    item.exchange_local_date,
-                                    item.interval,
-                                    item.open,
-                                    item.high,
-                                    item.low,
-                                    item.close,
-                                    item.volume,
-                                    item.currency,
-                                    item.session,
-                                    item.adjustment,
-                                    item.source,
-                                    item.source_revision,
-                                    item.raw_manifest_id,
-                                    item.quality_flag,
-                                )
-                                for item in group
-                            ],
-                        )
-                    except Exception:
-                        connection.execute("ROLLBACK")
-                        raise
-                    else:
-                        connection.execute("COMMIT")
                     escaped = str(temporary).replace("'", "''")
                     connection.execute(
                         f"COPY bars TO '{escaped}' (FORMAT PARQUET, COMPRESSION ZSTD)"
                     )
+                except Exception:
+                    temporary.unlink(missing_ok=True)
+                    raise
                 finally:
                     connection.close()
+                    json_input.unlink(missing_ok=True)
                 os.replace(temporary, output)
             parquet_digest = hashlib.sha256(output.read_bytes()).hexdigest()
             legacy_manifest_id = str(
