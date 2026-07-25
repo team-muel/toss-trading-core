@@ -13,9 +13,12 @@ dependencies = [
 toss-research-ingest-bars = "toss_trading.cli.research_ingest_bars:main"
 toss-research-backtest = "toss_trading.cli.research_backtest:main"
 toss-research-collect-toss = "toss_trading.cli.research_collect_toss:main"
+toss-research-collect-toss-reference = "toss_trading.cli.research_collect_toss_reference:main"
 toss-research-collect-tiingo = "toss_trading.cli.research_collect_tiingo:main"
 toss-research-collect-sec = "toss_trading.cli.research_collect_sec:main"
+toss-research-collect-fred = "toss_trading.cli.research_collect_fred:main"
 toss-research-validate-bars = "toss_trading.cli.research_validate_bars:main"
+toss-research-automation = "toss_trading.cli.research_automation:main"
 
 [project.optional-dependencies]
 test = [
@@ -37,7 +40,7 @@ where = ["src"]
 
 [tool.setuptools.data-files]
 "share/toss-trading/schemas" = ["schemas/trading_ledger.sql"]
-"share/toss-trading/config" = ["config/default_policy.yaml", "config/data_sources.yaml"]
+"share/toss-trading/config" = ["config/default_policy.yaml", "config/data_sources.yaml", "config/fred_series.csv"]
 "share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv"]
 
 [tool.pytest.ini_options]

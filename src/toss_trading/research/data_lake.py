@@ -59,6 +59,7 @@ class DatasetManifest:
     license_tag: str
     code_revision: str
     parent_manifest_ids: tuple[str, ...] = ()
+    request_metadata: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -237,6 +238,7 @@ class DataLake:
             request_sha256=request_digest,
             license_tag=license_tag,
             code_revision=code_revision,
+            request_metadata=request,
         )
         self._write_manifest(manifest)
         return manifest

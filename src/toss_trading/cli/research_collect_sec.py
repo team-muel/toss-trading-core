@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cik", action="append", default=[])
     parser.add_argument("--instrument-master")
     parser.add_argument("--output-root", default="research_data")
+    parser.add_argument(
+        "--include-companyfacts",
+        action="store_true",
+        help="Also retain issuer XBRL company facts for approved research.",
+    )
     parser.add_argument("--license-tag", default=SEC_LICENSE_TAG)
     parser.add_argument(
         "--user-agent",
@@ -60,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         ciks=ciks,
         code_revision=args.code_revision,
         license_tag=args.license_tag,
+        include_companyfacts=args.include_companyfacts,
     )
     print(
         json.dumps(

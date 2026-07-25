@@ -1,0 +1,12 @@
+.gcloudignore
+.git
+.github
+.venv
+.uv-cache
+__pycache__
+*.pyc
+build
+dist
+research_data
+runtime
+tmp

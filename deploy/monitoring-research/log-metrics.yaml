@@ -1,0 +1,15 @@
+metrics:
+  - name: research_automation_ok_count
+    event: research_automation_ok
+  - name: research_automation_failed_count
+    event: research_automation_failed
+  - name: research_validation_ok_count
+    event: research_validation_ok
+  - name: research_validation_failed_count
+    event: research_validation_failed
+  - name: research_backup_upload_ok_count
+    event: research_backup_upload_ok
+  - name: research_provider_skipped_count
+    event: research_provider_skipped
+  - name: research_automation_lock_busy_count
+    event: research_automation_lock_busy

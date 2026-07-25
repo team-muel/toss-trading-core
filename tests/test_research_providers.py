@@ -258,6 +258,35 @@ class ResearchProviderTest(unittest.TestCase):
                 (Path(tmp) / manifests[0].relative_path).read_bytes().startswith(b"{")
             )
 
+    def test_sec_collection_can_include_companyfacts(self):
+        calls = []
+
+        def opener(request, timeout):
+            calls.append(request.full_url)
+            return FakeHttpResponse(b'{"ok":true}')
+
+        client = SecEdgarClient(
+            "test application test@example.com",
+            opener=opener,
+            minimum_interval_seconds=0,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            manifests = collect_sec_reference_data(
+                DataLake(tmp),
+                client,
+                ciks=["1234"],
+                code_revision="abc123",
+                retrieved_at=lambda: "2026-07-24T01:00:00+00:00",
+                include_companyfacts=True,
+            )
+
+            self.assertEqual(len(manifests), 3)
+            self.assertEqual(
+                {manifest.dataset for manifest in manifests},
+                {"company-tickers", "submissions", "companyfacts"},
+            )
+            self.assertTrue(any("/api/xbrl/companyfacts/" in url for url in calls))
+
 
 if __name__ == "__main__":
     unittest.main()
