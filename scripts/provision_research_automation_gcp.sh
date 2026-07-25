@@ -11,6 +11,8 @@ ZONE="${GCP_ZONE:-us-central1-a}"
 INSTANCE_NAME="${GCP_INSTANCE_NAME:-personal-agent-vm}"
 BUCKET_NAME="${RESEARCH_GCS_BUCKET:-toss-trading-core-lab-research-data}"
 SERVICE_ACCOUNT="${RESEARCH_SERVICE_ACCOUNT:-toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
+BUILD_SERVICE_ACCOUNT_NAME="${RESEARCH_BUILD_SERVICE_ACCOUNT_NAME:-toss-research-build}"
+BUILD_SERVICE_ACCOUNT="${BUILD_SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 NOTIFICATION_CHANNEL="${MONITORING_NOTIFICATION_CHANNEL:-}"
 
@@ -43,16 +45,19 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
 
 PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" \
   --format='value(projectNumber)')"
-for build_service_account in \
-  "${PROJECT_NUMBER}@cloudbuild.gserviceaccount.com" \
-  "${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"; do
-  if gcloud iam service-accounts describe "${build_service_account}" \
-    --project="${PROJECT_ID}" >/dev/null 2>&1; then
-    gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
-      --member="serviceAccount:${build_service_account}" \
-      --role="roles/storage.objectCreator"
-  fi
-done
+if ! gcloud iam service-accounts describe "${BUILD_SERVICE_ACCOUNT}" \
+  --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud iam service-accounts create "${BUILD_SERVICE_ACCOUNT_NAME}" \
+    --project="${PROJECT_ID}" \
+    --display-name="Toss research Cloud Build"
+fi
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
+  --role="roles/logging.logWriter" \
+  --condition=None
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
+  --role="roles/storage.objectCreator"
 
 for secret_name in \
   tiingo-api-token \

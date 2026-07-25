@@ -20,6 +20,7 @@ artifacts:
     location: gs://toss-trading-core-lab-research-data/builds/$BUILD_ID/
     paths:
       - dist/*.whl
+serviceAccount: projects/toss-trading-core-lab/serviceAccounts/toss-research-build@toss-trading-core-lab.iam.gserviceaccount.com
 options:
   logging: CLOUD_LOGGING_ONLY
 timeout: 1200s
