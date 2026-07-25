@@ -23,9 +23,12 @@ if [[ ! -f /etc/toss-trading/research.env ]]; then
 fi
 
 sudo systemd-analyze verify \
+  deploy/systemd/toss-foundation.service \
   deploy/systemd/toss-research-automation@.service \
   deploy/systemd/toss-research-daily.timer \
   deploy/systemd/toss-research-weekly.timer
+sudo install -m 0644 deploy/systemd/toss-foundation.service \
+  /etc/systemd/system/toss-foundation.service
 sudo install -m 0644 deploy/systemd/toss-research-automation@.service \
   /etc/systemd/system/toss-research-automation@.service
 sudo install -m 0644 deploy/systemd/toss-research-daily.timer \
