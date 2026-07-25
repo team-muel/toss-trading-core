@@ -144,6 +144,21 @@ class ResearchAutomationTest(unittest.TestCase):
             installer,
         )
 
+        cloudbuild = Path("cloudbuild.yaml").read_text(encoding="utf-8")
+        self.assertIn(
+            "serviceAccount: "
+            "projects/toss-trading-core-lab/serviceAccounts/"
+            "toss-research-build@toss-trading-core-lab."
+            "iam.gserviceaccount.com",
+            cloudbuild,
+        )
+
+        provisioner = Path(
+            "scripts/provision_research_automation_gcp.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("BUILD_SERVICE_ACCOUNT_NAME", provisioner)
+        self.assertIn("roles/logging.logWriter", provisioner)
+
 
 if __name__ == "__main__":
     unittest.main()
