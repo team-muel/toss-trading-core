@@ -158,6 +158,8 @@ class ResearchAutomationTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("BUILD_SERVICE_ACCOUNT_NAME", provisioner)
         self.assertIn("roles/logging.logWriter", provisioner)
+        self.assertIn("CLOUD_BUILD_SOURCE_BUCKET", provisioner)
+        self.assertIn("roles/storage.objectViewer", provisioner)
 
 
 if __name__ == "__main__":

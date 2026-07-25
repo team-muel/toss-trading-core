@@ -10,6 +10,7 @@ PROJECT_ID="${GCP_PROJECT_ID:-toss-trading-core-lab}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 INSTANCE_NAME="${GCP_INSTANCE_NAME:-personal-agent-vm}"
 BUCKET_NAME="${RESEARCH_GCS_BUCKET:-toss-trading-core-lab-research-data}"
+BUILD_SOURCE_BUCKET="${CLOUD_BUILD_SOURCE_BUCKET:-${PROJECT_ID}_cloudbuild}"
 SERVICE_ACCOUNT="${RESEARCH_SERVICE_ACCOUNT:-toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 BUILD_SERVICE_ACCOUNT_NAME="${RESEARCH_BUILD_SERVICE_ACCOUNT_NAME:-toss-research-build}"
 BUILD_SERVICE_ACCOUNT="${BUILD_SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -58,6 +59,16 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
   --role="roles/storage.objectCreator"
+if ! gcloud storage buckets describe "gs://${BUILD_SOURCE_BUCKET}" \
+  --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud storage buckets create "gs://${BUILD_SOURCE_BUCKET}" \
+    --project="${PROJECT_ID}" \
+    --location=us-central1 \
+    --uniform-bucket-level-access
+fi
+gcloud storage buckets add-iam-policy-binding "gs://${BUILD_SOURCE_BUCKET}" \
+  --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
+  --role="roles/storage.objectViewer"
 
 for secret_name in \
   tiingo-api-token \
