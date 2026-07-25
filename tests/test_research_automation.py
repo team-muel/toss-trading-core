@@ -132,6 +132,18 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("RESEARCH_FRED_SERIES_RIGHTS_APPROVED", runner)
         self.assertIn("RESEARCH_SEC_CONTACT_APPROVED", runner)
 
+        installer = Path(
+            "scripts/install_research_automation_vm.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "deploy/systemd/toss-foundation.service",
+            installer,
+        )
+        self.assertIn(
+            "/etc/systemd/system/toss-foundation.service",
+            installer,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
