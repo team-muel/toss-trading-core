@@ -1,5 +1,5 @@
 schema_version: research-data-sources-v1
-reviewed_at: "2026-07-24"
+reviewed_at: "2026-07-25"
 scope: private_internal_research
 redistribution_allowed: false
 
@@ -52,6 +52,13 @@ providers:
       raw_ohlcv: true
       adjusted_ohlcv: true
       total_return_ohlcv: false
+      stock_reference: true
+      stock_warnings: true
+      usd_krw_reference_fx: true
+      market_calendar: true
+      rankings: true
+      kr_market_indicators: true
+      kr_investor_trading: true
     normalization_policy:
       adjusted_false: raw
       adjusted_true: split_adjusted
@@ -63,6 +70,10 @@ providers:
     network_control: registered_gcp_static_ip_only
     official_docs: https://developers.tossinvest.com/docs
     official_product_page: https://home.tossinvest.com/en/open-api
+    automation:
+      daily_recent_revision_window_days: 45
+      weekly_full_reconciliation: true
+      upload_requires_quality_pass: true
 
   fred_alfred:
     decision: selected_pending_credential_and_series_review
@@ -80,6 +91,10 @@ providers:
     credential_env: FRED_API_KEY
     official_api: https://fred.stlouisfed.org/docs/api/fred/
     official_terms: https://fred.stlouisfed.org/docs/api/terms_of_use.html
+    automation_gate:
+      series_registry: config/fred_series.csv
+      series_rights_review_required: true
+      secret_required: true
 
   sec_edgar:
     decision: selected
@@ -98,6 +113,9 @@ providers:
     collector_requests_per_second: 8
     official_api: https://www.sec.gov/search-filings/edgar-application-programming-interfaces
     official_rate_policy: https://www.sec.gov/filergroup/announcements-old/new-rate-control-limits
+    automation_gate:
+      schedule: weekly
+      approved_contact_user_agent_required: true
 
   massive:
     decision: deferred_not_primary_total_return_source

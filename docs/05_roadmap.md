@@ -18,7 +18,7 @@ Foundation P0 안전 결함 수정과 읽기 전용 데이터·리서치 기반�
 데이터 수집과 백테스트는 계좌 안전 작업과 병렬로 진행합니다. 옵션,
 실시간 WebSocket, NAV, 뉴스는 첫 baseline이 필요로 할 때까지 미룹니다.
 
-## Current Status — 2026-07-21
+## Current Status — 2026-07-25
 
 Foundation v0 운영 기반은 완료되었습니다.
 
@@ -30,6 +30,8 @@ Foundation v0 운영 기반은 완료되었습니다.
 - `foundation_audit --profile v0-empty-safe` 통과 및 private GCS 백업 업로드 성공
 - Cloud Logging 지표와 6개 운영 경보 및 이메일 알림 구성
 - GitHub `master` 보호와 필수 CI 검사 적용
+- GCP 연구 데이터 daily/weekly 자동화, 독립 실행 snapshot, QA 후 GCS
+  승격, Cloud Logging/Monitoring 템플릿과 Cloud Build 검증 경로 구현
 
 Codex의 매일 19:00 KST 24시간 집중 관찰 자동화는 2026-07-23 사용자
 승인으로 중지했습니다. 이는 운영 감시 종료가 아닙니다.
@@ -49,7 +51,8 @@ Codex의 매일 19:00 KST 24시간 집중 관찰 자동화는 2026-07-23 사용�
 | 완료 | Foundation 1–5 회귀 점검 | universe/master 1:1, source-health/CI, 실제 v0·v1 GCS 백업 raw replay와 감사 통과 | 2026-07-23 완료 |
 | P0-A | 계좌·주문 안전장치 | 실패 run cash backfill, 초기잔고, 통화별 buying-power, 미해결 BLOCK, EOD 대사 | live 계속 차단 |
 | P0-B | 저장소 진실성 | branch/CI/release SHA, wheel resource smoke test, monitoring IaC | P0-A와 병렬 |
-| P1 | 연구 데이터 기반 | immutable raw, manifest, Parquet, point-in-time QA | P0와 병렬, 주문 없음 |
+| P1-A | 연구 데이터 운영 기반 | daily/weekly Toss 수집, immutable snapshot, manifest, Parquet, QA, GCS 백업 | 구현·배포 검증 단계 |
+| P1-B | 외부 공급자 활성화 | Tiingo 약관/키, FRED series 권리/키, SEC 연락처 승인 후 자동 gate 해제 | 사용자 승인 필요 |
 | P2 | baseline 백테스트 | 비용후 dual-momentum, benchmark, OOS/walk-forward | P1 데이터 |
 | P3 | signal safety와 persistent paper | 강제 RiskDecision, stale gate, 체결·잔고·비용 simulator | P0/P2 |
 | P6 | shadow live 2주 후 초소형 live 검토 | 2주간 오류 없는 일일 보고와 별도 live 승인 | 모든 선행 gate |

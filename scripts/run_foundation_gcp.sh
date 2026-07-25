@@ -12,6 +12,7 @@ JSON_LOG_PATH="${FOUNDATION_JSON_LOG_PATH:-runtime/foundation_runner.jsonl}"
 BACKUP_DIR="${FOUNDATION_BACKUP_DIR:-runtime/backups}"
 LOCAL_BACKUP_RETENTION_DAYS="${FOUNDATION_LOCAL_BACKUP_RETENTION_DAYS:-14}"
 LOCK_PATH="${FOUNDATION_LOCK_PATH:-runtime/foundation_runner.lock}"
+TOSS_API_LOCK_PATH="${TOSS_API_LOCK_PATH:-runtime/toss_api.lock}"
 BUYING_POWER_CURRENCY="${FOUNDATION_BUYING_POWER_CURRENCY:-USD}"
 MAX_ORDER_DETAILS="${FOUNDATION_MAX_ORDER_DETAILS:-1}"
 INCLUDE_CLOSED_ORDERS="${FOUNDATION_INCLUDE_CLOSED_ORDERS:-0}"
@@ -31,6 +32,7 @@ mkdir -p \
   "$(dirname "${REPORT_PATH}")" \
   "$(dirname "${JSON_LOG_PATH}")" \
   "$(dirname "${LOCK_PATH}")" \
+  "$(dirname "${TOSS_API_LOCK_PATH}")" \
   "${BACKUP_DIR}"
 
 json_escape() {
@@ -101,6 +103,11 @@ fi
 
 exec 9>"${LOCK_PATH}"
 if ! flock -n 9; then
+  json_log "foundation_runner_lock_busy"
+  exit 0
+fi
+exec 8>"${TOSS_API_LOCK_PATH}"
+if ! flock -n 8; then
   json_log "foundation_runner_lock_busy"
   exit 0
 fi

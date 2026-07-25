@@ -46,6 +46,8 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/17_remediation_and_live_gate.md` | 실제 GCP 배포·보안 조치 현황과 다음 live gate 우선순위 |
 | `docs/18_alpha_expression_language.md` | research-only alpha 작성·채점 부록과 foundation 용어 매핑 |
 | `docs/19_research_data_and_backtest.md` | 불변 raw/Parquet 데이터 계층과 재현 가능한 momentum baseline |
+| `docs/20_data_provider_selection_and_collection.md` | 실제 데이터 공급자 선정, 라이선스 게이트와 수집 결과 |
+| `docs/21_gcp_research_data_automation.md` | GCP 기반 daily/weekly 수집·QA·백업·자체검증 자동화 |
 
 ## Repository Layout
 
@@ -131,4 +133,13 @@ python -m pip install -r requirements-research.lock
 $env:PYTHONPATH='src'
 python -m toss_trading.cli.research_ingest_bars --help
 python -m toss_trading.cli.research_backtest --help
+```
+
+GCP 연구 데이터 자동화는 독립 실행 snapshot을 검증한 뒤에만 private
+GCS로 올립니다. 기존 6시간 Foundation timer와 경보 6개는 그대로
+유지합니다.
+
+```bash
+sudo systemctl start toss-research-automation@daily.service
+sudo systemctl status toss-research-automation@daily.service --no-pager
 ```

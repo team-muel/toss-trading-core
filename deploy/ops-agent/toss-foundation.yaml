@@ -5,6 +5,11 @@ logging:
       include_paths:
         - /home/seoje/toss-trading/runtime/foundation_runner.jsonl
       record_log_file_path: true
+    toss_research_jsonl:
+      type: files
+      include_paths:
+        - /home/seoje/toss-trading/research-runtime/research_automation.jsonl
+      record_log_file_path: true
   processors:
     toss_foundation_parse_json:
       type: parse_json
@@ -12,4 +17,7 @@ logging:
     pipelines:
       toss_foundation_pipeline:
         receivers: [toss_foundation_jsonl]
+        processors: [toss_foundation_parse_json]
+      toss_research_pipeline:
+        receivers: [toss_research_jsonl]
         processors: [toss_foundation_parse_json]

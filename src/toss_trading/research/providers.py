@@ -16,6 +16,7 @@ from toss_trading.research.data_lake import DataLake, DatasetManifest, MarketBar
 TIINGO_BASE_URL = "https://api.tiingo.com/tiingo/daily"
 SEC_TICKER_MAP_URL = "https://www.sec.gov/files/company_tickers.json"
 SEC_SUBMISSIONS_BASE_URL = "https://data.sec.gov/submissions"
+SEC_COMPANYFACTS_BASE_URL = "https://data.sec.gov/api/xbrl/companyfacts"
 TOSS_LICENSE_TAG = "toss-openapi-internal-research-provisional"
 TIINGO_LICENSE_TAG = "tiingo-internal-use-only"
 SEC_LICENSE_TAG = "sec-edgar-fair-access-document-rights-provisional"
@@ -436,6 +437,13 @@ class SecEdgarClient:
         url = f"{SEC_SUBMISSIONS_BASE_URL}/CIK{int(digits):010d}.json"
         return self.fetch(url)
 
+    def companyfacts(self, cik: str) -> bytes:
+        digits = "".join(character for character in cik if character.isdigit())
+        if not digits:
+            raise ValueError(f"invalid CIK: {cik!r}")
+        url = f"{SEC_COMPANYFACTS_BASE_URL}/CIK{int(digits):010d}.json"
+        return self.fetch(url)
+
 
 def collect_sec_reference_data(
     lake: DataLake,
@@ -445,6 +453,7 @@ def collect_sec_reference_data(
     code_revision: str,
     retrieved_at: Callable[[], str] = utc_now,
     license_tag: str = SEC_LICENSE_TAG,
+    include_companyfacts: bool = False,
 ) -> list[DatasetManifest]:
     manifests: list[DatasetManifest] = []
     ticker_retrieved = retrieved_at()
@@ -486,4 +495,23 @@ def collect_sec_reference_data(
                 retrieved_at=submission_retrieved,
             )
         )
+        if include_companyfacts:
+            facts_retrieved = retrieved_at()
+            facts_body = client.companyfacts(cik)
+            json.loads(facts_body)
+            facts_url = f"{SEC_COMPANYFACTS_BASE_URL}/CIK{cik}.json"
+            manifests.append(
+                lake.store_raw(
+                    source="sec-edgar",
+                    dataset="companyfacts",
+                    body=facts_body,
+                    media_type="application/json",
+                    schema_version="sec-companyfacts-v1",
+                    available_at=facts_retrieved,
+                    request={"url": facts_url, "cik": cik},
+                    license_tag=license_tag,
+                    code_revision=code_revision,
+                    retrieved_at=facts_retrieved,
+                )
+            )
     return manifests

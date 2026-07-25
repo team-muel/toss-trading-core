@@ -1,5 +1,5 @@
 [Unit]
-Description=Toss Foundation read-only snapshot and audit
+Description=Toss research-data automation (%i)
 After=network-online.target google-cloud-ops-agent.service
 Wants=network-online.target
 
@@ -19,28 +19,23 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 CapabilityBoundingSet=
-ReadWritePaths=/home/seoje/toss-trading/runtime
+ReadWritePaths=/home/seoje/toss-trading/research-runtime /home/seoje/toss-trading/runtime
+EnvironmentFile=-/etc/toss-trading/research.env
 Environment=GCP_PROJECT_ID=toss-trading-core-lab
 Environment=TOSS_CLIENT_ID_SECRET=toss-client-id
 Environment=TOSS_CLIENT_SECRET_SECRET=toss-client-secret
 Environment=TOSS_ACCOUNT_SEQ_SECRET=toss-account-seq
 Environment=TOSS_API_ENV_SECRET=toss-api-env
 Environment=TOSS_BROKER_BASE_URL_SECRET=toss-broker-base-url
-Environment=FOUNDATION_LOAD_GCP_SECRETS=1
-Environment=FOUNDATION_AUDIT_PROFILE=v0-empty-safe
-Environment=FOUNDATION_MAX_ORDER_DETAILS=1
-Environment=FOUNDATION_INCLUDE_CLOSED_ORDERS=0
-Environment=FOUNDATION_DB_PATH=/home/seoje/toss-trading/runtime/foundation_account_state.sqlite
-Environment=FOUNDATION_REPORT_PATH=/home/seoje/toss-trading/runtime/foundation_account_state_report.txt
-Environment=FOUNDATION_JSON_LOG_PATH=/home/seoje/toss-trading/runtime/foundation_runner.jsonl
-Environment=FOUNDATION_BACKUP_DIR=/home/seoje/toss-trading/runtime/backups
-Environment=FOUNDATION_LOCAL_BACKUP_RETENTION_DAYS=14
-Environment=FOUNDATION_LOCK_PATH=/home/seoje/toss-trading/runtime/foundation_runner.lock
+Environment=RESEARCH_RUNTIME_ROOT=/home/seoje/toss-trading/research-runtime
+Environment=RESEARCH_JSON_LOG_PATH=/home/seoje/toss-trading/research-runtime/research_automation.jsonl
+Environment=RESEARCH_LOCK_PATH=/home/seoje/toss-trading/research-runtime/research_automation.lock
 Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/runtime/toss_api.lock
-Environment=FOUNDATION_GCS_BACKUP_URI=gs://toss-trading-core-lab-foundation-backups/foundation
+Environment=RESEARCH_GCS_URI=gs://toss-trading-core-lab-research-data/research
 Environment=CLOUDSDK_CONFIG=/home/seoje/toss-trading/runtime/gcloud
 Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python
-ExecStart=/home/seoje/toss-trading/current/scripts/run_foundation_gcp.sh
+ExecStart=/home/seoje/toss-trading/current/scripts/run_research_automation_gcp.sh %i
+TimeoutStartSec=4h
 
 [Install]
 WantedBy=multi-user.target

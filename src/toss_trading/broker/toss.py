@@ -194,6 +194,28 @@ class TossReadOnlyAdapter:
             "/api/v1/price-limits",
         }:
             return "MARKET_DATA"
+        if path == "/api/v1/stocks" or (
+            path.startswith("/api/v1/stocks/") and path.endswith("/warnings")
+        ):
+            return "STOCK"
+        if path in {
+            "/api/v1/exchange-rate",
+            "/api/v1/market-calendar/KR",
+            "/api/v1/market-calendar/US",
+        }:
+            return "MARKET_INFO"
+        if path == "/api/v1/rankings":
+            return "RANKING"
+        if path == "/api/v1/market-indicators/prices" or (
+            path.startswith("/api/v1/market-indicators/")
+            and path.endswith("/investor-trading")
+        ):
+            return "MARKET_INDICATOR"
+        if (
+            path.startswith("/api/v1/market-indicators/")
+            and path.endswith("/candles")
+        ):
+            return "MARKET_INDICATOR_CHART"
         return "DEFAULT"
 
     def _limiter_for(self, endpoint: str) -> TokenBucket:
@@ -337,6 +359,154 @@ class TossReadOnlyAdapter:
             raise ValueError("Toss /prices accepts at most 200 symbols per call")
         query = urllib.parse.urlencode({"symbols": ",".join(symbols)})
         return self._get(f"/api/v1/prices?{query}", account_bound=False)
+
+    def get_stocks(self, symbols: list[str]) -> TossApiResult:
+        """Reference data for up to 200 symbols (`GET /api/v1/stocks`)."""
+        if not symbols:
+            raise ValueError("get_stocks requires at least one symbol")
+        if len(symbols) > 200:
+            raise ValueError("Toss /stocks accepts at most 200 symbols per call")
+        query = urllib.parse.urlencode({"symbols": ",".join(symbols)})
+        return self._get(f"/api/v1/stocks?{query}", account_bound=False)
+
+    def get_stock_warnings(self, symbol: str) -> TossApiResult:
+        encoded = urllib.parse.quote(symbol, safe="")
+        return self._get(
+            f"/api/v1/stocks/{encoded}/warnings",
+            account_bound=False,
+        )
+
+    def get_exchange_rate(
+        self,
+        *,
+        base_currency: str,
+        quote_currency: str,
+        date_time: str | None = None,
+    ) -> TossApiResult:
+        query = {
+            "baseCurrency": base_currency,
+            "quoteCurrency": quote_currency,
+        }
+        if date_time:
+            query["dateTime"] = date_time
+        return self._get(
+            f"/api/v1/exchange-rate?{urllib.parse.urlencode(query)}",
+            account_bound=False,
+        )
+
+    def get_market_calendar(
+        self,
+        market_country: str,
+        *,
+        calendar_date: str | None = None,
+    ) -> TossApiResult:
+        market = market_country.upper()
+        if market not in {"KR", "US"}:
+            raise ValueError("market_country must be KR or US")
+        endpoint = f"/api/v1/market-calendar/{market}"
+        if calendar_date:
+            endpoint = f"{endpoint}?{urllib.parse.urlencode({'date': calendar_date})}"
+        return self._get(endpoint, account_bound=False)
+
+    def get_rankings(
+        self,
+        *,
+        ranking_type: str,
+        market_country: str,
+        duration: str,
+        exclude_investment_caution: bool = True,
+        count: int = 100,
+    ) -> TossApiResult:
+        allowed_types = {
+            "MARKET_TRADING_AMOUNT",
+            "MARKET_TRADING_VOLUME",
+            "TOP_GAINERS",
+            "TOP_LOSERS",
+            "TOSS_SECURITIES_TRADING_AMOUNT",
+            "TOSS_SECURITIES_TRADING_VOLUME",
+        }
+        if ranking_type not in allowed_types:
+            raise ValueError(f"unsupported Toss ranking type: {ranking_type}")
+        if market_country not in {"KR", "US"}:
+            raise ValueError("market_country must be KR or US")
+        if duration not in {"realtime", "1d", "1w", "1mo", "3mo", "6mo", "1y"}:
+            raise ValueError(f"unsupported Toss ranking duration: {duration}")
+        if ranking_type in {"TOP_GAINERS", "TOP_LOSERS"} and duration == "realtime":
+            raise ValueError("TOP_GAINERS and TOP_LOSERS do not support realtime")
+        if not 1 <= count <= 100:
+            raise ValueError("ranking count must be between 1 and 100")
+        query = urllib.parse.urlencode(
+            {
+                "type": ranking_type,
+                "marketCountry": market_country,
+                "duration": duration,
+                "excludeInvestmentCaution": (
+                    "true" if exclude_investment_caution else "false"
+                ),
+                "count": count,
+            }
+        )
+        return self._get(f"/api/v1/rankings?{query}", account_bound=False)
+
+    def get_market_indicator_prices(self, symbols: list[str]) -> TossApiResult:
+        if not symbols:
+            raise ValueError("get_market_indicator_prices requires symbols")
+        if len(symbols) > 200:
+            raise ValueError(
+                "Toss /market-indicators/prices accepts at most 200 symbols"
+            )
+        query = urllib.parse.urlencode({"symbols": ",".join(symbols)})
+        return self._get(
+            f"/api/v1/market-indicators/prices?{query}",
+            account_bound=False,
+        )
+
+    def get_market_indicator_candles(
+        self,
+        symbol: str,
+        *,
+        interval: str = "1d",
+        count: int = 100,
+        before: str | None = None,
+    ) -> TossApiResult:
+        if interval not in {"1m", "1d"}:
+            raise ValueError("interval must be '1m' or '1d'")
+        if symbol.startswith("KR_BOND_") and interval != "1d":
+            raise ValueError("Korean bond indicators support daily candles only")
+        if not 1 <= count <= 200:
+            raise ValueError("count must be between 1 and 200")
+        encoded = urllib.parse.quote(symbol, safe="")
+        query: dict[str, str | int] = {"interval": interval, "count": count}
+        if before:
+            query["before"] = before
+        return self._get(
+            f"/api/v1/market-indicators/{encoded}/candles?"
+            f"{urllib.parse.urlencode(query)}",
+            account_bound=False,
+        )
+
+    def get_market_indicator_investor_trading(
+        self,
+        symbol: str,
+        *,
+        interval: str = "1d",
+        count: int = 100,
+        until: str | None = None,
+    ) -> TossApiResult:
+        if symbol not in {"KOSPI", "KOSDAQ"}:
+            raise ValueError("investor trading supports KOSPI or KOSDAQ only")
+        if interval not in {"1d", "1w", "1mo", "1y"}:
+            raise ValueError(f"unsupported investor-trading interval: {interval}")
+        if not 1 <= count <= 100:
+            raise ValueError("count must be between 1 and 100")
+        query: dict[str, str | int] = {"interval": interval, "count": count}
+        if until:
+            query["until"] = until
+        return self._get(
+            f"/api/v1/market-indicators/{symbol}/investor-trading?"
+            f"{urllib.parse.urlencode(query)}",
+            account_bound=False,
+        )
 
     def get_candles(
         self,

@@ -63,6 +63,7 @@ class ResearchDataLakeTest(unittest.TestCase):
             )
 
             self.assertEqual(first.manifest_id, second.manifest_id)
+            self.assertEqual(first.request_metadata, {"symbol": "SPY"})
             self.assertEqual(lake.manifests(layer="bronze"), [first])
             self.assertTrue((Path(tmp) / first.relative_path).is_file())
 

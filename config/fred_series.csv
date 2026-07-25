@@ -1,0 +1,8 @@
+series_id,enabled,rights_review,role,source_url,notes
+DTB3,false,pending,absolute_momentum_cash_hurdle,https://fred.stlouisfed.org/series/DTB3,3-month Treasury bill secondary market rate
+DGS2,false,pending,rate_regime_2y,https://fred.stlouisfed.org/series/DGS2,2-year Treasury constant maturity rate
+DGS10,false,pending,rate_regime_10y,https://fred.stlouisfed.org/series/DGS10,10-year Treasury constant maturity rate
+FEDFUNDS,false,pending,monetary_policy_regime,https://fred.stlouisfed.org/series/FEDFUNDS,Effective federal funds rate
+CPIAUCSL,false,pending,inflation_regime,https://fred.stlouisfed.org/series/CPIAUCSL,Consumer price index
+UNRATE,false,pending,employment_regime,https://fred.stlouisfed.org/series/UNRATE,Civilian unemployment rate
+VIXCLS,false,pending,risk_regime,https://fred.stlouisfed.org/series/VIXCLS,CBOE volatility index
