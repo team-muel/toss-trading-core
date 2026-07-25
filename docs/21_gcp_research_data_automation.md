@@ -108,7 +108,8 @@ SEC weekly 수집은 ticker map, submissions, companyfacts를 보관합니다.
 - Ops Agent와 Cloud Logging: JSONL 구조화 로그 수집
 - Cloud Monitoring: 실패·QA·heartbeat·백업·중복 실행 경보
 - Cloud Build: 전용 `toss-research-build` 서비스 계정으로 고정 의존성 테스트,
-  wheel build, shellcheck 후 artifact 보관
+  wheel build, shellcheck 후 artifact 보관. 이 계정은 Cloud Build 소스
+  버킷의 객체 조회와 연구 버킷의 artifact 생성만 허용
 
 Cloud Run/Functions/Scheduler를 추가하지 않은 이유는 Toss 허용 IP가 현재
 VM 고정 IP에 묶여 있고 systemd persistent timer가 같은 실행 책임을 더
