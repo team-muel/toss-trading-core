@@ -15,7 +15,11 @@ from toss_trading.research.reporting import (
 )
 
 
-def sample_summary(*, experiment: Path | None = None) -> dict:
+def sample_summary(
+    *,
+    experiment: Path | None = None,
+    collection_failed: bool = False,
+) -> dict:
     return build_research_summary(
         run_id="daily-20260727T000000Z-abc123",
         verified_at="2026-07-27T00:00:00+00:00",
@@ -29,8 +33,10 @@ def sample_summary(*, experiment: Path | None = None) -> dict:
             "symbols_requested": 3,
             "raw_pages": 3,
             "adjusted_pages": 3,
-            "raw_failures": [],
-            "adjusted_failures": [],
+            "raw_failures": [{"symbol": "QQQ"}] if collection_failed else [],
+            "adjusted_failures": (
+                [{"symbol": "QQQ"}] if collection_failed else []
+            ),
         },
         quality={
             "adjustments": ["raw", "split_adjusted"],
@@ -62,9 +68,20 @@ class ResearchReportingTest(unittest.TestCase):
         self.assertIsNone(row["strategy_total_return"])
         self.assertNotIn("strategy_total_return", event)
         self.assertEqual(event["quality_error_rows"], 0)
+        self.assertEqual(event["toss_collection_failure_count"], 0)
         report = render_visual_report(summary)
         self.assertIn("미측정", report)
         self.assertIn("Toss Trading 통합 보고서", report)
+
+    def test_collection_failure_forces_visual_review(self):
+        summary = sample_summary(collection_failed=True)
+        event = build_monitoring_event(summary)
+        report = render_visual_report(summary)
+
+        self.assertEqual(event["toss_collection_failure_count"], 2)
+        self.assertIn("부분 성공", report)
+        self.assertIn("수집 실패 요청 2", report)
+        self.assertIn("REVIEW", report)
 
     def test_verified_experiment_populates_strategy_metrics(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -123,7 +140,18 @@ class ResearchReportingTest(unittest.TestCase):
                 table_id="runs",
             )
 
-            self.assertEqual(len(metric_paths), 17)
+            self.assertEqual(len(metric_paths), 18)
+            failure_metric = json.loads(
+                (
+                    root
+                    / "metrics"
+                    / "research_toss_collection_failure_count.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                "jsonPayload.toss_collection_failure_count",
+                failure_metric["valueExtractor"],
+            )
             strategy_metric = json.loads(
                 (
                     root / "metrics" / "research_strategy_total_return.json"

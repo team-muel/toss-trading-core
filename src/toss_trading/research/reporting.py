@@ -195,6 +195,10 @@ def build_monitoring_event(summary: dict[str, Any]) -> dict[str, Any]:
         "ready_for_upload": summary["ready_for_upload"],
         "quality_error_rows": row["quality_error_rows"],
         "quality_symbol_count": row["quality_symbol_count"],
+        "toss_collection_failure_count": (
+            row["toss_raw_failure_count"]
+            + row["toss_adjusted_failure_count"]
+        ),
         "toss_page_count": (
             row["toss_raw_pages"] + row["toss_adjusted_pages"]
         ),
@@ -221,8 +225,12 @@ def render_visual_report(summary: dict[str, Any]) -> str:
         return f"{float(value):,.4f}"
 
     quality = summary["quality"]
+    toss = summary["toss"]
     strategy = summary["strategy"]
     metrics = strategy["metrics"]
+    collection_failure_count = (
+        toss["raw_failure_count"] + toss["adjusted_failure_count"]
+    )
     providers = "".join(
         (
             '<div class="provider"><span>'
@@ -231,7 +239,12 @@ def render_visual_report(summary: dict[str, Any]) -> str:
         for name, state in summary["provider_states"].items()
     )
     quality_state = (
-        "PASS" if quality["error_rows"] == 0 else "REVIEW"
+        "PASS"
+        if quality["error_rows"] == 0 and collection_failure_count == 0
+        else "REVIEW"
+    )
+    collection_state = (
+        "정상" if collection_failure_count == 0 else "부분 성공"
     )
     strategy_state = (
         escaped(strategy["strategy"])
@@ -284,12 +297,14 @@ grid-column:span 12}}.strategy-metric{{grid-column:span 6}}}}
 <div class="sub">{escaped(summary["verified_at"])} · {escaped(summary["run_id"])}</div>
 <div class="grid">
   <section class="panel third"><h2>수집 실행</h2>
-    <div class="hero ok">정상</div>
-    <p class="note">{escaped(summary["mode"])} · {escaped(summary["code_revision"])}</p>
+    <div class="hero {'ok' if collection_failure_count == 0 else ''}">{collection_state}</div>
+    <p class="note">{escaped(summary["mode"])} · {escaped(summary["code_revision"])}
+    · 수집 실패 요청 {collection_failure_count:,}</p>
   </section>
   <section class="panel third"><h2>데이터 품질</h2>
     <div class="hero {'ok' if quality_state == 'PASS' else ''}">{quality_state}</div>
-    <p class="note">오류 행 {quality["error_rows"]:,} · 종목 {quality["symbol_count"]:,}</p>
+    <p class="note">오류 행 {quality["error_rows"]:,} · 수집 실패 요청
+    {collection_failure_count:,} · 종목 {quality["symbol_count"]:,}</p>
   </section>
   <section class="panel third"><h2>전략 성과</h2>
     <div class="hero" style="font-size:20px">{strategy_state}</div>
@@ -297,6 +312,8 @@ grid-column:span 12}}.strategy-metric{{grid-column:span 6}}}}
   </section>
   <section class="panel half"><h2>공급자 상태</h2>{providers}</section>
   <section class="panel half"><h2>품질 세부 지표</h2>
+    <div class="metric"><span>Toss raw 수집 실패</span><strong>{toss["raw_failure_count"]:,}</strong></div>
+    <div class="metric"><span>Toss adjusted 수집 실패</span><strong>{toss["adjusted_failure_count"]:,}</strong></div>
     <div class="metric"><span>중복 행</span><strong>{quality["duplicate_rows"]:,}</strong></div>
     <div class="metric"><span>유효성 오류 행</span><strong>{quality["invalid_rows"]:,}</strong></div>
     <div class="metric"><span>coverage 불일치 행</span><strong>{quality["coverage_mismatch_rows"]:,}</strong></div>

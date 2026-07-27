@@ -78,9 +78,9 @@ def render_log_metrics(
     names = [path.stem for path in rendered]
     if len(names) != len(set(names)):
         raise ValueError("duplicate log metric name")
-    if len(rendered) != 17:
+    if len(rendered) != 18:
         raise ValueError(
-            f"expected 17 research log metrics, found {len(rendered)}"
+            f"expected 18 research log metrics, found {len(rendered)}"
         )
     return sorted(rendered)
 
