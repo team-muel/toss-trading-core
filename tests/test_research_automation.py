@@ -151,6 +151,12 @@ class ResearchAutomationTest(unittest.TestCase):
         )
         self.assertIn("apt-get install", cloudbuild)
         self.assertIn("shellcheck", cloudbuild)
+        self.assertIn("id: upload-wheel", cloudbuild)
+        self.assertIn("gcloud storage cp", cloudbuild)
+        self.assertIn(
+            "research-data/builds/${BUILD_ID}/",
+            cloudbuild,
+        )
         self.assertIn(
             "serviceAccount: "
             "projects/toss-trading-core-lab/serviceAccounts/"
@@ -166,6 +172,7 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("roles/logging.logWriter", provisioner)
         self.assertIn("CLOUD_BUILD_SOURCE_BUCKET", provisioner)
         self.assertIn("roles/storage.objectViewer", provisioner)
+        self.assertIn("roles/storage.bucketViewer", provisioner)
 
 
 if __name__ == "__main__":

@@ -18,11 +18,15 @@ steps:
           scripts/run_research_automation_gcp.sh \
           scripts/provision_research_automation_gcp.sh \
           scripts/install_research_automation_vm.sh
-artifacts:
-  objects:
-    location: gs://toss-trading-core-lab-research-data/builds/$BUILD_ID/
-    paths:
-      - dist/*.whl
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: upload-wheel
+    entrypoint: bash
+    args:
+      - -ceu
+      - |
+        gcloud storage cp \
+          dist/*.whl \
+          "gs://toss-trading-core-lab-research-data/builds/${BUILD_ID}/"
 serviceAccount: projects/toss-trading-core-lab/serviceAccounts/toss-research-build@toss-trading-core-lab.iam.gserviceaccount.com
 options:
   logging: CLOUD_LOGGING_ONLY
