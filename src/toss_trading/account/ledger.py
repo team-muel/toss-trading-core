@@ -1527,7 +1527,7 @@ class AccountLedger:
             SELECT *
             FROM snapshot_run
             WHERE account_seq = ? AND status = 'COMPLETE'
-            ORDER BY completed_at DESC
+            ORDER BY completed_at DESC, started_at DESC, rowid DESC
             LIMIT 1
             """,
             (account_seq,),
