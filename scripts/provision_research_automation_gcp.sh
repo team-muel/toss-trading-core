@@ -121,7 +121,7 @@ if ! bq --project_id="${PROJECT_ID}" show \
     "${PROJECT_ID}:${BIGQUERY_DATASET}"
 fi
 if ! bq --project_id="${PROJECT_ID}" show \
-  --table "${PROJECT_ID}:${BIGQUERY_DATASET}.${BIGQUERY_TABLE}" \
+  "${PROJECT_ID}:${BIGQUERY_DATASET}.${BIGQUERY_TABLE}" \
   >/dev/null 2>&1; then
   bq --project_id="${PROJECT_ID}" \
     --location="${BIGQUERY_LOCATION}" \
