@@ -19,6 +19,7 @@ toss-research-collect-sec = "toss_trading.cli.research_collect_sec:main"
 toss-research-collect-fred = "toss_trading.cli.research_collect_fred:main"
 toss-research-validate-bars = "toss_trading.cli.research_validate_bars:main"
 toss-research-automation = "toss_trading.cli.research_automation:main"
+toss-research-reporting = "toss_trading.cli.research_reporting:main"
 
 [project.optional-dependencies]
 test = [

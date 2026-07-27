@@ -48,6 +48,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/19_research_data_and_backtest.md` | 불변 raw/Parquet 데이터 계층과 재현 가능한 momentum baseline |
 | `docs/20_data_provider_selection_and_collection.md` | 실제 데이터 공급자 선정, 라이선스 게이트와 수집 결과 |
 | `docs/21_gcp_research_data_automation.md` | GCP 기반 daily/weekly 수집·QA·백업·자체검증 자동화 |
+| `docs/22_visual_reporting.md` | 운영·데이터 품질·전략 성과 통합 시각 보고와 BigQuery 이력 |
 
 ## Repository Layout
 

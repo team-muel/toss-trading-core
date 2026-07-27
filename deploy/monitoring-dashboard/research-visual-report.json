@@ -1,0 +1,244 @@
+{
+  "displayName": "Toss Trading - Operations, Data Quality, Strategy",
+  "gridLayout": {
+    "columns": "2",
+    "widgets": [
+      {
+        "title": "통합 보고 체계",
+        "text": {
+          "format": "MARKDOWN",
+          "content": "## Toss Trading 통합 보고\n운영 상태, 데이터 품질, 검증된 전략 성과를 한 화면에서 봅니다.\n\n- **운영:** 기존 Foundation 6개와 research 5개 경보는 그대로 유지\n- **품질:** 실행별 오류 행, coverage, 종목 수, 수집량\n- **성과:** total-return 데이터와 불변 experiment가 있을 때만 표시\n\n전략 차트가 비어 있으면 손익 0이 아니라 **아직 검증 가능한 성과가 없음**을 뜻합니다."
+        }
+      },
+      {
+        "title": "장기 이력",
+        "text": {
+          "format": "MARKDOWN",
+          "content": "실행별 원본 이력은 BigQuery `__PROJECT_ID__.__DATASET_ID__.latest_run_summaries`에 보관됩니다. 최신 HTML 스냅샷은 비공개 GCS `research/reports/latest-daily.html`에 저장됩니다."
+        }
+      },
+      {
+        "title": "데이터 품질 오류 행 (실행별)",
+        "scorecard": {
+          "timeSeriesQuery": {
+            "timeSeriesFilter": {
+              "filter": "metric.type=\"logging.googleapis.com/user/research_quality_error_rows\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+              "aggregation": {
+                "alignmentPeriod": "3600s",
+                "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                "crossSeriesReducer": "REDUCE_MEAN"
+              }
+            }
+          },
+          "sparkChartView": {
+            "sparkChartType": "SPARK_LINE"
+          }
+        }
+      },
+      {
+        "title": "검증 종목 수 (실행별)",
+        "scorecard": {
+          "timeSeriesQuery": {
+            "timeSeriesFilter": {
+              "filter": "metric.type=\"logging.googleapis.com/user/research_quality_symbol_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+              "aggregation": {
+                "alignmentPeriod": "3600s",
+                "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                "crossSeriesReducer": "REDUCE_MEAN"
+              }
+            }
+          },
+          "sparkChartView": {
+            "sparkChartType": "SPARK_LINE"
+          }
+        }
+      },
+      {
+        "title": "Toss 수집 페이지 추이",
+        "xyChart": {
+          "dataSets": [
+            {
+              "plotType": "LINE",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/research_toss_page_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+                  "aggregation": {
+                    "alignmentPeriod": "3600s",
+                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "crossSeriesReducer": "REDUCE_MEAN"
+                  }
+                }
+              }
+            }
+          ],
+          "yAxis": {
+            "label": "pages",
+            "scale": "LINEAR"
+          }
+        }
+      },
+      {
+        "title": "검증 산출물 크기",
+        "xyChart": {
+          "dataSets": [
+            {
+              "plotType": "LINE",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/research_artifact_source_bytes\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+                  "aggregation": {
+                    "alignmentPeriod": "3600s",
+                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "crossSeriesReducer": "REDUCE_MEAN"
+                  }
+                }
+              }
+            }
+          ],
+          "yAxis": {
+            "label": "bytes",
+            "scale": "LINEAR"
+          }
+        }
+      },
+      {
+        "title": "전략 수익률 · CAGR (검증 실험만)",
+        "xyChart": {
+          "dataSets": [
+            {
+              "legendTemplate": "total return",
+              "plotType": "LINE",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/research_strategy_total_return\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+                  "aggregation": {
+                    "alignmentPeriod": "3600s",
+                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "crossSeriesReducer": "REDUCE_MEAN"
+                  }
+                }
+              }
+            },
+            {
+              "legendTemplate": "CAGR",
+              "plotType": "LINE",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/research_strategy_cagr\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+                  "aggregation": {
+                    "alignmentPeriod": "3600s",
+                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "crossSeriesReducer": "REDUCE_MEAN"
+                  }
+                }
+              }
+            }
+          ],
+          "yAxis": {
+            "label": "return",
+            "scale": "LINEAR"
+          }
+        }
+      },
+      {
+        "title": "전략 Sharpe · 최대 낙폭 (검증 실험만)",
+        "xyChart": {
+          "dataSets": [
+            {
+              "legendTemplate": "Sharpe (Rf=0)",
+              "plotType": "LINE",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/research_strategy_sharpe\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+                  "aggregation": {
+                    "alignmentPeriod": "3600s",
+                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "crossSeriesReducer": "REDUCE_MEAN"
+                  }
+                }
+              }
+            },
+            {
+              "legendTemplate": "max drawdown",
+              "plotType": "LINE",
+              "targetAxis": "Y2",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/research_strategy_max_drawdown\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+                  "aggregation": {
+                    "alignmentPeriod": "3600s",
+                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "crossSeriesReducer": "REDUCE_MEAN"
+                  }
+                }
+              }
+            }
+          ],
+          "yAxis": {
+            "label": "Sharpe",
+            "scale": "LINEAR"
+          },
+          "y2Axis": {
+            "label": "drawdown",
+            "scale": "LINEAR"
+          }
+        }
+      },
+      {
+        "title": "Research 실행 성공 · 실패",
+        "xyChart": {
+          "dataSets": [
+            {
+              "legendTemplate": "success",
+              "plotType": "STACKED_BAR",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/research_automation_ok_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+                  "aggregation": {
+                    "alignmentPeriod": "86400s",
+                    "perSeriesAligner": "ALIGN_SUM",
+                    "crossSeriesReducer": "REDUCE_SUM"
+                  }
+                }
+              }
+            },
+            {
+              "legendTemplate": "failed",
+              "plotType": "STACKED_BAR",
+              "targetAxis": "Y1",
+              "timeSeriesQuery": {
+                "timeSeriesFilter": {
+                  "filter": "metric.type=\"logging.googleapis.com/user/research_automation_failed_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+                  "aggregation": {
+                    "alignmentPeriod": "86400s",
+                    "perSeriesAligner": "ALIGN_SUM",
+                    "crossSeriesReducer": "REDUCE_SUM"
+                  }
+                }
+              }
+            }
+          ],
+          "yAxis": {
+            "label": "runs/day",
+            "scale": "LINEAR"
+          }
+        }
+      },
+      {
+        "title": "최근 통합 보고 이벤트",
+        "logsPanel": {
+          "filter": "resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\" AND jsonPayload.event=\"research_reporting_summary\"",
+          "resourceNames": [
+            "projects/__PROJECT_NUMBER__"
+          ]
+        }
+      }
+    ]
+  }
+}

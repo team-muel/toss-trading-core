@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--mode", choices=("daily", "weekly"), required=True)
     verify.add_argument("--code-revision", required=True)
     verify.add_argument("--provider-state", action="append", default=[])
+    verify.add_argument("--strategy-experiment")
     return parser
 
 
@@ -52,6 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         mode=args.mode,
         code_revision=args.code_revision,
         provider_states=parse_provider_states(args.provider_state),
+        strategy_experiment=args.strategy_experiment,
     )
     print(json.dumps(status, ensure_ascii=False, sort_keys=True))
     return 0

@@ -45,6 +45,8 @@ research-runtime/runs/<mode>-<UTC timestamp>-<revision>/
   lake/silver/           정규화된 Parquet market bars
   lake/catalog/          요청 메타데이터와 lineage manifest
   reports/               수집·정규화·QA 결과
+    reporting-summary.json  시각화·BigQuery 공통 요약
+    visual-report.html      비공개 최신 실행 보고서
   SHA256SUMS             전체 산출물 checksum
   run-status.json        업로드 승인 상태
 ```
@@ -129,6 +131,9 @@ research_provider_skipped
 research_validation_ok
 research_validation_failed
 research_backup_upload_ok
+research_reporting_summary
+research_reporting_upload_ok
+research_reporting_upload_failed
 ```
 
 연구 자동화에는 기존 6개 Foundation 경보와 별도로 5개 경보를 둡니다.

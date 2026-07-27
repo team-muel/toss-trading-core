@@ -9,6 +9,11 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
+from toss_trading.research.reporting import (
+    build_research_summary,
+    render_visual_report,
+)
+
 
 @dataclass(frozen=True)
 class CollectionWindow:
@@ -118,12 +123,34 @@ def _atomic_json(path: Path, payload: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _atomic_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+        mode="w",
+        encoding="utf-8",
+    )
+    temporary = Path(handle.name)
+    try:
+        with handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def verify_research_run(
     run_dir: str | Path,
     *,
     mode: str,
     code_revision: str,
     provider_states: dict[str, str],
+    strategy_experiment: str | Path | None = None,
 ) -> dict:
     root = Path(run_dir)
     if not root.is_dir():
@@ -155,6 +182,56 @@ def verify_research_run(
     if not parquet_files:
         raise ValueError("research run contains no normalized market bars")
 
+    verified_at = datetime.now(timezone.utc).isoformat()
+    toss_status = {
+        "symbols_requested": len(raw_symbols),
+        "raw_pages": len(raw_bundle["pages"]),
+        "adjusted_pages": len(adjusted_bundle["pages"]),
+        "raw_failures": raw_bundle["failures"],
+        "adjusted_failures": adjusted_bundle["failures"],
+    }
+    quality_status = {
+        "adjustments": qa["adjustments"],
+        "duplicate_rows": qa["duplicate_rows"],
+        "invalid_rows": qa["invalid_rows"],
+        "coverage_mismatch_rows": qa["coverage_mismatch_rows"],
+        "symbols": qa["symbols"],
+    }
+    reporting_names = {
+        "reporting-summary.json",
+        "visual-report.html",
+    }
+    source_artifact_paths = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file()
+        and path.name
+        not in {"SHA256SUMS", "run-status.json", *reporting_names}
+    )
+    summary = build_research_summary(
+        run_id=root.name,
+        verified_at=verified_at,
+        mode=mode,
+        code_revision=code_revision,
+        provider_states=provider_states,
+        toss=toss_status,
+        quality=quality_status,
+        artifacts={
+            "source_files": len(source_artifact_paths),
+            "source_bytes": sum(
+                path.stat().st_size for path in source_artifact_paths
+            ),
+            "manifests": len(manifests),
+            "parquet_files": len(parquet_files),
+        },
+        strategy_experiment=strategy_experiment,
+    )
+    _atomic_json(root / "reports" / "reporting-summary.json", summary)
+    _atomic_text(
+        root / "reports" / "visual-report.html",
+        render_visual_report(summary),
+    )
+
     artifact_paths = sorted(
         path
         for path in root.rglob("*")
@@ -171,31 +248,26 @@ def verify_research_run(
     )
 
     status = {
-        "schema_version": "research-automation-run-v1",
-        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "schema_version": "research-automation-run-v2",
+        "run_id": root.name,
+        "verified_at": verified_at,
         "mode": mode,
         "code_revision": code_revision,
         "ready_for_upload": True,
         "provider_states": provider_states,
-        "toss": {
-            "symbols_requested": len(raw_symbols),
-            "raw_pages": len(raw_bundle["pages"]),
-            "adjusted_pages": len(adjusted_bundle["pages"]),
-            "raw_failures": raw_bundle["failures"],
-            "adjusted_failures": adjusted_bundle["failures"],
-        },
-        "quality": {
-            "adjustments": qa["adjustments"],
-            "duplicate_rows": qa["duplicate_rows"],
-            "invalid_rows": qa["invalid_rows"],
-            "coverage_mismatch_rows": qa["coverage_mismatch_rows"],
-            "symbols": qa["symbols"],
-        },
+        "toss": toss_status,
+        "quality": quality_status,
         "artifacts": {
             "files": len(artifact_paths),
             "bytes": sum(path.stat().st_size for path in artifact_paths),
             "manifests": len(manifests),
             "parquet_files": len(parquet_files),
+        },
+        "reporting": {
+            "schema_version": summary["schema_version"],
+            "summary": "reports/reporting-summary.json",
+            "visual_report": "reports/visual-report.html",
+            "strategy_state": summary["strategy"]["state"],
         },
     }
     _atomic_json(root / "run-status.json", status)

@@ -13,3 +13,61 @@ metrics:
     event: research_provider_skipped
   - name: research_automation_lock_busy_count
     event: research_automation_lock_busy
+  - name: research_reporting_upload_ok_count
+    event: research_reporting_upload_ok
+  - name: research_reporting_upload_failed_count
+    event: research_reporting_upload_failed
+
+distributions:
+  - name: research_quality_error_rows
+    description: Data-quality error rows per verified research run
+    event: research_reporting_summary
+    field: quality_error_rows
+    unit: "1"
+    explicit_bounds: [0, 1, 2, 5, 10, 50, 100, 1000]
+  - name: research_quality_symbol_count
+    description: Symbols covered per verified research run
+    event: research_reporting_summary
+    field: quality_symbol_count
+    unit: "1"
+    explicit_bounds: [0, 1, 5, 10, 25, 50, 100, 250, 500]
+  - name: research_toss_page_count
+    description: Toss raw and adjusted pages per verified research run
+    event: research_reporting_summary
+    field: toss_page_count
+    unit: "1"
+    explicit_bounds: [0, 1, 5, 10, 25, 50, 100, 250, 500, 1000]
+  - name: research_artifact_source_bytes
+    description: Source artifact bytes per verified research run
+    event: research_reporting_summary
+    field: artifact_source_bytes
+    unit: By
+    explicit_bounds: [0, 1024, 1048576, 10485760, 104857600, 1073741824]
+  - name: research_strategy_total_return
+    description: Verified strategy experiment total return
+    event: research_reporting_summary
+    field: strategy_total_return
+    unit: "1"
+    required_strategy_state: available
+    explicit_bounds: [-1, -0.5, -0.25, 0, 0.1, 0.25, 0.5, 1, 2, 5]
+  - name: research_strategy_cagr
+    description: Verified strategy experiment CAGR
+    event: research_reporting_summary
+    field: strategy_cagr
+    unit: "1"
+    required_strategy_state: available
+    explicit_bounds: [-1, -0.5, -0.25, 0, 0.05, 0.1, 0.2, 0.5, 1]
+  - name: research_strategy_sharpe
+    description: Verified strategy experiment zero-rate Sharpe ratio
+    event: research_reporting_summary
+    field: strategy_sharpe_zero_rate
+    unit: "1"
+    required_strategy_state: available
+    explicit_bounds: [-5, -2, -1, 0, 0.5, 1, 1.5, 2, 3, 5]
+  - name: research_strategy_max_drawdown
+    description: Verified strategy experiment maximum drawdown
+    event: research_reporting_summary
+    field: strategy_max_drawdown
+    unit: "1"
+    required_strategy_state: available
+    explicit_bounds: [-1, -0.75, -0.5, -0.25, -0.1, -0.05, 0]
