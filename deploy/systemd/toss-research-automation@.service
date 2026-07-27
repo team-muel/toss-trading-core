@@ -32,6 +32,8 @@ Environment=RESEARCH_JSON_LOG_PATH=/home/seoje/toss-trading/research-runtime/res
 Environment=RESEARCH_LOCK_PATH=/home/seoje/toss-trading/research-runtime/research_automation.lock
 Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/runtime/toss_api.lock
 Environment=RESEARCH_GCS_URI=gs://toss-trading-core-lab-research-data/research
+Environment=RESEARCH_BIGQUERY_DATASET=toss_research_reporting
+Environment=RESEARCH_BIGQUERY_TABLE=run_summaries
 Environment=CLOUDSDK_CONFIG=/home/seoje/toss-trading/runtime/gcloud
 Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:/snap/google-cloud-cli/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python

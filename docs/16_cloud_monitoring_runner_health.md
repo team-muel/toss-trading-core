@@ -4,7 +4,10 @@
 
 This document defines the minimum health checks for the GCP foundation runner.
 
-Do not add Grafana, Metabase, or trading dashboards yet. The current goal is to know whether the read-only runner is alive, whether Toss access is healthy, and whether foundation audit passes.
+The original monitoring scope was operational health only. On 2026-07-27 the
+operator approved a private GCP dashboard for operations, research-data quality,
+and verified strategy performance. Grafana and Metabase remain out of scope;
+the approved extension uses Cloud Monitoring, BigQuery, and private GCS.
 
 ## Health Sources
 
@@ -163,15 +166,15 @@ P2:
 
 ## Non-Goals
 
-Do not build these yet:
+The former dashboard restriction is superseded by
+`docs/22_visual_reporting.md`. The remaining non-goals are:
 
 - Grafana dashboards
 - Metabase analytics
 - live order monitoring
-- strategy P&L dashboards
-- external data quality dashboards
-
-Those come after Foundation v1 passes and paper order planner is introduced.
+- public or unauthenticated reporting
+- unverified strategy P&L
+- automatic promotion of research results into live orders
 
 All operational failure and heartbeat-absence policies must have a verified
 notification channel. A policy without a channel creates a console incident but

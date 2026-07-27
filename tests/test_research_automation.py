@@ -1,4 +1,5 @@
 import json
+import hashlib
 import tempfile
 import unittest
 from datetime import date
@@ -101,8 +102,32 @@ class ResearchAutomationTest(unittest.TestCase):
             )
 
             self.assertTrue(result["ready_for_upload"])
+            self.assertEqual(result["schema_version"], "research-automation-run-v2")
+            self.assertEqual(result["run_id"], root.name)
             self.assertTrue((root / "run-status.json").is_file())
             self.assertTrue((root / "SHA256SUMS").is_file())
+            summary_path = root / "reports" / "reporting-summary.json"
+            visual_path = root / "reports" / "visual-report.html"
+            self.assertTrue(summary_path.is_file())
+            self.assertTrue(visual_path.is_file())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["quality"]["error_rows"], 0)
+            self.assertEqual(
+                summary["strategy"]["state"],
+                "not_available",
+            )
+            checksums = (root / "SHA256SUMS").read_text(encoding="utf-8")
+            self.assertIn("reports/reporting-summary.json", checksums)
+            self.assertIn("reports/visual-report.html", checksums)
+            for line in checksums.splitlines():
+                expected, relative_path = line.split("  ", maxsplit=1)
+                self.assertEqual(
+                    hashlib.sha256(
+                        (root / relative_path).read_bytes()
+                    ).hexdigest(),
+                    expected,
+                    relative_path,
+                )
 
     def test_checked_in_gcp_automation_contract(self):
         required = [
@@ -115,6 +140,9 @@ class ResearchAutomationTest(unittest.TestCase):
             "deploy/systemd/toss-research-weekly.timer",
             "deploy/storage/research-lifecycle.json",
             "deploy/monitoring-research/log-metrics.yaml",
+            "deploy/monitoring-dashboard/research-visual-report.json",
+            "deploy/bigquery/research_run_summary_schema.json",
+            "deploy/bigquery/latest_run_summaries.sql",
         ]
         for value in required:
             self.assertTrue(Path(value).is_file(), value)
@@ -127,6 +155,16 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("TOSS_API_LOCK_PATH", runner)
         self.assertIn("research_validate_bars", runner)
         self.assertIn("research_automation verify", runner)
+        self.assertIn(
+            '> "${RUNTIME_ROOT}/last-verification.json"',
+            runner,
+        )
+        self.assertNotIn(
+            '> "${REPORT_DIR}/verification.json"',
+            runner,
+        )
+        self.assertIn("research_reporting event", runner)
+        self.assertIn("upload-bigquery", runner)
         self.assertIn("gcloud storage rsync", runner)
         self.assertIn("RESEARCH_TIINGO_LICENSE_ACCEPTED", runner)
         self.assertIn("RESEARCH_FRED_SERIES_RIGHTS_APPROVED", runner)
@@ -191,6 +229,10 @@ class ResearchAutomationTest(unittest.TestCase):
             "objects/builds/",
             provisioner,
         )
+        self.assertIn("bigquery.googleapis.com", provisioner)
+        self.assertIn("roles/bigquery.dataEditor", provisioner)
+        self.assertIn("render_research_dashboard.py", provisioner)
+        self.assertIn("monitoring dashboards", provisioner)
 
 
 if __name__ == "__main__":

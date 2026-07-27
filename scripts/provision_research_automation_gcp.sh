@@ -15,13 +15,21 @@ SERVICE_ACCOUNT="${RESEARCH_SERVICE_ACCOUNT:-toss-foundation-runner@${PROJECT_ID
 BUILD_SERVICE_ACCOUNT_NAME="${RESEARCH_BUILD_SERVICE_ACCOUNT_NAME:-toss-research-build}"
 BUILD_SERVICE_ACCOUNT="${BUILD_SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 BUILD_ARTIFACT_CONDITION="expression=resource.name.startsWith('projects/_/buckets/${BUCKET_NAME}/objects/builds/'),title=BuildArtifactsPrefix,description=Restrict Cloud Build to the builds prefix"
+BIGQUERY_LOCATION="${RESEARCH_BIGQUERY_LOCATION:-us-central1}"
+BIGQUERY_DATASET="${RESEARCH_BIGQUERY_DATASET:-toss_research_reporting}"
+BIGQUERY_TABLE="${RESEARCH_BIGQUERY_TABLE:-run_summaries}"
+DASHBOARD_DISPLAY_NAME="Toss Trading - Operations, Data Quality, Strategy"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 NOTIFICATION_CHANNEL="${MONITORING_NOTIFICATION_CHANNEL:-}"
+WORK_DIR="$(mktemp -d)"
+trap 'rm -rf -- "${WORK_DIR}"' EXIT
 
-if ! command -v gcloud >/dev/null 2>&1; then
-  echo "required command is missing: gcloud" >&2
-  exit 69
-fi
+for command in gcloud bq; do
+  if ! command -v "${command}" >/dev/null 2>&1; then
+    echo "required command is missing: ${command}" >&2
+    exit 69
+  fi
+done
 
 gcloud services enable \
   storage.googleapis.com \
@@ -29,6 +37,7 @@ gcloud services enable \
   monitoring.googleapis.com \
   secretmanager.googleapis.com \
   cloudbuild.googleapis.com \
+  bigquery.googleapis.com \
   --project="${PROJECT_ID}"
 
 if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" \
@@ -83,34 +92,104 @@ for secret_name in \
   fi
 done
 
-while IFS=$'\t' read -r metric_name event_name; do
-  if ! gcloud logging metrics describe "${metric_name}" \
+METRIC_DIR="${WORK_DIR}/metrics"
+"${PYTHON_BIN}" scripts/render_research_log_metrics.py \
+  --output-dir "${METRIC_DIR}"
+for metric_path in "${METRIC_DIR}"/*.json; do
+  metric_name="$(basename "${metric_path}" .json)"
+  if gcloud logging metrics describe "${metric_name}" \
     --project="${PROJECT_ID}" >/dev/null 2>&1; then
+    gcloud logging metrics update "${metric_name}" \
+      --project="${PROJECT_ID}" \
+      --config-from-file="${metric_path}"
+  else
     gcloud logging metrics create "${metric_name}" \
       --project="${PROJECT_ID}" \
-      --description="Toss research automation ${event_name} events" \
-      --log-filter="resource.type=\"gce_instance\" AND jsonPayload.event=\"${event_name}\""
+      --config-from-file="${metric_path}"
   fi
-done < <(
-  "${PYTHON_BIN}" - <<'PY'
-from pathlib import Path
-import yaml
+done
 
-payload = yaml.safe_load(
-    Path("deploy/monitoring-research/log-metrics.yaml").read_text(encoding="utf-8")
-)
-for item in payload["metrics"]:
-    print(f"{item['name']}\t{item['event']}")
-PY
-)
+if ! bq --project_id="${PROJECT_ID}" show \
+  --dataset "${PROJECT_ID}:${BIGQUERY_DATASET}" >/dev/null 2>&1; then
+  bq --project_id="${PROJECT_ID}" \
+    --location="${BIGQUERY_LOCATION}" \
+    mk --dataset \
+    --description="Private Toss research reporting history" \
+    "${PROJECT_ID}:${BIGQUERY_DATASET}"
+fi
+if ! bq --project_id="${PROJECT_ID}" show \
+  --table "${PROJECT_ID}:${BIGQUERY_DATASET}.${BIGQUERY_TABLE}" \
+  >/dev/null 2>&1; then
+  bq --project_id="${PROJECT_ID}" \
+    --location="${BIGQUERY_LOCATION}" \
+    mk --table \
+    --description="Immutable research run quality and strategy summaries" \
+    --time_partitioning_field=verified_at \
+    --time_partitioning_type=DAY \
+    --clustering_fields=mode,strategy_state \
+    "${PROJECT_ID}:${BIGQUERY_DATASET}.${BIGQUERY_TABLE}" \
+    deploy/bigquery/research_run_summary_schema.json
+fi
+
+BIGQUERY_VIEW_SQL="${WORK_DIR}/latest_run_summaries.sql"
+"${PYTHON_BIN}" scripts/render_bigquery_reporting.py \
+  --output="${BIGQUERY_VIEW_SQL}" \
+  --project-id="${PROJECT_ID}" \
+  --dataset-id="${BIGQUERY_DATASET}" \
+  --table-id="${BIGQUERY_TABLE}"
+bq --project_id="${PROJECT_ID}" \
+  --location="${BIGQUERY_LOCATION}" \
+  query --use_legacy_sql=false < "${BIGQUERY_VIEW_SQL}"
+bq --project_id="${PROJECT_ID}" \
+  --location="${BIGQUERY_LOCATION}" \
+  query --use_legacy_sql=false \
+  "GRANT \`roles/bigquery.dataEditor\` ON SCHEMA \`${PROJECT_ID}.${BIGQUERY_DATASET}\` TO 'serviceAccount:${SERVICE_ACCOUNT}';"
+
+INSTANCE_ID="$(gcloud compute instances describe "${INSTANCE_NAME}" \
+  --project="${PROJECT_ID}" \
+  --zone="${ZONE}" \
+  --format='value(id)')"
+PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" \
+  --format='value(projectNumber)')"
+EXISTING_DASHBOARD="$(
+  gcloud monitoring dashboards list \
+    --project="${PROJECT_ID}" \
+    --filter="displayName=\"${DASHBOARD_DISPLAY_NAME}\"" \
+    --format='value(name)' \
+    --limit=1
+)"
+DASHBOARD_PATH="${WORK_DIR}/research-visual-report.json"
+if [[ -n "${EXISTING_DASHBOARD}" ]]; then
+  DASHBOARD_ID="${EXISTING_DASHBOARD##*/}"
+  DASHBOARD_ETAG="$(
+    gcloud monitoring dashboards describe "${DASHBOARD_ID}" \
+      --project="${PROJECT_ID}" \
+      --format='value(etag)'
+  )"
+  "${PYTHON_BIN}" scripts/render_research_dashboard.py \
+    --output="${DASHBOARD_PATH}" \
+    --project-id="${PROJECT_ID}" \
+    --project-number="${PROJECT_NUMBER}" \
+    --instance-id="${INSTANCE_ID}" \
+    --dataset-id="${BIGQUERY_DATASET}" \
+    --etag="${DASHBOARD_ETAG}"
+  gcloud monitoring dashboards update "${DASHBOARD_ID}" \
+    --project="${PROJECT_ID}" \
+    --config-from-file="${DASHBOARD_PATH}"
+else
+  "${PYTHON_BIN}" scripts/render_research_dashboard.py \
+    --output="${DASHBOARD_PATH}" \
+    --project-id="${PROJECT_ID}" \
+    --project-number="${PROJECT_NUMBER}" \
+    --instance-id="${INSTANCE_ID}" \
+    --dataset-id="${BIGQUERY_DATASET}"
+  gcloud monitoring dashboards create \
+    --project="${PROJECT_ID}" \
+    --config-from-file="${DASHBOARD_PATH}"
+fi
 
 if [[ -n "${NOTIFICATION_CHANNEL}" ]]; then
-  INSTANCE_ID="$(gcloud compute instances describe "${INSTANCE_NAME}" \
-    --project="${PROJECT_ID}" \
-    --zone="${ZONE}" \
-    --format='value(id)')"
-  RENDERED_DIR="$(mktemp -d)"
-  trap 'rm -rf -- "${RENDERED_DIR}"' EXIT
+  RENDERED_DIR="${WORK_DIR}/policies"
   "${PYTHON_BIN}" scripts/render_research_monitoring.py \
     --output-dir "${RENDERED_DIR}" \
     --instance-id "${INSTANCE_ID}" \
@@ -146,3 +225,8 @@ gcloud storage buckets describe "gs://${BUCKET_NAME}" \
 gcloud logging metrics list \
   --project="${PROJECT_ID}" \
   --filter='name:research_'
+bq --project_id="${PROJECT_ID}" show \
+  "${PROJECT_ID}:${BIGQUERY_DATASET}.${BIGQUERY_TABLE}"
+gcloud monitoring dashboards list \
+  --project="${PROJECT_ID}" \
+  --filter="displayName=\"${DASHBOARD_DISPLAY_NAME}\""

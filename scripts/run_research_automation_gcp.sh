@@ -18,6 +18,9 @@ JSON_LOG_PATH="${RESEARCH_JSON_LOG_PATH:-${RUNTIME_ROOT}/research_automation.jso
 LOCK_PATH="${RESEARCH_LOCK_PATH:-${RUNTIME_ROOT}/research_automation.lock}"
 TOSS_API_LOCK_PATH="${TOSS_API_LOCK_PATH:-/home/seoje/toss-trading/runtime/toss_api.lock}"
 GCS_URI="${RESEARCH_GCS_URI:-}"
+BIGQUERY_DATASET="${RESEARCH_BIGQUERY_DATASET:-toss_research_reporting}"
+BIGQUERY_TABLE="${RESEARCH_BIGQUERY_TABLE:-run_summaries}"
+STRATEGY_EXPERIMENT="${RESEARCH_STRATEGY_EXPERIMENT:-}"
 CODE_REVISION="${FOUNDATION_CODE_REVISION:-}"
 if [[ -z "${CODE_REVISION}" ]] && command -v git >/dev/null 2>&1; then
   CODE_REVISION="$(git -C "${ROOT_DIR}" rev-parse --verify HEAD 2>/dev/null || true)"
@@ -269,9 +272,15 @@ VERIFY_ARGS=(
 for provider_state in "${PROVIDER_STATES[@]}"; do
   VERIFY_ARGS+=(--provider-state "${provider_state}")
 done
+if [[ -n "${STRATEGY_EXPERIMENT}" ]]; then
+  VERIFY_ARGS+=(--strategy-experiment "${STRATEGY_EXPERIMENT}")
+fi
 "${PYTHON_BIN}" -m toss_trading.cli.research_automation verify \
   "${VERIFY_ARGS[@]}" \
-  > "${REPORT_DIR}/verification.json"
+  > "${RUNTIME_ROOT}/last-verification.json"
+"${PYTHON_BIN}" -m toss_trading.cli.research_reporting event \
+  --summary "${REPORT_DIR}/reporting-summary.json" \
+  >> "${JSON_LOG_PATH}"
 json_log "research_validation_ok" "" "passed" ""
 
 if [[ -z "${GCS_URI}" ]]; then
@@ -282,7 +291,33 @@ gcloud storage rsync "${RUN_DIR}" "${GCS_URI%/}/runs/${RUN_ID}" --recursive
 gcloud storage cp \
   "${RUN_DIR}/run-status.json" \
   "${GCS_URI%/}/status/latest-${RUN_MODE}.json"
+gcloud storage cp \
+  "${REPORT_DIR}/reporting-summary.json" \
+  "${GCS_URI%/}/reports/latest-${RUN_MODE}.json"
+gcloud storage cp \
+  "${REPORT_DIR}/visual-report.html" \
+  "${GCS_URI%/}/reports/latest-${RUN_MODE}.html"
 json_log "research_backup_upload_ok" "" "uploaded" "${GCS_URI%/}/runs/${RUN_ID}"
+
+if ! "${PYTHON_BIN}" -m toss_trading.cli.research_reporting \
+  upload-bigquery \
+  --summary "${REPORT_DIR}/reporting-summary.json" \
+  --project-id "${GCP_PROJECT_ID}" \
+  --dataset-id "${BIGQUERY_DATASET}" \
+  --table-id "${BIGQUERY_TABLE}" \
+  > "${RUNTIME_ROOT}/last-bigquery-upload.json"; then
+  json_log \
+    "research_reporting_upload_failed" \
+    "bigquery" \
+    "failed" \
+    "${BIGQUERY_DATASET}.${BIGQUERY_TABLE}"
+  exit 67
+fi
+json_log \
+  "research_reporting_upload_ok" \
+  "bigquery" \
+  "inserted" \
+  "${BIGQUERY_DATASET}.${BIGQUERY_TABLE}"
 
 ln -sfn "${RUN_DIR}" "${RUNTIME_ROOT}/latest-${RUN_MODE}"
 json_log "research_automation_ok" "" "completed" ""

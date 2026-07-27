@@ -1,0 +1,149 @@
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+from scripts.render_bigquery_reporting import render_sql
+from scripts.render_research_dashboard import render_dashboard
+from scripts.render_research_log_metrics import render_log_metrics
+from toss_trading.research.reporting import (
+    STRATEGY_METRIC_KEYS,
+    build_monitoring_event,
+    build_research_summary,
+    render_visual_report,
+    summary_to_bigquery_row,
+)
+
+
+def sample_summary(*, experiment: Path | None = None) -> dict:
+    return build_research_summary(
+        run_id="daily-20260727T000000Z-abc123",
+        verified_at="2026-07-27T00:00:00+00:00",
+        mode="daily",
+        code_revision="abc123",
+        provider_states={
+            "toss": "collected",
+            "tiingo": "skipped_license_or_secret_gate",
+        },
+        toss={
+            "symbols_requested": 3,
+            "raw_pages": 3,
+            "adjusted_pages": 3,
+            "raw_failures": [],
+            "adjusted_failures": [],
+        },
+        quality={
+            "adjustments": ["raw", "split_adjusted"],
+            "duplicate_rows": 0,
+            "invalid_rows": 0,
+            "coverage_mismatch_rows": 0,
+            "symbols": ["SPY", "TLT", "SGOV"],
+        },
+        artifacts={
+            "source_files": 10,
+            "source_bytes": 2048,
+            "manifests": 2,
+            "parquet_files": 2,
+        },
+        strategy_experiment=experiment,
+    )
+
+
+class ResearchReportingTest(unittest.TestCase):
+    def test_unavailable_strategy_is_null_not_fake_zero(self):
+        summary = sample_summary()
+        row = summary_to_bigquery_row(
+            summary,
+            ingested_at="2026-07-27T00:01:00+00:00",
+        )
+        event = build_monitoring_event(summary)
+
+        self.assertEqual(summary["strategy"]["state"], "not_available")
+        self.assertIsNone(row["strategy_total_return"])
+        self.assertNotIn("strategy_total_return", event)
+        self.assertEqual(event["quality_error_rows"], 0)
+        report = render_visual_report(summary)
+        self.assertIn("미측정", report)
+        self.assertIn("Toss Trading 통합 보고서", report)
+
+    def test_verified_experiment_populates_strategy_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "experiment-1.json"
+            metrics = {
+                key: float(index) / 10
+                for index, key in enumerate(STRATEGY_METRIC_KEYS, start=1)
+            }
+            path.write_text(
+                json.dumps(
+                    {
+                        "strategy": "broad_etf_dual_momentum_v1",
+                        "code_revision": "def456",
+                        "metrics": metrics,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            summary = sample_summary(experiment=path)
+            row = summary_to_bigquery_row(summary)
+            event = build_monitoring_event(summary)
+
+            self.assertEqual(summary["strategy"]["state"], "available")
+            self.assertEqual(row["strategy_total_return"], 0.1)
+            self.assertEqual(event["strategy_total_return"], 0.1)
+            self.assertEqual(
+                event["strategy_name"],
+                "broad_etf_dual_momentum_v1",
+            )
+
+    def test_reporting_infrastructure_templates_render(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            metric_paths = render_log_metrics(
+                source=Path("deploy/monitoring-research/log-metrics.yaml"),
+                output_dir=root / "metrics",
+            )
+            dashboard = render_dashboard(
+                source=Path(
+                    "deploy/monitoring-dashboard/research-visual-report.json"
+                ),
+                output=root / "dashboard.json",
+                project_id="project-1",
+                project_number="123456",
+                instance_id="654321",
+                dataset_id="reporting",
+            )
+            sql = render_sql(
+                source=Path(
+                    "deploy/bigquery/latest_run_summaries.sql"
+                ),
+                output=root / "view.sql",
+                project_id="project-1",
+                dataset_id="reporting",
+                table_id="runs",
+            )
+
+            self.assertEqual(len(metric_paths), 17)
+            strategy_metric = json.loads(
+                (
+                    root / "metrics" / "research_strategy_total_return.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                strategy_metric["metricDescriptor"]["valueType"],
+                "DISTRIBUTION",
+            )
+            self.assertIn(
+                'jsonPayload.strategy_state="available"',
+                strategy_metric["filter"],
+            )
+            self.assertEqual(
+                dashboard["displayName"],
+                "Toss Trading - Operations, Data Quality, Strategy",
+            )
+            self.assertNotIn("__INSTANCE_ID__", json.dumps(dashboard))
+            self.assertIn("project-1.reporting.runs", sql)
+
+
+if __name__ == "__main__":
+    unittest.main()
