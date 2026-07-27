@@ -44,8 +44,6 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member="serviceAccount:${SERVICE_ACCOUNT}" \
   --role="roles/storage.objectAdmin"
 
-PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" \
-  --format='value(projectNumber)')"
 if ! gcloud iam service-accounts describe "${BUILD_SERVICE_ACCOUNT}" \
   --project="${PROJECT_ID}" >/dev/null 2>&1; then
   gcloud iam service-accounts create "${BUILD_SERVICE_ACCOUNT_NAME}" \
