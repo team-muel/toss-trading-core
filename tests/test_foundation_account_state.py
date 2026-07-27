@@ -520,6 +520,12 @@ class FoundationAccountStateTest(unittest.TestCase):
         empty.ledger = ledger
         FoundationSnapshotter(empty, ledger).snapshot(account_seq="1")
 
+        # Some host clocks can assign the same timestamp to consecutive runs.
+        # The newest inserted run must still win deterministically.
+        ledger.conn.execute(
+            "UPDATE snapshot_run SET completed_at = '2026-01-01T00:00:00+00:00'"
+        )
+        ledger.conn.commit()
         explanation = ledger.explain_account_state("1")
 
         self.assertEqual(explanation.holdings_count, 0)
