@@ -145,6 +145,8 @@ class ResearchAutomationTest(unittest.TestCase):
         )
 
         cloudbuild = Path("cloudbuild.yaml").read_text(encoding="utf-8")
+        self.assertIn("apt-get install", cloudbuild)
+        self.assertIn("shellcheck", cloudbuild)
         self.assertIn(
             "serviceAccount: "
             "projects/toss-trading-core-lab/serviceAccounts/"
@@ -160,6 +162,10 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("roles/logging.logWriter", provisioner)
         self.assertIn("CLOUD_BUILD_SOURCE_BUCKET", provisioner)
         self.assertIn("roles/storage.objectViewer", provisioner)
+
+        cloud_ignore = Path(".gcloudignore").read_text(encoding="utf-8")
+        self.assertIn("/runtime", cloud_ignore.splitlines())
+        self.assertNotIn("runtime", cloud_ignore.splitlines())
 
 
 if __name__ == "__main__":
