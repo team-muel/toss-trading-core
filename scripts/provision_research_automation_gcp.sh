@@ -57,6 +57,9 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
   --role="roles/storage.objectCreator"
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
+  --role="roles/storage.bucketViewer"
 if ! gcloud storage buckets describe "gs://${BUILD_SOURCE_BUCKET}" \
   --project="${PROJECT_ID}" >/dev/null 2>&1; then
   gcloud storage buckets create "gs://${BUILD_SOURCE_BUCKET}" \
