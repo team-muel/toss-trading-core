@@ -152,9 +152,10 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("apt-get install", cloudbuild)
         self.assertIn("shellcheck", cloudbuild)
         self.assertIn("id: upload-wheel", cloudbuild)
-        self.assertIn("gcloud storage cp", cloudbuild)
+        self.assertIn("gcloud auth print-access-token", cloudbuild)
+        self.assertIn("storage.googleapis.com/upload", cloudbuild)
         self.assertIn(
-            "research-data/builds/${BUILD_ID}/",
+            "name=builds%2F${BUILD_ID}%2F${wheel_name}",
             cloudbuild,
         )
         self.assertIn(
@@ -172,7 +173,6 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("roles/logging.logWriter", provisioner)
         self.assertIn("CLOUD_BUILD_SOURCE_BUCKET", provisioner)
         self.assertIn("roles/storage.objectViewer", provisioner)
-        self.assertIn("roles/storage.bucketViewer", provisioner)
         self.assertIn("BuildArtifactsPrefix", provisioner)
         self.assertIn(
             "objects/builds/",
