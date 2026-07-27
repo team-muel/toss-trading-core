@@ -25,7 +25,7 @@
               "filter": "metric.type=\"logging.googleapis.com/user/research_quality_error_rows\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
               "aggregation": {
                 "alignmentPeriod": "3600s",
-                "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                "perSeriesAligner": "ALIGN_SUM",
                 "crossSeriesReducer": "REDUCE_MEAN"
               }
             }
@@ -43,7 +43,7 @@
               "filter": "metric.type=\"logging.googleapis.com/user/research_quality_symbol_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
               "aggregation": {
                 "alignmentPeriod": "3600s",
-                "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                "perSeriesAligner": "ALIGN_SUM",
                 "crossSeriesReducer": "REDUCE_MEAN"
               }
             }
@@ -61,7 +61,7 @@
               "filter": "metric.type=\"logging.googleapis.com/user/research_toss_collection_failure_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
               "aggregation": {
                 "alignmentPeriod": "3600s",
-                "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                "perSeriesAligner": "ALIGN_SUM",
                 "crossSeriesReducer": "REDUCE_MEAN"
               }
             }
@@ -83,7 +83,7 @@
                   "filter": "metric.type=\"logging.googleapis.com/user/research_toss_page_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
                   "aggregation": {
                     "alignmentPeriod": "3600s",
-                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "perSeriesAligner": "ALIGN_SUM",
                     "crossSeriesReducer": "REDUCE_MEAN"
                   }
                 }
@@ -108,7 +108,7 @@
                   "filter": "metric.type=\"logging.googleapis.com/user/research_artifact_source_bytes\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
                   "aggregation": {
                     "alignmentPeriod": "3600s",
-                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "perSeriesAligner": "ALIGN_SUM",
                     "crossSeriesReducer": "REDUCE_MEAN"
                   }
                 }
@@ -134,7 +134,7 @@
                   "filter": "metric.type=\"logging.googleapis.com/user/research_strategy_total_return\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
                   "aggregation": {
                     "alignmentPeriod": "3600s",
-                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "perSeriesAligner": "ALIGN_SUM",
                     "crossSeriesReducer": "REDUCE_MEAN"
                   }
                 }
@@ -149,7 +149,7 @@
                   "filter": "metric.type=\"logging.googleapis.com/user/research_strategy_cagr\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
                   "aggregation": {
                     "alignmentPeriod": "3600s",
-                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "perSeriesAligner": "ALIGN_SUM",
                     "crossSeriesReducer": "REDUCE_MEAN"
                   }
                 }
@@ -175,7 +175,7 @@
                   "filter": "metric.type=\"logging.googleapis.com/user/research_strategy_sharpe\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
                   "aggregation": {
                     "alignmentPeriod": "3600s",
-                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "perSeriesAligner": "ALIGN_SUM",
                     "crossSeriesReducer": "REDUCE_MEAN"
                   }
                 }
@@ -190,7 +190,7 @@
                   "filter": "metric.type=\"logging.googleapis.com/user/research_strategy_max_drawdown\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
                   "aggregation": {
                     "alignmentPeriod": "3600s",
-                    "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                    "perSeriesAligner": "ALIGN_SUM",
                     "crossSeriesReducer": "REDUCE_MEAN"
                   }
                 }
