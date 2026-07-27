@@ -169,6 +169,9 @@ class ResearchReportingTest(unittest.TestCase):
                 dashboard["displayName"],
                 "Toss Trading - Operations, Data Quality, Strategy",
             )
+            dashboard_json = json.dumps(dashboard)
+            self.assertNotIn("ALIGN_PERCENTILE", dashboard_json)
+            self.assertIn("ALIGN_SUM", dashboard_json)
             self.assertNotIn("__INSTANCE_ID__", json.dumps(dashboard))
             self.assertIn("project-1.reporting.runs", sql)
 

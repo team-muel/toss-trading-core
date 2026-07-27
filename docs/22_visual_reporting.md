@@ -80,6 +80,9 @@ Toss Trading - Operations, Data Quality, Strategy
 전략 수익률·CAGR, Sharpe·최대 낙폭, 최근 구조화 요약 로그를 표시합니다.
 전략 metric은
 `strategy_state=available` 로그만 추출합니다.
+분포형 로그 지표는 백분위 버킷 중간값을 표시하지 않도록 실행 구간에서
+`ALIGN_SUM`으로 합친 뒤 `REDUCE_MEAN`으로 실제 `sum/count` 평균을
+표시합니다. daily/weekly 1회 실행 값은 원본 숫자와 동일합니다.
 
 프로젝트 대시보드 목록:
 
