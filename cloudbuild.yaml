@@ -24,9 +24,20 @@ steps:
     args:
       - -ceu
       - |
-        gcloud storage cp \
-          dist/*.whl \
-          "gs://toss-trading-core-lab-research-data/builds/${BUILD_ID}/"
+        set -- dist/*.whl
+        test "$#" -eq 1
+        wheel_path="$1"
+        wheel_name="$(basename "${wheel_path}")"
+        access_token="$(gcloud auth print-access-token)"
+        curl \
+          --fail-with-body \
+          --silent \
+          --show-error \
+          --request POST \
+          --header "Authorization: Bearer ${access_token}" \
+          --header "Content-Type: application/octet-stream" \
+          --data-binary "@${wheel_path}" \
+          "https://storage.googleapis.com/upload/storage/v1/b/toss-trading-core-lab-research-data/o?uploadType=media&name=builds%2F${BUILD_ID}%2F${wheel_name}"
 serviceAccount: projects/toss-trading-core-lab/serviceAccounts/toss-research-build@toss-trading-core-lab.iam.gserviceaccount.com
 options:
   logging: CLOUD_LOGGING_ONLY
