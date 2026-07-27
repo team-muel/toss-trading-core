@@ -5,6 +5,7 @@ steps:
     args:
       - -ceu
       - |
+        test -f src/toss_trading/runtime/rate_limit.py
         apt-get update
         apt-get install --yes --no-install-recommends shellcheck
         python -m pip install --requirement requirements-dev.lock
