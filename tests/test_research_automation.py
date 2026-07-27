@@ -173,6 +173,11 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("CLOUD_BUILD_SOURCE_BUCKET", provisioner)
         self.assertIn("roles/storage.objectViewer", provisioner)
         self.assertIn("roles/storage.bucketViewer", provisioner)
+        self.assertIn("BuildArtifactsPrefix", provisioner)
+        self.assertIn(
+            "objects/builds/",
+            provisioner,
+        )
 
 
 if __name__ == "__main__":

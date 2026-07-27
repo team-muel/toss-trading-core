@@ -14,6 +14,7 @@ BUILD_SOURCE_BUCKET="${CLOUD_BUILD_SOURCE_BUCKET:-${PROJECT_ID}_cloudbuild}"
 SERVICE_ACCOUNT="${RESEARCH_SERVICE_ACCOUNT:-toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 BUILD_SERVICE_ACCOUNT_NAME="${RESEARCH_BUILD_SERVICE_ACCOUNT_NAME:-toss-research-build}"
 BUILD_SERVICE_ACCOUNT="${BUILD_SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+BUILD_ARTIFACT_CONDITION="expression=resource.name.startsWith('projects/_/buckets/${BUCKET_NAME}/objects/builds/'),title=BuildArtifactsPrefix,description=Restrict Cloud Build to the builds prefix"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 NOTIFICATION_CHANNEL="${MONITORING_NOTIFICATION_CHANNEL:-}"
 
@@ -56,7 +57,12 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --condition=None
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
-  --role="roles/storage.objectCreator"
+  --role="roles/storage.objectCreator" \
+  --condition="${BUILD_ARTIFACT_CONDITION}"
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
+  --role="roles/storage.objectViewer" \
+  --condition="${BUILD_ARTIFACT_CONDITION}"
 gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member="serviceAccount:${BUILD_SERVICE_ACCOUNT}" \
   --role="roles/storage.bucketViewer"
