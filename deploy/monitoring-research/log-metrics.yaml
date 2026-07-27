@@ -31,6 +31,12 @@ distributions:
     field: quality_symbol_count
     unit: "1"
     explicit_bounds: [0, 1, 5, 10, 25, 50, 100, 250, 500]
+  - name: research_toss_collection_failure_count
+    description: Toss raw and adjusted collection failures per verified research run
+    event: research_reporting_summary
+    field: toss_collection_failure_count
+    unit: "1"
+    explicit_bounds: [0, 1, 2, 5, 10, 25, 50, 100]
   - name: research_toss_page_count
     description: Toss raw and adjusted pages per verified research run
     event: research_reporting_summary

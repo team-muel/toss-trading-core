@@ -60,6 +60,7 @@ Toss `adjusted=true` 일봉은 현재 분할 조정으로만 검증됐습니다.
 - OHLC·거래량·시점 유효성 오류 행 수
 - raw/split-adjusted coverage 불일치 행 수
 - 총 품질 오류 행 수
+- Toss raw·adjusted 수집 실패 요청 수
 - 검증 종목 수
 - Toss raw+adjusted 페이지 수
 - 검증 전 원천 산출물 수와 byte 크기
@@ -75,8 +76,9 @@ Toss `adjusted=true` 일봉은 현재 분할 조정으로만 검증됐습니다.
 Toss Trading - Operations, Data Quality, Strategy
 ```
 
-대시보드는 운영 성공·실패, 품질 오류, 종목 수, 수집량, 전략 수익률·CAGR,
-Sharpe·최대 낙폭, 최근 구조화 요약 로그를 표시합니다. 전략 metric은
+대시보드는 운영 성공·실패, Toss 수집 실패, 품질 오류, 종목 수, 수집량,
+전략 수익률·CAGR, Sharpe·최대 낙폭, 최근 구조화 요약 로그를 표시합니다.
+전략 metric은
 `strategy_state=available` 로그만 추출합니다.
 
 프로젝트 대시보드 목록:
@@ -113,7 +115,7 @@ public ACL이나 익명 웹사이트는 만들지 않습니다.
 ## 배포
 
 Cloud Shell에서 다음 명령은 BigQuery dataset/table/view, dataset IAM,
-17개 research log metric, 통합 Cloud Monitoring dashboard를
+18개 research log metric, 통합 Cloud Monitoring dashboard를
 idempotent하게 생성 또는 갱신합니다. 기존 경보는 삭제하지 않습니다.
 
 ```bash

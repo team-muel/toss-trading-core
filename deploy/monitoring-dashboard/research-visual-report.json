@@ -7,7 +7,7 @@
         "title": "통합 보고 체계",
         "text": {
           "format": "MARKDOWN",
-          "content": "## Toss Trading 통합 보고\n운영 상태, 데이터 품질, 검증된 전략 성과를 한 화면에서 봅니다.\n\n- **운영:** 기존 Foundation 6개와 research 5개 경보는 그대로 유지\n- **품질:** 실행별 오류 행, coverage, 종목 수, 수집량\n- **성과:** total-return 데이터와 불변 experiment가 있을 때만 표시\n\n전략 차트가 비어 있으면 손익 0이 아니라 **아직 검증 가능한 성과가 없음**을 뜻합니다."
+          "content": "## Toss Trading 통합 보고\n운영 상태, 데이터 품질, 검증된 전략 성과를 한 화면에서 봅니다.\n\n- **운영:** 기존 Foundation 6개와 research 5개 경보는 그대로 유지\n- **품질:** 실행별 수집 실패, 오류 행, coverage, 종목 수, 수집량\n- **성과:** total-return 데이터와 불변 experiment가 있을 때만 표시\n\n전략 차트가 비어 있으면 손익 0이 아니라 **아직 검증 가능한 성과가 없음**을 뜻합니다."
         }
       },
       {
@@ -41,6 +41,24 @@
           "timeSeriesQuery": {
             "timeSeriesFilter": {
               "filter": "metric.type=\"logging.googleapis.com/user/research_quality_symbol_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
+              "aggregation": {
+                "alignmentPeriod": "3600s",
+                "perSeriesAligner": "ALIGN_PERCENTILE_50",
+                "crossSeriesReducer": "REDUCE_MEAN"
+              }
+            }
+          },
+          "sparkChartView": {
+            "sparkChartType": "SPARK_LINE"
+          }
+        }
+      },
+      {
+        "title": "Toss 수집 실패 요청 (실행별)",
+        "scorecard": {
+          "timeSeriesQuery": {
+            "timeSeriesFilter": {
+              "filter": "metric.type=\"logging.googleapis.com/user/research_toss_collection_failure_count\" AND resource.type=\"gce_instance\" AND resource.labels.instance_id=\"__INSTANCE_ID__\"",
               "aggregation": {
                 "alignmentPeriod": "3600s",
                 "perSeriesAligner": "ALIGN_PERCENTILE_50",
