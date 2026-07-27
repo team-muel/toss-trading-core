@@ -181,3 +181,51 @@ tail -n 20 /home/seoje/toss-trading/research-runtime/research_automation.jsonl
 
 이 게이트를 해제하기 전에도 Toss 기반 데이터 최신화, 품질검사, GCS
 백업과 운영 경보는 계속 자동 실행됩니다.
+
+## 2026-07-27 운영 배포 확인
+
+현재 GCP 운영 배포는 다음 상태까지 실제 실행으로 확인했습니다.
+
+- 활성 릴리스: `383d9db`
+- Cloud Build: `99e904be-8559-46c3-a230-a6c433ddf803`, `SUCCESS`
+- 빌드 산출물:
+  `gs://toss-trading-core-lab-research-data/builds/99e904be-8559-46c3-a230-a6c433ddf803/toss_trading-0.1.0-py3-none-any.whl`
+- 로컬 및 VM 후보 검증: Python 테스트 134개 통과, 모든 shell script
+  ShellCheck 통과
+- 최종 daily 실행:
+  `daily-20260727T095831Z-383d9db`
+- GCS `latest-daily.json`: `ready_for_upload=true`,
+  `code_revision=383d9db`, `mode=daily`
+- 공급자 상태: Toss `collected`; Tiingo, FRED/ALFRED, SEC EDGAR는
+  승인·라이선스 게이트 때문에 의도대로 `skipped`
+- Foundation 수동 검증: snapshot, audit, 로컬 백업, GCS 백업 모두 성공;
+  `foundation_runner_ok`, `code_revision=383d9db`
+- Ops Agent: `active`; Cloud Logging에서 `research_automation_ok`와
+  `foundation_runner_ok` 수신 확인
+
+운영 감시 체계는 기존 요구를 그대로 보존합니다.
+
+- `toss-foundation.timer`: `OnUnitActiveSec=6h`, `active`, `enabled`
+- 기존 Foundation 경보 6개 유지
+- 연구 자동화 경보 5개 유지
+- 전체 Cloud Monitoring 경보 정책: 11개
+- research daily/weekly timer: 모두 `active`, `enabled`
+
+보안 및 권한 확인:
+
+- VM: `RUNNING`
+- VM 서비스 계정:
+  `toss-foundation-runner@toss-trading-core-lab.iam.gserviceaccount.com`
+- 기본 Compute 서비스 계정: 비활성화 상태
+- 기본 Compute 서비스 계정에 남아 있던 research bucket
+  `roles/storage.objectCreator` 권한 제거
+- 빌드 서비스 계정은 `BuildArtifactsPrefix` 조건으로 research bucket의
+  `builds/` prefix에만 객체 생성 가능
+- systemd 하드닝은 유지하며 Snap wrapper 대신 실제 Google Cloud CLI
+  경로를 사용
+- `config/default_policy.yaml`의 `live_orders_enabled=false` 유지
+
+첫 배포 검증 중 생성된 `daily-20260727T094237Z-unknown`은 불변 이력으로
+남아 있습니다. 압축 릴리스에 Git 메타데이터가 없어 revision이
+`unknown`이 된 원인을 수정했으며, 최신 상태 포인터와 이후 실행은
+검증된 릴리스 디렉터리 이름에서 revision을 자동 복구합니다.
