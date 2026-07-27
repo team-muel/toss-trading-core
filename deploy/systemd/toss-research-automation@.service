@@ -33,6 +33,7 @@ Environment=RESEARCH_LOCK_PATH=/home/seoje/toss-trading/research-runtime/researc
 Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/runtime/toss_api.lock
 Environment=RESEARCH_GCS_URI=gs://toss-trading-core-lab-research-data/research
 Environment=CLOUDSDK_CONFIG=/home/seoje/toss-trading/runtime/gcloud
+Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:/snap/google-cloud-cli/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python
 ExecStart=/home/seoje/toss-trading/current/scripts/run_research_automation_gcp.sh %i
 TimeoutStartSec=4h

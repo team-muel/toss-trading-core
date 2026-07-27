@@ -111,6 +111,12 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("ReadWritePaths=/home/seoje/toss-trading/runtime", service)
         self.assertIn("FOUNDATION_AUDIT_PROFILE=v0-empty-safe", service)
         self.assertIn("FOUNDATION_LOAD_GCP_SECRETS=1", service)
+        self.assertIn(
+            "Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:"
+            "/snap/google-cloud-cli/current/bin:",
+            service,
+        )
+        self.assertNotIn(":/snap/bin:", service)
         self.assertIn("OnUnitActiveSec=6h", timer)
         self.assertIn("Persistent=true", timer)
 

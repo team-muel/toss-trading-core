@@ -144,6 +144,16 @@ class ResearchAutomationTest(unittest.TestCase):
             installer,
         )
 
+        research_service = Path(
+            "deploy/systemd/toss-research-automation@.service"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:"
+            "/snap/google-cloud-cli/current/bin:",
+            research_service,
+        )
+        self.assertNotIn(":/snap/bin:", research_service)
+
         cloudbuild = Path("cloudbuild.yaml").read_text(encoding="utf-8")
         self.assertIn(
             "test -f src/toss_trading/runtime/rate_limit.py",
