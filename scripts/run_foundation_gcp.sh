@@ -23,6 +23,13 @@ if [[ -z "${CODE_REVISION}" ]] && command -v git >/dev/null 2>&1; then
   CODE_REVISION="$(git -C "${ROOT_DIR}" rev-parse --verify HEAD 2>/dev/null || true)"
 fi
 if [[ -z "${CODE_REVISION}" ]]; then
+  RESOLVED_ROOT="$(readlink -f "${ROOT_DIR}" 2>/dev/null || true)"
+  RELEASE_REVISION="$(basename "${RESOLVED_ROOT}")"
+  if [[ "${RELEASE_REVISION}" =~ ^[0-9a-f]{7,40}$ ]]; then
+    CODE_REVISION="${RELEASE_REVISION}"
+  fi
+fi
+if [[ -z "${CODE_REVISION}" ]]; then
   CODE_REVISION="unknown"
 fi
 export FOUNDATION_CODE_REVISION="${CODE_REVISION}"

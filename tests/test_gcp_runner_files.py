@@ -97,6 +97,13 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("secret_loader_loaded env=", loader)
         self.assertNotIn("echo \"${value}\"", loader)
 
+    def test_foundation_runner_recovers_revision_from_release_path(self):
+        runner = Path("scripts/run_foundation_gcp.sh").read_text(encoding="utf-8")
+
+        self.assertIn('readlink -f "${ROOT_DIR}"', runner)
+        self.assertIn('^[0-9a-f]{7,40}$', runner)
+        self.assertIn('CODE_REVISION="${RELEASE_REVISION}"', runner)
+
     def test_systemd_runner_is_read_only_and_hardened(self):
         service = Path("deploy/systemd/toss-foundation.service").read_text(
             encoding="utf-8"

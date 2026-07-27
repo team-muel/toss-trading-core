@@ -131,6 +131,9 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("RESEARCH_TIINGO_LICENSE_ACCEPTED", runner)
         self.assertIn("RESEARCH_FRED_SERIES_RIGHTS_APPROVED", runner)
         self.assertIn("RESEARCH_SEC_CONTACT_APPROVED", runner)
+        self.assertIn('readlink -f "${ROOT_DIR}"', runner)
+        self.assertIn('^[0-9a-f]{7,40}$', runner)
+        self.assertIn('CODE_REVISION="${RELEASE_REVISION}"', runner)
 
         installer = Path(
             "scripts/install_research_automation_vm.sh"
