@@ -216,6 +216,10 @@ PY
       gcloud alpha monitoring policies create \
         --project="${PROJECT_ID}" \
         --policy-from-file="${policy_path}"
+    else
+      gcloud alpha monitoring policies update "${existing}" \
+        --project="${PROJECT_ID}" \
+        --policy-from-file="${policy_path}"
     fi
   done
 else

@@ -240,6 +240,44 @@ class FoundationAccountStateTest(unittest.TestCase):
         ).fetchone()[0]
         self.assertEqual(detail_count, 1)
 
+    def test_snapshotter_binds_a_single_discovered_account(self):
+        class AutoBindingAdapter(FakeTossAdapter):
+            def __init__(self):
+                super().__init__()
+                self.credentials = TossCredentials(
+                    client_id="client",
+                    client_secret="secret",
+                    account_seq=None,
+                    base_url="https://example.invalid",
+                )
+                self.bound_account_seq = None
+
+            def with_account(self, account_seq):
+                self.bound_account_seq = account_seq
+                self.credentials = TossCredentials(
+                    client_id="client",
+                    client_secret="secret",
+                    account_seq=account_seq,
+                    base_url="https://example.invalid",
+                )
+                return self
+
+            def get_holdings(self):
+                if self.credentials.account_seq is None:
+                    raise RuntimeError("account-bound call requires account_seq")
+                return super().get_holdings()
+
+        ledger = AccountLedger()
+        ledger.init_schema()
+        fake = AutoBindingAdapter()
+        fake.ledger = ledger
+
+        result = FoundationSnapshotter(fake, ledger).snapshot()
+
+        self.assertEqual(result.explanation.account_seq, "1")
+        self.assertEqual(fake.bound_account_seq, "1")
+        ledger.close()
+
     def test_snapshotter_queries_buying_power_for_every_holding_currency(self):
         class MixedCurrencyFakeTossAdapter(FakeTossAdapter):
             def __init__(self):

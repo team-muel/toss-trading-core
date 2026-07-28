@@ -6,6 +6,7 @@ import math
 import statistics
 import uuid
 from dataclasses import asdict, dataclass
+from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable
@@ -72,6 +73,17 @@ def _number(value: str) -> float:
     if not result.is_finite() or result <= 0:
         raise ValueError(f"total-return index must be finite and positive: {value!r}")
     return float(result)
+
+
+def _available_on_or_before(value: str, decision_date: str) -> bool:
+    try:
+        available = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        decision = date.fromisoformat(decision_date)
+    except ValueError as exc:
+        raise ValueError(f"invalid point-in-time timestamp: {value!r}") from exc
+    if available.tzinfo is None or available.utcoffset() is None:
+        raise ValueError(f"available_at must include a timezone: {value!r}")
+    return available.astimezone(timezone.utc).date() <= decision
 
 
 def _is_month_end(dates: list[str], index: int) -> bool:
@@ -154,6 +166,15 @@ def run_dual_momentum_backtest(
     for index in range(1, len(dates)):
         current_date = dates[index]
         transaction_cost = 0.0
+        previous_date = dates[index - 1]
+        gross_return = sum(
+            weight
+            * (
+                panel[current_date][symbol] / panel[previous_date][symbol]
+                - 1.0
+            )
+            for symbol, weight in weights.items()
+        )
         if pending is not None:
             signal_date, scores, target = pending
             turnover = _turnover(weights, target)
@@ -171,16 +192,6 @@ def run_dual_momentum_backtest(
                 )
             )
             pending = None
-
-        previous_date = dates[index - 1]
-        gross_return = sum(
-            weight
-            * (
-                panel[current_date][symbol] / panel[previous_date][symbol]
-                - 1.0
-            )
-            for symbol, weight in weights.items()
-        )
         net_return = gross_return - transaction_cost
         equity *= 1.0 + net_return
         if equity <= 0:
@@ -199,7 +210,10 @@ def run_dual_momentum_backtest(
             old_date = dates[old_index]
             scores: dict[str, float] = {}
             for symbol in config.candidate_symbols:
-                if availability[(recent_date, symbol)][:10] > current_date:
+                if not _available_on_or_before(
+                    availability[(recent_date, symbol)],
+                    current_date,
+                ):
                     raise ValueError(
                         f"point-in-time violation for {symbol} on {current_date}"
                     )
@@ -243,12 +257,26 @@ def write_experiment_record(
 ) -> Path:
     """Persist a reproducible experiment record without mutating prior results."""
 
+    revision = code_revision.strip()
+    if not revision or revision.lower() == "unknown":
+        raise ValueError("an immutable code revision is required")
+    manifest_ids = sorted(
+        {item.strip() for item in data_manifest_ids if item.strip()}
+    )
+    if not manifest_ids:
+        raise ValueError("at least one data manifest id is required")
+    benchmarks = sorted(
+        {item.strip() for item in benchmark_names if item.strip()}
+    )
+    if not benchmarks:
+        raise ValueError("at least one benchmark name is required")
     payload = {
         "strategy": "broad_etf_dual_momentum_v1",
+        "input_adjustment": "total_return",
         "config": asdict(result.config),
-        "data_manifest_ids": sorted(set(data_manifest_ids)),
-        "code_revision": code_revision,
-        "benchmark_names": sorted(set(benchmark_names)),
+        "data_manifest_ids": manifest_ids,
+        "code_revision": revision,
+        "benchmark_names": benchmarks,
         "metrics": result.metrics,
         "rebalances": [asdict(item) for item in result.rebalances],
         "equity_curve": result.equity_curve,

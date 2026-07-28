@@ -11,8 +11,8 @@
 | Layer | Source | Role |
 | --- | --- | --- |
 | Execution/account truth | Toss Open API | 주문, 보유, buying power, sellable quantity, commissions |
-| Market/options/futures/corporate actions | Massive REST | options snapshot, dividends, splits, indices/futures 보조 |
-| Rates and release calendar | FRED | SOFR, Treasury yields, rate hurdle, release calendar |
+| Historical ETF total return | Tiingo EOD | raw와 배당·분할 반영 adjusted OHLCV |
+| Rates and release calendar | FRED/ALFRED | SOFR, Treasury yields, rate hurdle, point-in-time 관측값 |
 | Official event gate | SEC EDGAR | 8-K, 10-Q, 10-K, fund filings, CIK mapping |
 | ETF NAV/ROC | issuer parser | NAV, premium/discount, Section 19a, ROC 보조 |
 
@@ -20,6 +20,7 @@
 
 | Layer | Source | Role |
 | --- | --- | --- |
+| Market/options/futures/corporate actions | Massive REST | options snapshot, dividends, splits, indices/futures 보조 |
 | Realtime market/options/futures | Massive WebSocket | event-driven feature |
 | Shortability/options backup | Tradier | ETB list, ORATS-linked options chain, market session |
 | Faster event detection | SEC poller + issuer watch | filing/event gate 강화 |
@@ -31,6 +32,21 @@ Headline-news API는 1차 필수 구성요소가 아닙니다. 초기에는 공�
 ### Toss Open API
 
 Toss는 execution/account truth입니다. 외부 가격이나 corporate action이 들어와도 체결 후 포지션, 현금, 수수료, 세금, 결제예정일은 Toss snapshot과 내부 ledger로 다시 확정합니다.
+
+### Tiingo
+
+Tiingo EOD는 첫 전략 기준선에 필요한 미국 ETF 장기
+`raw`/`total_return` 일봉의 주 공급자입니다. API 약관 수락과 토큰 등록은
+사용자 승인 게이트이며, 승인 전에는 자동화가 provider를 건너뜁니다. Toss
+`adjusted=true`는 배당 포함 계약이 확인되지 않았으므로 Tiingo
+`total_return`을 대체하지 않습니다.
+
+주요 사용:
+
+- 장기 ETF total-return 일봉
+- 배당·분할 반영 adjusted OHLCV
+- Toss raw/split-adjusted 시계열 교차 검증
+- 재현 가능한 baseline과 benchmark 입력
 
 ### Massive
 
@@ -112,7 +128,8 @@ Tradier는 1차 필수 provider가 아닙니다. 옵션 체인, greeks, ETB list
 
 예시:
 
-- Massive WebSocket 실패 -> Massive REST snapshot -> feature 비활성화
+- Tiingo EOD stale/누락 -> total-return baseline 실행 차단
+- Massive WebSocket 실패 -> Massive REST snapshot -> 해당 feature 비활성화
 - SEC EDGAR 지연 -> event gate 보수화 -> 신규 매수 차단
 - issuer parser 실패 -> distribution filter 신규 매수 차단
 - options quote crossed -> option research signal 비활성화
@@ -143,9 +160,9 @@ Tradier는 1차 필수 provider가 아닙니다. 옵션 체인, greeks, ETB list
 3. Toss account/holdings/orders/buying_power adapter
 4. `raw_api_response`
 5. `source_health`
-6. Massive REST adapter
-7. Massive dividends/splits
-8. FRED adapter
+6. Tiingo EOD adapter와 라이선스 gate
+7. ETF corporate action 정규화
+8. FRED/ALFRED adapter
 9. SEC ticker-CIK map
 10. SEC submissions poller
 11. feature table
@@ -154,12 +171,13 @@ Tradier는 1차 필수 provider가 아닙니다. 옵션 체인, greeks, ETB list
 14. stale-data gate
 15. shadow live 2 weeks
 16. micro live
-17. Massive WebSocket
+17. Massive REST/WebSocket
 18. issuer NAV/ROC parser
 
 ## Sources
 
 - Toss Open API: `https://developers.tossinvest.com/llms.txt`
+- Tiingo API: `https://www.tiingo.com/documentation/end-of-day`
 - Massive REST/WebSocket docs: `https://massive.com/docs`
 - FRED API: `https://fred.stlouisfed.org/docs/api/fred/`
 - SEC EDGAR APIs: `https://www.sec.gov/search-filings/edgar-application-programming-interfaces`

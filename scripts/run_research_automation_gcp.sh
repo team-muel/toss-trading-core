@@ -33,7 +33,8 @@ if [[ -z "${CODE_REVISION}" ]]; then
   fi
 fi
 if [[ -z "${CODE_REVISION}" ]]; then
-  CODE_REVISION="unknown"
+  echo "immutable code revision could not be resolved" >&2
+  exit 78
 fi
 export FOUNDATION_CODE_REVISION="${CODE_REVISION}"
 
@@ -186,6 +187,7 @@ PROVIDER_STATES=("toss=collected")
   --code-revision "${CODE_REVISION}" \
   > "${REPORT_DIR}/toss-reference-collection.json"
 json_log "research_provider_ok" "toss" "collected" ""
+flock -u 8
 
 TIINGO_STATE="skipped_license_or_secret_gate"
 if [[ "${RESEARCH_TIINGO_LICENSE_ACCEPTED:-0}" == "1" ]] \
@@ -311,6 +313,7 @@ if ! "${PYTHON_BIN}" -m toss_trading.cli.research_reporting \
     "bigquery" \
     "failed" \
     "${BIGQUERY_DATASET}.${BIGQUERY_TABLE}"
+  json_log "research_automation_failed" "bigquery" "failed" "reporting_upload"
   exit 67
 fi
 json_log \

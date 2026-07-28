@@ -103,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     adapter = TossReadOnlyAdapter(load_toss_credentials_from_env())
     lake = DataLake(args.output_root)
     manifests = []
+    failures: list[dict[str, Any]] = []
 
     def store_result(dataset: str, result: Any, request: dict[str, Any]) -> None:
         retrieved = utc_now()
@@ -132,6 +133,16 @@ def main(argv: list[str] | None = None) -> int:
                 and exc.error.get("code") == "stock-not-found"
             ):
                 if len(batch) == 1:
+                    failures.append(
+                        {
+                            "dataset": dataset,
+                            "endpoint": endpoint,
+                            "symbol": batch[0],
+                            "status_code": exc.status_code,
+                            "code": exc.error.get("code"),
+                            "reason": "provider_symbol_unavailable",
+                        }
+                    )
                     return
                 midpoint = len(batch) // 2
                 store_resilient_batch(
@@ -174,6 +185,16 @@ def main(argv: list[str] | None = None) -> int:
                 exc.status_code == 404
                 and exc.error.get("code") == "stock-not-found"
             ):
+                failures.append(
+                    {
+                        "dataset": "stock-warnings",
+                        "endpoint": f"/api/v1/stocks/{symbol}/warnings",
+                        "symbol": symbol,
+                        "status_code": exc.status_code,
+                        "code": exc.error.get("code"),
+                        "reason": "provider_symbol_unavailable",
+                    }
+                )
                 continue
             raise
         store_result(
@@ -266,6 +287,20 @@ def main(argv: list[str] | None = None) -> int:
             },
         )
 
+    if failures:
+        retrieved = utc_now()
+        manifests.append(
+            _store(
+                lake,
+                dataset="reference-collection-failures",
+                body={"failures": failures},
+                request={"endpoints": "reference", "symbols": symbols},
+                retrieved_at=retrieved,
+                code_revision=args.code_revision,
+                license_tag=args.license_tag,
+            )
+        )
+
     print(
         json.dumps(
             {
@@ -273,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
                 "manifest_ids": [manifest.manifest_id for manifest in manifests],
                 "objects": len(manifests),
                 "symbols": symbols,
+                "failures": failures,
             },
             ensure_ascii=False,
             sort_keys=True,

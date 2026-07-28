@@ -118,11 +118,15 @@ class FoundationSnapshotter:
                 raise RuntimeError(
                     "requested account_seq is not present in the current Toss accounts response"
                 )
-            if adapter_account_seq and adapter_account_seq != resolved_account_seq:
+            if (
+                credentials is not None
+                and adapter_account_seq != resolved_account_seq
+            ):
                 if not hasattr(self.adapter, "with_account"):
                     raise RuntimeError("adapter account differs from requested account_seq")
                 self.adapter = self.adapter.with_account(resolved_account_seq)
-                self.adapter.run_id = run_id
+                if hasattr(self.adapter, "run_id"):
+                    self.adapter.run_id = run_id
 
             holdings_result = self.adapter.get_holdings()
             holdings = self.ledger.ingest_holdings(

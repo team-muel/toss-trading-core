@@ -6,8 +6,14 @@ from contextlib import redirect_stdout
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
-from toss_trading.cli.research_validate_bars import main as validate_bars_main
+from toss_trading.broker.toss import TossApiError
+from toss_trading.cli import research_collect_toss_reference
+from toss_trading.cli.research_validate_bars import (
+    main as validate_bars_main,
+    validate_parquet,
+)
 from toss_trading.research import DataLake
 from toss_trading.research.providers import (
     SecEdgarClient,
@@ -94,6 +100,84 @@ class FakeHttpResponse:
 
 
 class ResearchProviderTest(unittest.TestCase):
+    def test_toss_reference_records_unavailable_symbols_as_raw_evidence(self):
+        class ReferenceAdapter:
+            @staticmethod
+            def _result():
+                return FakeResult({"result": {}})
+
+            def _batch(self, symbols):
+                if "BAD" in symbols:
+                    raise TossApiError(
+                        endpoint="/test",
+                        status_code=404,
+                        body={"error": {"code": "stock-not-found"}},
+                    )
+                return self._result()
+
+            get_stocks = _batch
+            get_prices = _batch
+
+            def get_stock_warnings(self, symbol):
+                if symbol == "BAD":
+                    raise TossApiError(
+                        endpoint="/test",
+                        status_code=404,
+                        body={"error": {"code": "stock-not-found"}},
+                    )
+                return self._result()
+
+            def __getattr__(self, name):
+                if name.startswith("get_"):
+                    return lambda *args, **kwargs: self._result()
+                raise AttributeError(name)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            universe = Path(tmp) / "universe.csv"
+            universe.write_text(
+                "symbol,enabled\nGOOD,true\nBAD,true\n",
+                encoding="utf-8",
+            )
+            output = StringIO()
+            with (
+                patch.object(
+                    research_collect_toss_reference,
+                    "load_toss_credentials_from_env",
+                    return_value=object(),
+                ),
+                patch.object(
+                    research_collect_toss_reference,
+                    "TossReadOnlyAdapter",
+                    return_value=ReferenceAdapter(),
+                ),
+                patch.object(
+                    research_collect_toss_reference,
+                    "utc_now",
+                    return_value="2026-07-28T00:00:00+00:00",
+                ),
+                redirect_stdout(output),
+            ):
+                result = research_collect_toss_reference.main(
+                    [
+                        "--universe",
+                        str(universe),
+                        "--output-root",
+                        tmp,
+                        "--code-revision",
+                        "abc123",
+                    ]
+                )
+
+            payload = json.loads(output.getvalue())
+            self.assertEqual(result, 0)
+            self.assertEqual(len(payload["failures"]), 3)
+            self.assertIn("reference-collection-failures", payload["datasets"])
+            manifest_id = payload["manifest_ids"][-1]
+            manifests = list(
+                Path(tmp).glob(f"catalog/manifests/{manifest_id}.json")
+            )
+            self.assertEqual(len(manifests), 1)
+
     def test_toss_collection_paginates_and_stops_at_start_date(self):
         adapter = FakeTossAdapter()
         bundle = collect_toss_candle_bundle(
@@ -214,6 +298,50 @@ class ResearchProviderTest(unittest.TestCase):
                     0,
                 )
             self.assertTrue(json.loads(output.getvalue())["ok"])
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("duckdb") is not None,
+        "research extra is not installed",
+    )
+    def test_parquet_qa_counts_null_market_values_as_invalid(self):
+        import duckdb
+
+        with tempfile.TemporaryDirectory() as tmp:
+            parquet = Path(tmp) / "null-close.parquet"
+            connection = duckdb.connect()
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE bars AS SELECT
+                      'SPY'::VARCHAR AS symbol,
+                      TIMESTAMPTZ '2026-01-02 21:00:00+00' AS event_time_utc,
+                      TIMESTAMPTZ '2026-01-02 21:05:00+00' AS available_at,
+                      DATE '2026-01-02' AS exchange_local_date,
+                      '1d'::VARCHAR AS interval,
+                      100::DOUBLE AS open,
+                      102::DOUBLE AS high,
+                      99::DOUBLE AS low,
+                      NULL::DOUBLE AS close,
+                      1000::DOUBLE AS volume,
+                      'USD'::VARCHAR AS currency,
+                      'regular'::VARCHAR AS session,
+                      'raw'::VARCHAR AS adjustment,
+                      'test-provider'::VARCHAR AS source,
+                      'v1'::VARCHAR AS source_revision,
+                      'raw-1'::VARCHAR AS raw_manifest_id,
+                      'ok'::VARCHAR AS quality_flag
+                    """
+                )
+                connection.execute(
+                    f"COPY bars TO '{str(parquet).replace(chr(39), chr(39) * 2)}' "
+                    "(FORMAT PARQUET)"
+                )
+            finally:
+                connection.close()
+
+            result = validate_parquet(str(parquet))
+            self.assertFalse(result["ok"])
+            self.assertEqual(result["invalid_rows"], 1)
 
     def test_tiingo_token_is_sent_only_in_authorization_header(self):
         captured = {}

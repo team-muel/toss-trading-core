@@ -418,10 +418,145 @@ class CashLedgerTest(unittest.TestCase):
             self.assertEqual(row["amount_decimal"], "12.5")
             self.assertEqual(
                 ledger.conn.execute("PRAGMA user_version").fetchone()[0],
-                4,
+                5,
             )
         finally:
             ledger.close()
+
+    def test_market_bars_primary_key_includes_interval_and_adjustment(self):
+        self.ledger.conn.execute(
+            """
+            INSERT INTO market_bars (
+              ts, symbol, source, interval, adjustment, ingested_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            ("2026-01-02T21:00:00Z", "SPY", "toss", "1d", "raw", "now"),
+        )
+        self.ledger.conn.execute(
+            """
+            INSERT INTO market_bars (
+              ts, symbol, source, interval, adjustment, ingested_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "2026-01-02T21:00:00Z",
+                "SPY",
+                "toss",
+                "1d",
+                "split_adjusted",
+                "now",
+            ),
+        )
+        self.assertEqual(
+            self.ledger.conn.execute("SELECT COUNT(*) FROM market_bars").fetchone()[0],
+            2,
+        )
+
+    def test_market_bars_legacy_key_is_rebuilt_without_losing_rows(self):
+        ledger = AccountLedger()
+        try:
+            ledger.init_schema()
+            ledger.conn.executescript(
+                """
+                ALTER TABLE market_bars RENAME TO market_bars_v5;
+                CREATE TABLE market_bars AS
+                  SELECT * FROM market_bars_v5 WHERE 0;
+                DROP TABLE market_bars_v5;
+                INSERT INTO market_bars (
+                  ts, symbol, source, interval, adjustment, ingested_at,
+                  schema_version, quality_flag
+                ) VALUES (
+                  '2026-01-02T21:00:00Z', 'SPY', 'toss', '1d', 'raw',
+                  'now', 'market-bars-v1', 'ok'
+                );
+                PRAGMA user_version = 4;
+                """
+            )
+
+            ledger.init_schema()
+            ledger.conn.execute(
+                """
+                INSERT INTO market_bars (
+                  ts, symbol, source, interval, adjustment, ingested_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "2026-01-02T21:00:00Z",
+                    "SPY",
+                    "toss",
+                    "1d",
+                    "split_adjusted",
+                    "now",
+                ),
+            )
+
+            self.assertEqual(
+                ledger.conn.execute("SELECT COUNT(*) FROM market_bars").fetchone()[0],
+                2,
+            )
+            self.assertEqual(
+                ledger.conn.execute("PRAGMA user_version").fetchone()[0],
+                5,
+            )
+        finally:
+            ledger.close()
+
+    def test_cash_ledger_genesis_is_idempotent_but_immutable(self):
+        values = {
+            "account_seq": "1",
+            "currency": "USD",
+            "as_of": "2026-07-23T00:00:00Z",
+            "opening_balance": "1000",
+            "evidence_ref": "statement:2026-07-23",
+            "approved_by": "operator",
+        }
+        self.ledger.record_cash_ledger_genesis(**values)
+        self.ledger.record_cash_ledger_genesis(**values)
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.ledger.record_cash_ledger_genesis(
+                **{**values, "opening_balance": "999"}
+            )
+        row = self.ledger.conn.execute(
+            "SELECT opening_balance_decimal FROM cash_ledger_genesis"
+        ).fetchone()
+        self.assertEqual(row["opening_balance_decimal"], "1000")
+
+    def test_amount_based_order_does_not_require_quantity(self):
+        run_id = self.ledger.begin_snapshot_run(account_seq="1")
+        body = order_body(
+            order_id="amount-order",
+            side="BUY",
+            status="PENDING",
+            filled_quantity="0",
+            filled_amount="0",
+            commission="0",
+        )
+        body["result"]["quantity"] = None
+        body["result"]["orderAmount"] = "100"
+        raw = self.ledger.save_raw_api_response(
+            source="toss",
+            source_type="broker",
+            endpoint="/api/v1/orders/amount-order",
+            http_method="GET",
+            body=body,
+            account_seq="1",
+            status_code=200,
+            run_id=run_id,
+        )
+        self.assertEqual(
+            self.ledger.ingest_orders(
+                body,
+                account_seq="1",
+                raw_ref=raw,
+                run_id=run_id,
+            ),
+            1,
+        )
+        row = self.ledger.conn.execute(
+            "SELECT quantity_decimal, order_amount_decimal FROM broker_order_snapshot"
+        ).fetchone()
+        self.assertIsNone(row["quantity_decimal"])
+        self.assertEqual(row["order_amount_decimal"], "100")
 
 
 if __name__ == "__main__":

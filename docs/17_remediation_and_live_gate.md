@@ -6,6 +6,32 @@ The repository is read-only Foundation software. Paper, shadow, and live order
 submission remain blocked until the latest complete snapshot run proves the
 approved OpenAPI contract, account binding, reconciliation, and recovery path.
 
+Research collection, QA, reporting, and backtests may run in parallel because
+they use read-only data paths and cannot enable broker order submission.
+
+## Current Operating Gate — 2026-07-27
+
+- The VM points to release `a6c1471`; research automation on that release
+  completed successfully.
+- The latest successful Foundation evidence was emitted at 19:02 KST from
+  revision `383d9db`. The next six-hour timer run will provide the first
+  Foundation evidence from the newer release; this is a pending evidence item,
+  not a current service failure.
+- Foundation, research daily, and research weekly timers are active and
+  enabled. The Foundation unit remains `OnUnitActiveSec=6h` with
+  `Persistent=true`.
+- Ops Agent is active. Six Foundation alerts and five research alerts were
+  deployed at the recorded snapshot; the repository now defines a sixth
+  research alert for reporting-upload failures and requires redeployment.
+- All `live_trading_enabled` and `live_orders_enabled` policy entries remain
+  `false`.
+- The latest research run is upload-ready and has zero normalized data-quality
+  errors, but it is only partially collected: Toss returns `stock-not-found`
+  for `SPLG` in both raw and adjusted requests.
+- Strategy performance remains `not_available` until licensed, verified
+  total-return history is connected. An upload-ready run is not the same as a
+  strategy-ready dataset.
+
 ## Required evidence
 
 - clean-checkout CI imports the runtime package and passes tests
@@ -101,13 +127,23 @@ approved strategy universe and is not made strategy-eligible by this test.
 2. **Completed — Foundation regression review.** Universe/master mapping,
    source-health behavior, clean-checkout CI, and real v0/v1 backup raw replay
    passed on 2026-07-23.
-3. **P3 — Account and order safety.** Complete currency-scoped cash ledger,
-   opening balance, reserved cash, buying-power reconciliation, and EOD report.
-4. **P4 — External minimum data stack.** Begin Massive REST, corporate actions,
-   FRED, and SEC after the account/order safety gate.
-5. **P5 — Signal safety and paper planner.** Add feature/signal separation and
-   stale-data gates before any shadow operation.
-6. **P6 — Shadow/live gate.** Complete two weeks of shadow operation and obtain
+3. **P0 safety lane — Account and order safety.** Complete currency-scoped cash
+   ledger, independently evidenced opening balance, reserved cash,
+   buying-power reconciliation, and EOD report. This lane blocks every broker
+   order mode.
+4. **P1 research lane — Total-return and point-in-time data.** Activate Tiingo
+   only after license/token approval, resolve the `SPLG` mapping, and build
+   corporate-action and effective-date history. This read-only lane proceeds in
+   parallel with P0.
+5. **P1 research extension — Macro and filings.** Activate FRED/ALFRED after
+   series-rights approval and SEC after the outbound contact identity is
+   approved.
+6. **P2 — Strategy evidence.** Run the preregistered dual-momentum baseline,
+   benchmarks, cost stress, OOS, and walk-forward tests on verified
+   total-return inputs.
+7. **P3 — Signal safety and persistent paper.** Add feature/signal separation,
+   engine-scoped stale gates, and a realistic persistent simulator.
+8. **P6 — Shadow/live gate.** Complete two weeks of shadow operation and obtain
    a separate explicit approval before considering a micro-live run.
 
 Foundation v1 is complete. The repository and VM remain read-only while the

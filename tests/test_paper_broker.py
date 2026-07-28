@@ -100,6 +100,85 @@ class PaperBrokerTest(unittest.TestCase):
         self.assertGreater(Decimal(filled["filled_qty"]), Decimal("0"))
         broker.close()
 
+    def test_limit_order_waits_for_cross_and_never_fills_worse_than_limit(self):
+        broker = PaperBrokerAdapter(
+            initial_cash={"USD": "1000"},
+            commission_bps="0",
+            slippage_bps="100",
+        )
+        submitted = broker.submit_order(
+            {
+                "client_order_id": "limit-1",
+                "symbol": "SPY",
+                "side": "BUY",
+                "order_type": "LIMIT",
+                "limit_price": "100",
+                "qty": "1",
+                "order_amount": None,
+            }
+        )
+        self.assertEqual(submitted["order_type"], "LIMIT")
+        self.assertEqual(submitted["limit_price"], "100")
+
+        waiting = broker.process_order("limit-1", market_price="101")
+        self.assertEqual(waiting["status"], "paper_submitted")
+        self.assertEqual(waiting["filled_qty"], "0")
+        self.assertEqual(
+            broker.conn.execute("SELECT COUNT(*) FROM paper_fill").fetchone()[0],
+            0,
+        )
+
+        filled = broker.process_order("limit-1", market_price="99.5")
+        self.assertEqual(filled["status"], "paper_filled")
+        self.assertLessEqual(
+            Decimal(filled["average_filled_price"]),
+            Decimal("100"),
+        )
+        broker.close()
+
+    def test_existing_paper_database_is_migrated_for_limit_orders(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "legacy-paper.sqlite"
+            broker = PaperBrokerAdapter(db_path)
+            broker.conn.execute(
+                "ALTER TABLE paper_order RENAME TO old_paper_order"
+            )
+            broker.conn.execute(
+                """
+                CREATE TABLE paper_order (
+                  client_order_id TEXT PRIMARY KEY,
+                  payload_hash TEXT NOT NULL,
+                  payload_json TEXT NOT NULL,
+                  symbol TEXT NOT NULL,
+                  currency TEXT NOT NULL,
+                  side TEXT NOT NULL,
+                  quantity_decimal TEXT,
+                  order_amount_decimal TEXT,
+                  filled_quantity_decimal TEXT NOT NULL DEFAULT '0',
+                  filled_amount_decimal TEXT NOT NULL DEFAULT '0',
+                  commission_decimal TEXT NOT NULL DEFAULT '0',
+                  average_filled_price_decimal TEXT,
+                  status TEXT NOT NULL,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                )
+                """
+            )
+            broker.conn.execute("DROP TABLE old_paper_order")
+            broker.conn.commit()
+            broker.close()
+
+            migrated = PaperBrokerAdapter(db_path)
+            columns = {
+                row["name"]
+                for row in migrated.conn.execute(
+                    "PRAGMA table_info(paper_order)"
+                ).fetchall()
+            }
+            self.assertIn("order_type", columns)
+            self.assertIn("limit_price_decimal", columns)
+            migrated.close()
+
 
 if __name__ == "__main__":
     unittest.main()

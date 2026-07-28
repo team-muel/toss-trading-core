@@ -136,10 +136,11 @@ research_reporting_upload_ok
 research_reporting_upload_failed
 ```
 
-연구 자동화에는 기존 6개 Foundation 경보와 별도로 5개 경보를 둡니다.
+연구 자동화에는 기존 6개 Foundation 경보와 별도로 6개 경보를 둡니다.
 
 - runner 실패
 - 데이터 검증 실패
+- BigQuery reporting upload 실패
 - 23시간 동안 성공 heartbeat 없음
 - 23시간 동안 GCS 업로드 heartbeat 없음
 - 실행 lock 경합
@@ -187,48 +188,62 @@ tail -n 20 /home/seoje/toss-trading/research-runtime/research_automation.jsonl
 이 게이트를 해제하기 전에도 Toss 기반 데이터 최신화, 품질검사, GCS
 백업과 운영 경보는 계속 자동 실행됩니다.
 
-## 2026-07-27 운영 배포 확인
+## 2026-07-27 운영 배포 재검증
 
-현재 GCP 운영 배포는 다음 상태까지 실제 실행으로 확인했습니다.
+Cloud Shell, VM, private GCS, BigQuery, Cloud Logging과 dashboard를 다시
+대조한 현재 상태입니다.
 
-- 활성 릴리스: `383d9db`
-- Cloud Build: `99e904be-8559-46c3-a230-a6c433ddf803`, `SUCCESS`
-- 빌드 산출물:
-  `gs://toss-trading-core-lab-research-data/builds/99e904be-8559-46c3-a230-a6c433ddf803/toss_trading-0.1.0-py3-none-any.whl`
-- 로컬 및 VM 후보 검증: Python 테스트 134개 통과, 모든 shell script
-  ShellCheck 통과
-- 최종 daily 실행:
-  `daily-20260727T095831Z-383d9db`
+릴리스와 빌드:
+
+- VM 활성 릴리스: `a6c1471`
+- 로컬 branch HEAD: `72c352d`
+- 두 revision의 차이는 마지막 commit이 dashboard aligner와 관련 테스트·문서만
+  변경했기 때문이며 VM research runtime drift가 아닙니다.
+- 최종 dashboard 배포 Cloud Build:
+  `79fe84ec-36c6-494f-9390-16fbd103a889`, `SUCCESS`
+- Cloud Build 완료: `2026-07-27 21:22:23 KST`
+
+최신 daily 실행:
+
+- run: `daily-20260727T121203Z-a6c1471`
+- verified: `2026-07-27 21:12:46 KST`
+- BigQuery ingest: `2026-07-27 21:13:38 KST`
 - GCS `latest-daily.json`: `ready_for_upload=true`,
-  `code_revision=383d9db`, `mode=daily`
-- 공급자 상태: Toss `collected`; Tiingo, FRED/ALFRED, SEC EDGAR는
-  승인·라이선스 게이트 때문에 의도대로 `skipped`
-- Foundation 수동 검증: snapshot, audit, 로컬 백업, GCS 백업 모두 성공;
-  `foundation_runner_ok`, `code_revision=383d9db`
-- Ops Agent: `active`; Cloud Logging에서 `research_automation_ok`와
-  `foundation_runner_ok` 수신 확인
+  `code_revision=a6c1471`, `mode=daily`
+- Toss: `collected`; Tiingo, FRED/ALFRED, SEC EDGAR는 승인 gate에 의해
+  의도대로 `skipped`
+- 요청 종목 15개, 검증 종목 14개
+- raw page 14개, split-adjusted page 14개
+- `SPLG` raw/adjusted가 각각 `404 stock-not-found`, dashboard 수집 실패
+  요청은 정확히 2건
+- 중복·OHLC·거래량·시간·coverage 품질 오류는 0행
+- strategy 상태는 `not_available`,
+  이유는 `verified_total_return_history_not_available`
 
-운영 감시 체계는 기존 요구를 그대로 보존합니다.
+`ready_for_upload`는 허용된 provider 미지원 항목 외의 산출물이 QA와
+checksum을 통과했다는 뜻입니다. strategy-ready 또는 전 종목 완전 수집을
+뜻하지 않습니다.
 
-- `toss-foundation.timer`: `OnUnitActiveSec=6h`, `active`, `enabled`
-- 기존 Foundation 경보 6개 유지
-- 연구 자동화 경보 5개 유지
-- 전체 Cloud Monitoring 경보 정책: 11개
-- research daily/weekly timer: 모두 `active`, `enabled`
+운영 감시:
 
-보안 및 권한 확인:
-
-- VM: `RUNNING`
+- VM: `RUNNING`, 삭제 방지 활성
 - VM 서비스 계정:
   `toss-foundation-runner@toss-trading-core-lab.iam.gserviceaccount.com`
-- 기본 Compute 서비스 계정: 비활성화 상태
-- 기본 Compute 서비스 계정에 남아 있던 research bucket
-  `roles/storage.objectCreator` 권한 제거
-- 빌드 서비스 계정은 `BuildArtifactsPrefix` 조건으로 research bucket의
-  `builds/` prefix에만 객체 생성 가능
-- systemd 하드닝은 유지하며 Snap wrapper 대신 실제 Google Cloud CLI
-  경로를 사용
-- `config/default_policy.yaml`의 `live_orders_enabled=false` 유지
+- `toss-foundation.timer`: `OnUnitActiveSec=6h`, `Persistent=true`,
+  `active`, `enabled`
+- research daily/weekly timer: 모두 `active`, `enabled`
+- Ops Agent: `active`
+- 기존 Foundation 경보 6개와 research 경보 6개, 전체 12개 유지
+- research log metric 18개 유지
+- dashboard의 분포 metric aligner는 `ALIGN_SUM`만 사용
+- dashboard 실측값: 품질 오류 0, 검증 종목 14, 수집 실패 요청 2
+- 모든 `live_trading_enabled`와 `live_orders_enabled` 정책은 `false`
+
+마지막 Foundation 성공 로그는 `2026-07-27 19:02:29 KST`,
+`code_revision=383d9db`입니다. 그 뒤 VM symlink가 `a6c1471`로 바뀌었으므로
+다음 6시간 scheduled run이 새 릴리스의 첫 Foundation 성공 증거를 남길
+예정입니다. timer·service 실패는 관찰되지 않았고 마지막 journal도
+snapshot, audit, 로컬 백업과 GCS 백업 성공으로 종료됐습니다.
 
 첫 배포 검증 중 생성된 `daily-20260727T094237Z-unknown`은 불변 이력으로
 남아 있습니다. 압축 릴리스에 Git 메타데이터가 없어 revision이

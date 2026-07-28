@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import json
 import math
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,6 +40,9 @@ def _finite_number(value: Any, *, field: str) -> float:
 
 def strategy_snapshot(
     experiment_path: str | Path | None,
+    *,
+    expected_code_revision: str | None = None,
+    available_manifest_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     if experiment_path is None:
         return {
@@ -60,16 +65,69 @@ def strategy_snapshot(
     missing = [key for key in STRATEGY_METRIC_KEYS if key not in metrics]
     if missing:
         raise ValueError(f"strategy experiment lacks metrics: {missing}")
+    code_revision = payload.get("code_revision")
+    if (
+        not isinstance(code_revision, str)
+        or not code_revision.strip()
+        or code_revision.strip().lower() == "unknown"
+    ):
+        raise ValueError(f"strategy experiment has no immutable code revision: {path}")
+    if (
+        expected_code_revision is not None
+        and code_revision != expected_code_revision
+    ):
+        raise ValueError(f"strategy experiment code revision mismatch: {path}")
+    manifest_ids = payload.get("data_manifest_ids")
+    if (
+        not isinstance(manifest_ids, list)
+        or not manifest_ids
+        or any(not isinstance(item, str) or not item.strip() for item in manifest_ids)
+    ):
+        raise ValueError(f"strategy experiment has no data manifest lineage: {path}")
+    if available_manifest_ids is not None:
+        unknown = sorted(set(manifest_ids) - available_manifest_ids)
+        if unknown:
+            raise ValueError(
+                f"strategy experiment references unknown manifests: {unknown}"
+            )
+    if payload.get("input_adjustment") != "total_return":
+        raise ValueError(f"strategy experiment is not total-return based: {path}")
+    for field in ("config", "benchmark_names", "rebalances", "equity_curve"):
+        expected_type = dict if field == "config" else list
+        if not isinstance(payload.get(field), expected_type):
+            raise ValueError(f"strategy experiment has invalid {field}: {path}")
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(canonical).hexdigest()
+    expected_experiment_id = str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"experiment:{digest}")
+    )
+    if path.stem != expected_experiment_id:
+        raise ValueError(f"strategy experiment content address mismatch: {path}")
+    normalized_metrics = {
+        key: _finite_number(metrics[key], field=key)
+        for key in STRATEGY_METRIC_KEYS
+    }
+    if normalized_metrics["trading_days"] < 1:
+        raise ValueError("strategy trading_days must be positive")
+    if normalized_metrics["turnover"] < 0:
+        raise ValueError("strategy turnover must be nonnegative")
+    if normalized_metrics["annualized_volatility"] < 0:
+        raise ValueError("strategy annualized_volatility must be nonnegative")
+    if not -1 <= normalized_metrics["max_drawdown"] <= 0:
+        raise ValueError("strategy max_drawdown must be between -1 and 0")
     return {
         "state": "available",
         "reason": None,
         "strategy": strategy.strip(),
         "experiment_id": path.stem,
-        "code_revision": payload.get("code_revision"),
-        "metrics": {
-            key: _finite_number(metrics[key], field=key)
-            for key in STRATEGY_METRIC_KEYS
-        },
+        "code_revision": code_revision,
+        "data_manifest_ids": sorted(set(manifest_ids)),
+        "metrics": normalized_metrics,
     }
 
 
@@ -84,6 +142,7 @@ def build_research_summary(
     quality: dict[str, Any],
     artifacts: dict[str, Any],
     strategy_experiment: str | Path | None = None,
+    available_manifest_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     quality_error_rows = sum(
         int(quality[key])
@@ -124,7 +183,11 @@ def build_research_summary(
             "manifests": int(artifacts["manifests"]),
             "parquet_files": int(artifacts["parquet_files"]),
         },
-        "strategy": strategy_snapshot(strategy_experiment),
+        "strategy": strategy_snapshot(
+            strategy_experiment,
+            expected_code_revision=code_revision,
+            available_manifest_ids=available_manifest_ids,
+        ),
     }
     return summary
 

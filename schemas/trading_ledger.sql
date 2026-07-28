@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS market_bars (
   schema_version TEXT NOT NULL DEFAULT 'market-bars-v1',
   ingested_at TEXT NOT NULL,
   quality_flag TEXT NOT NULL DEFAULT 'ok',
-  PRIMARY KEY (ts, symbol, source)
+  PRIMARY KEY (ts, symbol, source, interval, adjustment)
 );
 
 CREATE TABLE IF NOT EXISTS instrument_master (
