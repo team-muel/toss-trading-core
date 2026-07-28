@@ -37,13 +37,14 @@
 비용과 복잡도를 줄이는 1차 조합:
 
 - Toss Open API: 실행, 계좌, 주문, holdings, buying power
-- Massive REST: 옵션/지수/선물/배당/분할 등 시장 및 corporate action 보조
-- FRED: 금리, SOFR, Treasury yield, release calendar
+- Tiingo EOD: 미국 ETF 장기 raw/adjusted/total-return 일봉
+- FRED/ALFRED: 금리, SOFR, Treasury yield, point-in-time 거시 시계열
 - SEC EDGAR: 8-K, 10-Q, 10-K, fund filing, CIK 기반 event gate
 - issuer parser: ETF NAV, premium/discount, ROC 공백 보완
 
 성능 우선 2차 확장:
 
+- Massive REST: 옵션/지수/선물/배당/분할 등 보조
 - Massive WebSocket
 - SEC 실시간 poller
 - Tradier 옵션 체인/ETB 보조

@@ -50,6 +50,21 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/21_gcp_research_data_automation.md` | GCP 기반 daily/weekly 수집·QA·백업·자체검증 자동화 |
 | `docs/22_visual_reporting.md` | 운영·데이터 품질·전략 성과 통합 시각 보고와 BigQuery 이력 |
 
+## Current Operating Snapshot — 2026-07-27
+
+- GCP VM의 활성 runtime release는 `a6c1471`이며 자동 주문은 모든 정책에서
+  비활성입니다.
+- `toss-foundation.timer`는 `OnUnitActiveSec=6h`, Foundation 경보 6개,
+  research 경보 5개를 유지합니다.
+- research daily/weekly timer, Ops Agent, private GCS, BigQuery 이력과 통합
+  Cloud Monitoring dashboard가 운영 중입니다.
+- 최신 daily 실행은 15개 ETF를 요청해 14개를 검증했습니다. `SPLG`는 Toss
+  provider에서 raw/adjusted 각각 `404 stock-not-found`였고, 검증된 14개
+  종목의 품질 오류는 0행입니다.
+- Toss 자료는 `raw`와 `split_adjusted/estimated`까지만 전략과 격리해
+  보관합니다. 승인된 total-return 공급자가 없으므로 전략 성과 상태는
+  `not_available`이며 이는 0% 수익을 뜻하지 않습니다.
+
 ## Repository Layout
 
 ```text
@@ -81,7 +96,9 @@ src/toss_trading/
 2. `data/universe.csv`와 `instrument_master`를 먼저 맞춥니다.
 3. `raw_api_response`, 내부 ledger, reconciliation을 구현합니다.
 4. paper 모드에서 주문 상태, 부분체결, 수수료, 세금, 결제예정일 반영을 검증합니다.
-5. 외부 피드는 Massive REST, FRED, SEC EDGAR 순서로 붙이고 WebSocket과 issuer parser는 뒤로 둡니다.
+5. 외부 피드는 Tiingo EOD total-return, FRED/ALFRED, SEC EDGAR 순서로
+   활성화하고 Massive·WebSocket·issuer parser는 전략 가설이 요구할 때
+   확장합니다.
 6. live는 shadow live 2주 이후 초소형 현물 주문만 허용합니다.
 
 Foundation snapshot 검증 명령:

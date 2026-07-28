@@ -88,6 +88,43 @@ class ResearchBacktestTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "point-in-time violation"):
             run_dual_momentum_backtest(points, config)
 
+    def test_next_day_close_execution_does_not_capture_prior_close_return(self):
+        config = DualMomentumConfig(
+            candidate_symbols=("SPY", "TLT"),
+            cash_symbol="SGOV",
+            lookback_trading_days=60,
+            skip_recent_trading_days=5,
+            top_k=1,
+            commission_bps=1,
+            slippage_bps=1,
+        )
+        points = synthetic_points()
+        baseline = run_dual_momentum_backtest(points, config)
+        first_effective_date = baseline.rebalances[0].effective_date
+        mutated = [
+            PricePoint(
+                date=point.date,
+                symbol=point.symbol,
+                total_return_index=(
+                    str(float(point.total_return_index) * 2)
+                    if point.date == first_effective_date and point.symbol == "SPY"
+                    else point.total_return_index
+                ),
+                available_at=point.available_at,
+            )
+            for point in points
+        ]
+
+        shocked = run_dual_momentum_backtest(mutated, config)
+
+        baseline_returns = dict(baseline.daily_returns)
+        shocked_returns = dict(shocked.daily_returns)
+        self.assertAlmostEqual(
+            shocked_returns[first_effective_date],
+            baseline_returns[first_effective_date],
+            places=12,
+        )
+
     def test_experiment_record_contains_data_and_code_provenance(self):
         result = run_dual_momentum_backtest(
             synthetic_points(),
@@ -108,6 +145,7 @@ class ResearchBacktestTest(unittest.TestCase):
             payload = json.loads(path.read_text(encoding="utf-8"))
 
             self.assertEqual(payload["code_revision"], "abc123")
+            self.assertEqual(payload["input_adjustment"], "total_return")
             self.assertEqual(
                 payload["data_manifest_ids"],
                 ["manifest-1", "manifest-2"],

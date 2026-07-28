@@ -4,7 +4,7 @@ import argparse
 import csv
 import json
 import os
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from toss_trading.research import DataLake
@@ -34,8 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--start-date", default="2004-01-01")
     parser.add_argument(
         "--end-date",
-        default=(date.today() - timedelta(days=1)).isoformat(),
-        help="Defaults to the previous calendar day to avoid an incomplete session.",
+        default=(datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat(),
+        help=(
+            "Defaults to the previous UTC calendar day so local timezones cannot "
+            "include an incomplete US session."
+        ),
     )
     parser.add_argument("--output-root", default="research_data")
     parser.add_argument("--license-tag", default=TIINGO_LICENSE_TAG)

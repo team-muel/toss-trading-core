@@ -76,6 +76,8 @@ class PaperBrokerAdapter:
               symbol TEXT NOT NULL,
               currency TEXT NOT NULL,
               side TEXT NOT NULL,
+              order_type TEXT NOT NULL DEFAULT 'MARKET',
+              limit_price_decimal TEXT,
               quantity_decimal TEXT,
               order_amount_decimal TEXT,
               filled_quantity_decimal TEXT NOT NULL DEFAULT '0',
@@ -99,6 +101,19 @@ class PaperBrokerAdapter:
             );
             """
         )
+        order_columns = {
+            row["name"]
+            for row in self.conn.execute("PRAGMA table_info(paper_order)").fetchall()
+        }
+        if "order_type" not in order_columns:
+            self.conn.execute(
+                "ALTER TABLE paper_order "
+                "ADD COLUMN order_type TEXT NOT NULL DEFAULT 'MARKET'"
+            )
+        if "limit_price_decimal" not in order_columns:
+            self.conn.execute(
+                "ALTER TABLE paper_order ADD COLUMN limit_price_decimal TEXT"
+            )
         for currency, balance in (initial_cash or {}).items():
             amount = _decimal(balance, name="initial cash")
             self.conn.execute(
@@ -122,6 +137,25 @@ class PaperBrokerAdapter:
             raise ValueError("paper order requires client_order_id, symbol, and currency")
         if side not in {"BUY", "SELL"}:
             raise ValueError("paper order side must be BUY or SELL")
+        limit_price = order.get("limit_price", order.get("price"))
+        order_type = str(
+            order.get("order_type")
+            or order.get("orderType")
+            or ("LIMIT" if limit_price is not None else "MARKET")
+        ).strip().upper()
+        if order_type not in {"MARKET", "LIMIT"}:
+            raise ValueError("paper order_type must be MARKET or LIMIT")
+        if order_type == "LIMIT" and limit_price is None:
+            raise ValueError("LIMIT paper order requires limit_price or price")
+        if order_type == "MARKET" and limit_price is not None:
+            raise ValueError("MARKET paper order must not include a limit price")
+        limit_price_decimal = (
+            _decimal(limit_price, name="limit_price")
+            if limit_price is not None
+            else None
+        )
+        if limit_price_decimal is not None and limit_price_decimal <= 0:
+            raise ValueError("limit_price must be positive")
         quantity = order.get("qty")
         amount = order.get("order_amount")
         if (quantity is None) == (amount is None):
@@ -143,44 +177,49 @@ class PaperBrokerAdapter:
             default=str,
         )
         payload_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-        existing = self.conn.execute(
-            "SELECT * FROM paper_order WHERE client_order_id = ?",
-            (client_order_id,),
-        ).fetchone()
-        if existing is not None:
+        now = _utc_now()
+        with self.conn:
+            self.conn.execute(
+                """
+                INSERT INTO paper_order (
+                  client_order_id, payload_hash, payload_json, symbol, currency,
+                  side, order_type, limit_price_decimal, quantity_decimal,
+                  order_amount_decimal, status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper_submitted', ?, ?)
+                ON CONFLICT(client_order_id) DO NOTHING
+                """,
+                (
+                    client_order_id,
+                    payload_hash,
+                    payload,
+                    symbol,
+                    currency,
+                    side,
+                    order_type,
+                    (
+                        _text(limit_price_decimal)
+                        if limit_price_decimal is not None
+                        else None
+                    ),
+                    (
+                        _text(quantity_decimal)
+                        if quantity_decimal is not None
+                        else None
+                    ),
+                    _text(amount_decimal) if amount_decimal is not None else None,
+                    now,
+                    now,
+                ),
+            )
+            existing = self.conn.execute(
+                "SELECT * FROM paper_order WHERE client_order_id = ?",
+                (client_order_id,),
+            ).fetchone()
             if existing["payload_hash"] != payload_hash:
                 raise ValueError(
                     "client_order_id conflicts with a different paper order payload"
                 )
-            return self._order_result(existing)
-        now = _utc_now()
-        self.conn.execute(
-            """
-            INSERT INTO paper_order (
-              client_order_id, payload_hash, payload_json, symbol, currency, side,
-              quantity_decimal, order_amount_decimal, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'paper_submitted', ?, ?)
-            """,
-            (
-                client_order_id,
-                payload_hash,
-                payload,
-                symbol,
-                currency,
-                side,
-                _text(quantity_decimal) if quantity_decimal is not None else None,
-                _text(amount_decimal) if amount_decimal is not None else None,
-                now,
-                now,
-            ),
-        )
-        self.conn.commit()
-        return self._order_result(
-            self.conn.execute(
-                "SELECT * FROM paper_order WHERE client_order_id = ?",
-                (client_order_id,),
-            ).fetchone()
-        )
+        return self._order_result(existing)
 
     def process_order(
         self,
@@ -203,10 +242,27 @@ class PaperBrokerAdapter:
         if market <= 0 or not Decimal("0") < ratio <= Decimal("1"):
             raise ValueError("market_price and fill_ratio must be positive")
         side = str(row["side"])
+        limit_price = (
+            Decimal(row["limit_price_decimal"])
+            if row["limit_price_decimal"] is not None
+            else None
+        )
+        if row["order_type"] == "LIMIT":
+            marketable = (
+                market <= limit_price if side == "BUY" else market >= limit_price
+            )
+            if not marketable:
+                return self._order_result(row)
         slip = self.slippage_bps / Decimal("10000")
         fill_price = market * (
             Decimal("1") + slip if side == "BUY" else Decimal("1") - slip
         )
+        if limit_price is not None:
+            fill_price = (
+                min(fill_price, limit_price)
+                if side == "BUY"
+                else max(fill_price, limit_price)
+            )
         already_qty = Decimal(row["filled_quantity_decimal"])
         already_amount = Decimal(row["filled_amount_decimal"])
         if row["quantity_decimal"] is not None:
@@ -385,6 +441,8 @@ class PaperBrokerAdapter:
             "symbol": row["symbol"],
             "currency": row["currency"],
             "side": row["side"],
+            "order_type": row["order_type"],
+            "limit_price": row["limit_price_decimal"],
             "qty": row["quantity_decimal"],
             "order_amount": row["order_amount_decimal"],
             "filled_qty": row["filled_quantity_decimal"],

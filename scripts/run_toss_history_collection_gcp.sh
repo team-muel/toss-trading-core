@@ -6,6 +6,7 @@ ROOT_DIR="${TOSS_HISTORY_ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && p
 OUTPUT_DIR="${TOSS_HISTORY_OUTPUT_DIR:-${ROOT_DIR}/output}"
 CURRENT_RELEASE="${FOUNDATION_CURRENT_RELEASE:-/home/seoje/toss-trading/current}"
 SECRET_LOADER="${TOSS_SECRET_LOADER:-${CURRENT_RELEASE}/scripts/load_gcp_secrets.sh}"
+TOSS_API_LOCK_PATH="${TOSS_API_LOCK_PATH:-/home/seoje/toss-trading/runtime/toss_api.lock}"
 
 mkdir -p "${OUTPUT_DIR}"
 rm -f \
@@ -35,6 +36,17 @@ export TOSS_CLIENT_SECRET_SECRET
 export TOSS_ACCOUNT_SEQ_SECRET
 export TOSS_API_ENV_SECRET
 export TOSS_BROKER_BASE_URL_SECRET
+
+if ! command -v flock >/dev/null 2>&1; then
+  printf 'toss_history_collector_error=flock_missing\n' >&2
+  exit 70
+fi
+mkdir -p "$(dirname "${TOSS_API_LOCK_PATH}")"
+exec 8>"${TOSS_API_LOCK_PATH}"
+if ! flock -n 8; then
+  printf 'toss_history_collector_error=toss_api_lock_busy\n' >&2
+  exit 75
+fi
 
 # shellcheck disable=SC1090
 source "${SECRET_LOADER}"

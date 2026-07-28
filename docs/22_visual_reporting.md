@@ -10,7 +10,8 @@
 
 보고 기능은 주문 경로와 완전히 분리되어 있습니다.
 `live_orders_enabled=false`, 6시간 `toss-foundation.timer`, 기존 Foundation
-경보 6개와 연구 경보 5개는 변경하지 않습니다.
+Foundation 경보 6개는 유지하고, 연구 경보는 BigQuery reporting upload
+실패 경보를 추가해 6개로 확장합니다.
 
 ## 구조
 
@@ -148,6 +149,35 @@ gcloud logging read \
   'resource.type="gce_instance" AND jsonPayload.event="research_reporting_summary"' \
   --project=toss-trading-core-lab --limit=5
 ```
+
+## 2026-07-27 실제 검증 스냅샷
+
+대시보드, GCS 최신 포인터, BigQuery deduplicated view와 Cloud Logging의
+동일 run을 대조했습니다.
+
+| 항목 | 확인값 |
+| --- | --- |
+| run | `daily-20260727T121203Z-a6c1471` |
+| verified | `2026-07-27 21:12:46 KST` |
+| upload | `ready_for_upload=true` |
+| Toss 상태 | `collected` |
+| 요청/검증 종목 | 15 / 14 |
+| raw/adjusted page | 14 / 14 |
+| 수집 실패 요청 | 2 (`SPLG` raw 1 + adjusted 1) |
+| 품질 오류 행 | 0 |
+| strategy 상태 | `not_available` |
+| strategy 이유 | `verified_total_return_history_not_available` |
+
+Cloud Monitoring 화면에서도 품질 오류 `0`, 검증 종목 `14`, Toss 수집
+실패 `2`를 정확히 표시합니다. BigQuery
+`latest_run_summaries`에는 같은 run의 `quality_error_rows=0`,
+`quality_symbol_count=14`, raw/adjusted failure count가 각각 1로
+기록됐습니다.
+
+현재 1시간 dashboard 구간에서 전략 차트가 비어 있고 최근 통합 로그에
+`strategy_state=not_available`가 보이는 것이 정상입니다. 이 상태는
+Tiingo 등 승인된 total-return 공급자 데이터와 불변 experiment가 연결되면
+자동으로 `available` metric과 성과 차트로 전환됩니다.
 
 ## 아직 비어 있는 부분의 의미
 

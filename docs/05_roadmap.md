@@ -1,12 +1,12 @@
 # Implementation Roadmap
 
-이 문서는 실제 작업 순서의 기준입니다. phase 이름보다 아래 18개 작업의 순서를 우선합니다.
+이 문서는 실제 작업 순서의 기준입니다. phase 이름보다 아래 19개 작업의 순서를 우선합니다.
 
 ## Current Sprint Goal
 
 Foundation v1과 초기 24시간 집중 관찰은 완료되었습니다. 현재 목표는
-Foundation P0 안전 결함 수정과 읽기 전용 데이터·리서치 기반의 병렬
-구축입니다.
+Foundation P0 안전 결함 수정과 total-return 연구 데이터 활성화를 두 개의
+독립된 작업선으로 병렬 진행하는 것입니다.
 
 질문은 하나입니다.
 
@@ -18,7 +18,7 @@ Foundation P0 안전 결함 수정과 읽기 전용 데이터·리서치 기반�
 데이터 수집과 백테스트는 계좌 안전 작업과 병렬로 진행합니다. 옵션,
 실시간 WebSocket, NAV, 뉴스는 첫 baseline이 필요로 할 때까지 미룹니다.
 
-## Current Status — 2026-07-25
+## Current Status — 2026-07-27
 
 Foundation v0 운영 기반은 완료되었습니다.
 
@@ -32,6 +32,16 @@ Foundation v0 운영 기반은 완료되었습니다.
 - GitHub `master` 보호와 필수 CI 검사 적용
 - GCP 연구 데이터 daily/weekly 자동화, 독립 실행 snapshot, QA 후 GCS
   승격, Cloud Logging/Monitoring 템플릿과 Cloud Build 검증 경로 구현
+- VM 활성 research release `a6c1471`, research daily/weekly timer와 Ops
+  Agent가 `active`, `enabled`
+- 최신 daily run `daily-20260727T121203Z-a6c1471`이 private GCS와
+  BigQuery에 기록되고 `research_automation_ok` 수신
+- 15개 ETF 중 14개 품질검사 통과, 중복·OHLC·시간·coverage 오류 0행
+- `SPLG`는 Toss에서 raw/adjusted 각각 404로 수집 실패하여 dashboard에
+  실패 요청 2건으로 표시
+- 18개 research log metric, 전체 경보 11개, 통합 dashboard 운영
+- total-return 공급자 미승인 상태이므로 strategy 상태는 의도대로
+  `not_available`
 
 Codex의 매일 19:00 KST 24시간 집중 관찰 자동화는 2026-07-23 사용자
 승인으로 중지했습니다. 이는 운영 감시 종료가 아닙니다.
@@ -51,15 +61,17 @@ Codex의 매일 19:00 KST 24시간 집중 관찰 자동화는 2026-07-23 사용�
 | 완료 | Foundation 1–5 회귀 점검 | universe/master 1:1, source-health/CI, 실제 v0·v1 GCS 백업 raw replay와 감사 통과 | 2026-07-23 완료 |
 | P0-A | 계좌·주문 안전장치 | 실패 run cash backfill, 초기잔고, 통화별 buying-power, 미해결 BLOCK, EOD 대사 | live 계속 차단 |
 | P0-B | 저장소 진실성 | branch/CI/release SHA, wheel resource smoke test, monitoring IaC | P0-A와 병렬 |
-| P1-A | 연구 데이터 운영 기반 | daily/weekly Toss 수집, immutable snapshot, manifest, Parquet, QA, GCS 백업 | 구현·배포 검증 단계 |
-| P1-B | 외부 공급자 활성화 | Tiingo 약관/키, FRED series 권리/키, SEC 연락처 승인 후 자동 gate 해제 | 사용자 승인 필요 |
-| P2 | baseline 백테스트 | 비용후 dual-momentum, benchmark, OOS/walk-forward | P1 데이터 |
+| 상시 운영 | 연구 데이터 자동화·보고 | daily/weekly timer, GCS, BigQuery, dashboard, research 경보 6개 유지 | 코드 반영, 재배포 필요 |
+| P1-A | total-return 공급자 활성화 | Tiingo 약관·키 승인 후 실제 raw/total-return 수집과 QA | 전략 검증의 현재 핵심 blocker |
+| P1-B | 데이터 정합성 보강 | `SPLG` vendor symbol 결정, point-in-time universe, corporate action·상장/폐지 이력 | P1-A와 병렬 |
+| P1-C | 거시·공시 활성화 | FRED series 권리·키, SEC 연락처 승인 후 자동 gate 해제 | 사용자 승인 필요 |
+| P2 | baseline 백테스트 | 비용후 dual-momentum, benchmark, OOS/walk-forward | 검증된 total-return 데이터 |
 | P3 | signal safety와 persistent paper | 강제 RiskDecision, stale gate, 체결·잔고·비용 simulator | P0/P2 |
 | P6 | shadow live 2주 후 초소형 live 검토 | 2주간 오류 없는 일일 보고와 별도 live 승인 | 모든 선행 gate |
 
 추가 주문은 필요하지 않습니다. 자동 주문, paper planner, 전략 신호는 다음 안전 단계가 구현될 때까지 계속 차단합니다.
 
-2026-07-23 P2 검증에서는 최신 v0 백업과 기존 v1 백업을 각각 임시
+2026-07-23 Foundation replay 검증에서는 최신 v0 백업과 기존 v1 백업을 각각 임시
 SQLite로 replay했습니다. 두 replay 모두 raw response hash 검증과 해당
 profile의 `foundation_audit=ok`를 통과했습니다. 이 과정에서 raw 계좌
 응답의 식별자 마스킹 때문에 replay 시 내부 `account_seq`를 복원해야 하는
@@ -82,9 +94,9 @@ P3의 첫 하위 작업으로 execution delta 기반 통화별 cash event와 OPE
 | 4 | `raw_api_response` 저장 구조 추가 | broker/vendor 공통 raw response table | 모든 API 응답 replay 가능 |
 | 5 | `source_health` 테이블 추가 | source health snapshot | stale/degraded/blocked 상태 표현 가능 |
 | 6 | 계좌·주문 안전장치 완성 | cash ledger + reserved cash + reconciliation report | 통화별 가용현금과 broker constraint 대사 |
-| 7 | Massive REST adapter 추가 | Massive REST raw response + normalized snapshot | secret 미노출, timestamp 정규화 |
-| 8 | Massive dividends/splits 저장 | dividend/split event tables | distribution/event gate 입력 가능 |
-| 9 | FRED adapter 추가 | rate series observations | rate hurdle batch refresh 가능 |
+| 7 | Tiingo EOD 활성화 | raw/total-return 일봉 + normalized snapshot | 약관·secret gate, timestamp·조정정책 검증 |
+| 8 | ETF corporate action 저장 | dividend/split/ticker-history event tables | point-in-time total-return 검증 가능 |
+| 9 | FRED/ALFRED 활성화 | revision-aware rate series observations | 권리 registry와 rate hurdle refresh 가능 |
 | 10 | SEC ticker-CIK map 추가 | ticker-CIK reference | SEC event를 universe에 연결 |
 | 11 | SEC submissions poller 추가 | filing event log | event gate 가능 |
 | 12 | feature table 추가 | feature snapshot table | feature와 signal 분리 |
@@ -93,7 +105,7 @@ P3의 첫 하위 작업으로 execution delta 기반 통화별 cash event와 OPE
 | 15 | stale-data gate 추가 | engine-scoped stale gate | stale source 의존 신호 차단 |
 | 16 | shadow live 2주 | live data + paper orders + daily report | broker/account/order 상태 안정 |
 | 17 | 초소형 live | micro live runbook | 수익보다 운영 정상성 검증 |
-| 18 | Massive WebSocket 추가 | realtime source with heartbeat | REST fallback과 slow-consumer 대응 |
+| 18 | Massive REST/WebSocket 추가 | options·실시간 source with heartbeat | 전략 가설, REST fallback과 slow-consumer 대응 |
 | 19 | issuer NAV/ROC parser 추가 | audit queue + parser output | ROC 불명 ETF 신규 매수 차단 |
 
 ## Sequencing Rules
@@ -101,7 +113,8 @@ P3의 첫 하위 작업으로 execution delta 기반 통화별 cash event와 OPE
 - 1-5번은 foundation입니다. 이 구간이 끝나기 전 전략 구현을 시작하지 않습니다.
 - 6번은 live 계좌·주문 safety입니다. live는 계속 차단하지만 읽기 전용
   데이터 수집과 백테스트는 기다리지 않고 병렬 진행합니다.
-- 7-11번은 external minimum stack입니다. WebSocket과 issuer parser보다 REST, FRED, SEC를 먼저 붙입니다.
+- 7-11번은 external minimum stack입니다. Tiingo total-return, FRED/ALFRED,
+  SEC를 먼저 활성화하고 Massive와 issuer parser는 뒤로 둡니다.
 - 12-15번은 signal safety입니다. feature와 signal decision을 분리하고 stale-data gate를 먼저 완성합니다.
 - 16-17번은 live gate입니다. shadow live 2주 없이 초소형 live로 넘어가지 않습니다.
 - 18-19번은 확장입니다. Massive WebSocket과 issuer NAV/ROC parser는 기본 장부와 source health가 안정된 뒤 추가합니다.

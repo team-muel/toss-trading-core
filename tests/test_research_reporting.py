@@ -1,11 +1,14 @@
 import json
+import hashlib
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 from scripts.render_bigquery_reporting import render_sql
 from scripts.render_research_dashboard import render_dashboard
 from scripts.render_research_log_metrics import render_log_metrics
+from scripts.render_research_monitoring import render as render_monitoring_policies
 from toss_trading.research.reporting import (
     STRATEGY_METRIC_KEYS,
     build_monitoring_event,
@@ -85,21 +88,39 @@ class ResearchReportingTest(unittest.TestCase):
 
     def test_verified_experiment_populates_strategy_metrics(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "experiment-1.json"
             metrics = {
-                key: float(index) / 10
-                for index, key in enumerate(STRATEGY_METRIC_KEYS, start=1)
+                "total_return": 0.1,
+                "cagr": 0.08,
+                "annualized_volatility": 0.12,
+                "sharpe_zero_rate": 0.7,
+                "max_drawdown": -0.05,
+                "calmar": 1.6,
+                "turnover": 0.4,
+                "trading_days": 252.0,
             }
-            path.write_text(
-                json.dumps(
-                    {
-                        "strategy": "broad_etf_dual_momentum_v1",
-                        "code_revision": "def456",
-                        "metrics": metrics,
-                    }
-                ),
-                encoding="utf-8",
+            payload = {
+                "strategy": "broad_etf_dual_momentum_v1",
+                "input_adjustment": "total_return",
+                "code_revision": "abc123",
+                "data_manifest_ids": ["manifest-1"],
+                "config": {},
+                "benchmark_names": ["SPY buy-and-hold"],
+                "metrics": metrics,
+                "rebalances": [],
+                "equity_curve": [["2026-01-01", 1.0]],
+            }
+            canonical = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            digest = hashlib.sha256(canonical).hexdigest()
+            experiment_id = str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"experiment:{digest}")
             )
+            path = Path(tmp) / f"{experiment_id}.json"
+            path.write_bytes(canonical)
 
             summary = sample_summary(experiment=path)
             row = summary_to_bigquery_row(summary)
@@ -113,12 +134,37 @@ class ResearchReportingTest(unittest.TestCase):
                 "broad_etf_dual_momentum_v1",
             )
 
+    def test_fabricated_strategy_experiment_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fabricated.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "strategy": "fabricated",
+                        "metrics": {
+                            key: 0.1 for key in STRATEGY_METRIC_KEYS
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "code revision"):
+                sample_summary(experiment=path)
+
     def test_reporting_infrastructure_templates_render(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             metric_paths = render_log_metrics(
                 source=Path("deploy/monitoring-research/log-metrics.yaml"),
                 output_dir=root / "metrics",
+            )
+            policy_paths = render_monitoring_policies(
+                source_dir=Path("deploy/monitoring-research"),
+                output_dir=root / "policies",
+                instance_id="654321",
+                notification_channel=(
+                    "projects/project-1/notificationChannels/channel-1"
+                ),
             )
             dashboard = render_dashboard(
                 source=Path(
@@ -141,6 +187,7 @@ class ResearchReportingTest(unittest.TestCase):
             )
 
             self.assertEqual(len(metric_paths), 18)
+            self.assertEqual(len(policy_paths), 6)
             failure_metric = json.loads(
                 (
                     root

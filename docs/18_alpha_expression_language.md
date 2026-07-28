@@ -18,7 +18,7 @@ BRAIN) 관례를 따르되, 산출물은 이 저장소의 기존 `Signal`과 `Ri
 | `Signal.raw_score` | raw alpha value | `alpha/expression.py` |
 | `Signal.adjusted_score` | neutralized alpha value | `operators.group_neutralize` |
 | `Signal.target_weight` | position weight (post-truncation) | `operators.truncate` |
-| Engine Matrix (`docs/02`) | alpha expression 카탈로그 | `alpha/__init__.py` |
+| Engine Matrix (`docs/02_strategy_engines.md`) | alpha expression 카탈로그 | `alpha/__init__.py` |
 | RiskHub 게이트 | simulation constraints | `SimulationSettings` |
 | ALLOW/REDUCE/BLOCK | discretized alpha → BUY/SELL/drop | `to_signals` |
 | (기존에 없던 것) | operator library | `alpha/operators.py` |
@@ -76,7 +76,7 @@ in-sample 적합만으로 채택하지 않고 out-of-sample 확인을 요구합�
 
 ## First Datafield — Naver Search HUB (KOR)
 
-`docs/12`의 외부 스택(Massive·FRED·SEC)은 전부 미국 시장 전용입니다. 그래서 KOSPI/KOSDAQ
+`docs/12_external_data_feeds.md`의 외부 스택(Tiingo·Massive·FRED·SEC)은 전부 미국 시장 전용입니다. 그래서 KOSPI/KOSDAQ
 종목은 Toss 시세 외에 이벤트·심리·관심도 피드가 없습니다. `alpha/datafields/naver_sentiment.py`가
 그 **국내 데이터 공백**을 research-only로 채웁니다.
 

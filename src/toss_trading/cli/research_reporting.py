@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -13,11 +14,48 @@ from toss_trading.research.reporting import (
 
 
 def _read_summary(path: str | Path) -> dict[str, Any]:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    summary_path = Path(path).resolve()
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("reporting summary must be a JSON object")
     if payload.get("schema_version") != "research-visual-report-v1":
         raise ValueError("unsupported reporting summary schema")
+    if payload.get("ready_for_upload") is not True:
+        raise ValueError("reporting summary is not upload-ready")
+    run_root = summary_path.parent.parent
+    status_path = run_root / "run-status.json"
+    checksum_path = run_root / "SHA256SUMS"
+    if not status_path.is_file() or not checksum_path.is_file():
+        raise ValueError("verified run status and checksums are required")
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    if status.get("ready_for_upload") is not True:
+        raise ValueError("research run is not upload-ready")
+    expected_summary = status.get("reporting", {}).get("summary")
+    if expected_summary != summary_path.relative_to(run_root).as_posix():
+        raise ValueError("run status points to a different reporting summary")
+    for field in ("run_id", "code_revision", "verified_at"):
+        if status.get(field) != payload.get(field):
+            raise ValueError(f"run status and reporting summary disagree on {field}")
+
+    checked_paths: set[str] = set()
+    for line in checksum_path.read_text(encoding="utf-8").splitlines():
+        digest, separator, relative = line.partition("  ")
+        if not separator or len(digest) != 64 or relative in checked_paths:
+            raise ValueError("invalid or duplicate SHA256SUMS entry")
+        checked_paths.add(relative)
+        artifact = (run_root / relative).resolve()
+        try:
+            artifact.relative_to(run_root)
+        except ValueError as exc:
+            raise ValueError("SHA256SUMS entry escapes the research run") from exc
+        if not artifact.is_file():
+            raise ValueError(f"checksummed artifact is missing: {relative}")
+        actual = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        if actual != digest:
+            raise ValueError(f"checksummed artifact was modified: {relative}")
+    summary_relative = summary_path.relative_to(run_root).as_posix()
+    if summary_relative not in checked_paths or "run-status.json" not in checked_paths:
+        raise ValueError("SHA256SUMS does not cover reporting and run status")
     return payload
 
 

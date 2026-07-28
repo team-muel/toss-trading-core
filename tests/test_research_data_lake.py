@@ -59,13 +59,67 @@ class ResearchDataLakeTest(unittest.TestCase):
                 request={"symbol": "SPY"},
                 license_tag="test-only",
                 code_revision="abc123",
-                retrieved_at="2026-01-02T21:06:00+00:00",
+                retrieved_at="2026-01-03T21:06:00+00:00",
             )
 
             self.assertEqual(first.manifest_id, second.manifest_id)
             self.assertEqual(first.request_metadata, {"symbol": "SPY"})
             self.assertEqual(lake.manifests(layer="bronze"), [first])
             self.assertTrue((Path(tmp) / first.relative_path).is_file())
+
+    def test_raw_request_metadata_redacts_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = DataLake(tmp).store_raw(
+                source="provider",
+                dataset="daily-bars",
+                body={"rows": []},
+                media_type="application/json",
+                schema_version="v1",
+                available_at="2026-01-02T21:05:00+00:00",
+                request={
+                    "symbol": "SPY",
+                    "authorization": "Bearer secret",
+                    "nested": {"api_key": "secret-key"},
+                },
+                license_tag="test-only",
+                code_revision="abc123",
+                retrieved_at="2026-01-02T21:06:00+00:00",
+            )
+            self.assertEqual(manifest.request_metadata["symbol"], "SPY")
+            self.assertEqual(
+                manifest.request_metadata["authorization"],
+                "[REDACTED]",
+            )
+            self.assertEqual(
+                manifest.request_metadata["nested"]["api_key"],
+                "[REDACTED]",
+            )
+
+    def test_market_bar_timestamps_require_timezones(self):
+        row = market_bar()
+        invalid = MarketBar(
+            **{
+                **row.__dict__,
+                "available_at": "2026-01-02T21:05:00",
+            }
+        )
+        with self.assertRaisesRegex(ValueError, "timezone"):
+            validate_market_bars([invalid])
+
+    def test_data_lake_rejects_unknown_code_revision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(ValueError, "immutable code revision"):
+                DataLake(tmp).store_raw(
+                    source="provider",
+                    dataset="daily-bars",
+                    body={"rows": []},
+                    media_type="application/json",
+                    schema_version="v1",
+                    available_at="2026-01-02T21:05:00+00:00",
+                    request={"symbol": "SPY"},
+                    license_tag="test-only",
+                    code_revision="unknown",
+                )
 
     def test_market_bar_quality_gates_reject_duplicates_and_bad_ohlc(self):
         row = market_bar()

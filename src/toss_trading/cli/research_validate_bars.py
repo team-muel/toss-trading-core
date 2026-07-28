@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from typing import Iterable
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -18,8 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+def validate_parquet(
+    parquet: str | list[str],
+    *,
+    expected_symbols: Iterable[str] = (),
+    required_adjustments: Iterable[str] = (),
+) -> dict:
     try:
         import duckdb
     except ImportError as exc:
@@ -30,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     connection = duckdb.connect()
     try:
         connection.read_parquet(
-            args.parquet,
+            parquet,
             union_by_name=True,
         ).create_view("bars")
         summary_rows = connection.execute(
@@ -63,7 +68,29 @@ def main(argv: list[str] | None = None) -> int:
             """
             SELECT COUNT(*)
             FROM bars
-            WHERE open <= 0
+            WHERE symbol IS NULL
+               OR TRIM(symbol) = ''
+               OR event_time_utc IS NULL
+               OR available_at IS NULL
+               OR exchange_local_date IS NULL
+               OR interval IS NULL
+               OR source IS NULL
+               OR TRIM(source) = ''
+               OR adjustment IS NULL
+               OR currency IS NULL
+               OR TRIM(currency) = ''
+               OR quality_flag IS NULL
+               OR raw_manifest_id IS NULL
+               OR TRIM(raw_manifest_id) = ''
+               OR open IS NULL
+               OR high IS NULL
+               OR low IS NULL
+               OR close IS NULL
+               OR volume IS NULL
+               OR interval NOT IN ('1d', '1h', '1m')
+               OR adjustment NOT IN ('raw', 'split_adjusted', 'total_return')
+               OR quality_flag NOT IN ('ok', 'estimated', 'stale', 'blocked')
+               OR open <= 0
                OR high <= 0
                OR low <= 0
                OR close <= 0
@@ -146,12 +173,14 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         connection.close()
 
-    expected_symbols = {symbol.strip().upper() for symbol in args.expected_symbol}
-    required_adjustments = {
-        adjustment.strip() for adjustment in args.require_adjustment
+    expected_symbol_set = {
+        symbol.strip().upper() for symbol in expected_symbols
     }
-    missing_symbols = sorted(expected_symbols - symbols)
-    missing_adjustments = sorted(required_adjustments - adjustments)
+    required_adjustment_set = {
+        adjustment.strip() for adjustment in required_adjustments
+    }
+    missing_symbols = sorted(expected_symbol_set - symbols)
+    missing_adjustments = sorted(required_adjustment_set - adjustments)
     coverage_mismatch_rows = sum(
         missing_raw + missing_adjusted
         for _, _, missing_raw, missing_adjusted in coverage_rows
@@ -213,8 +242,18 @@ def main(argv: list[str] | None = None) -> int:
         ],
         "symbols": sorted(symbols),
     }
+    return result
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    result = validate_parquet(
+        args.parquet,
+        expected_symbols=args.expected_symbol,
+        required_adjustments=args.require_adjustment,
+    )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0 if ok else 1
+    return 0 if result["ok"] else 1
 
 
 if __name__ == "__main__":

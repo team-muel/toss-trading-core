@@ -189,3 +189,23 @@ Tiingo는 주 공급자로 선정했지만 계정 약관 수락과
 않았다. SEC는 개인 연락처를 외부 전송하지 않는 URL형 User-Agent로 시도했을 때
 403이어서, 사용자가 SEC에 보낼 연락 이메일을 명시적으로 승인하기 전까지
 중단했다.
+
+## 2026-07-27 자동화된 최신 수집 확인
+
+daily 자동화의 최신 상태는 초기 장기 backfill 결과와 분리해 해석한다.
+이번 run은 최근 45일 갱신 범위이며 다음 증거를 private GCS, BigQuery,
+Cloud Logging에서 서로 대조했다.
+
+- run: `daily-20260727T121203Z-a6c1471`
+- verified: `2026-07-27 21:12:46 KST`
+- 요청 15개, 검증 14개
+- raw page 14개, split-adjusted page 14개
+- `SPLG`: raw와 adjusted 각각 `404 stock-not-found`
+- 중복, OHLC·거래량·시간, raw/adjusted coverage 오류: 모두 0행
+- Toss provider: `collected`
+- Tiingo, FRED/ALFRED, SEC EDGAR: 승인 gate에 의해 `skipped`
+- strategy: `not_available`
+
+`ready_for_upload=true`는 허용된 `SPLG` 미지원 오류를 제외한 산출물이
+checksum·정규화·QA·백업 조건을 통과했다는 뜻이다. 배당 포함
+total-return 데이터가 확보됐다는 뜻도, 전략이 검증됐다는 뜻도 아니다.

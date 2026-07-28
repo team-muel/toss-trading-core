@@ -395,6 +395,79 @@ class AccountLedger:
                 """
             )
             self.conn.execute("PRAGMA user_version = 4")
+            version = 4
+        if version < 5:
+            primary_key = [
+                row["name"]
+                for row in sorted(
+                    self.conn.execute("PRAGMA table_info(market_bars)").fetchall(),
+                    key=lambda row: row["pk"] or 999,
+                )
+                if row["pk"]
+            ]
+            if primary_key != [
+                "ts",
+                "symbol",
+                "source",
+                "interval",
+                "adjustment",
+            ]:
+                try:
+                    self.conn.executescript(
+                        """
+                    BEGIN IMMEDIATE;
+                    ALTER TABLE market_bars RENAME TO market_bars_v4;
+                    CREATE TABLE market_bars (
+                      ts TEXT NOT NULL,
+                      available_at TEXT,
+                      source_ts TEXT,
+                      exchange_local_date TEXT,
+                      interval TEXT NOT NULL DEFAULT '1d',
+                      symbol TEXT NOT NULL,
+                      venue TEXT,
+                      currency TEXT,
+                      session_label TEXT,
+                      source_timezone TEXT,
+                      adjustment TEXT NOT NULL DEFAULT 'raw',
+                      open REAL,
+                      high REAL,
+                      low REAL,
+                      close REAL,
+                      volume REAL,
+                      source TEXT NOT NULL,
+                      source_revision TEXT,
+                      raw_manifest_id TEXT,
+                      schema_version TEXT NOT NULL DEFAULT 'market-bars-v1',
+                      ingested_at TEXT NOT NULL,
+                      quality_flag TEXT NOT NULL DEFAULT 'ok',
+                      PRIMARY KEY (ts, symbol, source, interval, adjustment)
+                    );
+                    INSERT INTO market_bars (
+                      ts, available_at, source_ts, exchange_local_date, interval,
+                      symbol, venue, currency, session_label, source_timezone,
+                      adjustment, open, high, low, close, volume, source,
+                      source_revision, raw_manifest_id, schema_version,
+                      ingested_at, quality_flag
+                    )
+                    SELECT
+                      ts, available_at, source_ts, exchange_local_date, interval,
+                      symbol, venue, currency, session_label, source_timezone,
+                      adjustment, open, high, low, close, volume, source,
+                      source_revision, raw_manifest_id, schema_version,
+                      ingested_at, quality_flag
+                    FROM market_bars_v4;
+                    DROP TABLE market_bars_v4;
+                    COMMIT;
+                    """
+                    )
+                except Exception:
+                    if self.conn.in_transaction:
+                        self.conn.rollback()
+                    raise
+            self.conn.execute(
+                "DROP INDEX IF EXISTS uq_market_bars_point_in_time"
+            )
+            self.conn.execute("PRAGMA user_version = 5")
 
     def begin_snapshot_run(
         self,
@@ -492,32 +565,38 @@ class AccountLedger:
         """
 
         request_hash = _json_hash(request_payload)
-        row = self.conn.execute(
-            """
-            SELECT account_seq, request_hash
-            FROM client_order_id_registry
-            WHERE client_order_id = ?
-            """,
-            (client_order_id,),
-        ).fetchone()
-        if row is not None:
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO client_order_id_registry (
+                  client_order_id, account_seq, first_used_at,
+                  reuse_forbidden, request_hash
+                ) VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(client_order_id) DO NOTHING
+                """,
+                (client_order_id, account_seq, utc_now(), request_hash),
+            )
+            if cursor.rowcount == 1:
+                return False
+            row = self.conn.execute(
+                """
+                SELECT account_seq, request_hash
+                FROM client_order_id_registry
+                WHERE client_order_id = ?
+                """,
+                (client_order_id,),
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("client_order_id reservation was lost")
             if row["account_seq"] != account_seq:
                 raise ValueError(
                     "client_order_id is already reserved for a different account"
                 )
             if row["request_hash"] == request_hash:
                 return True
-            raise ValueError("client_order_id is already reserved for a different payload")
-        self.conn.execute(
-            """
-            INSERT INTO client_order_id_registry (
-              client_order_id, account_seq, first_used_at, reuse_forbidden, request_hash
-            ) VALUES (?, ?, ?, 1, ?)
-            """,
-            (client_order_id, account_seq, utc_now(), request_hash),
-        )
-        self.conn.commit()
-        return False
+            raise ValueError(
+                "client_order_id is already reserved for a different payload"
+            )
 
     def save_raw_api_response(
         self,
@@ -840,8 +919,10 @@ class AccountLedger:
             )
             commission_decimal = _decimal_text(_get(execution, "commission"))
             tax_decimal = _decimal_text(_get(execution, "tax"))
-            if quantity_decimal is None:
-                raise ValueError("order quantity must be a decimal")
+            if quantity_decimal is None and order_amount_decimal is None:
+                raise ValueError(
+                    "order must contain a decimal quantity or order amount"
+                )
             rows.append(
                 (
                     str(uuid.uuid4()),
@@ -855,7 +936,7 @@ class AccountLedger:
                     _get(item, "orderType", "order_type"),
                     _get(item, "timeInForce", "time_in_force"),
                     status,
-                    float(quantity_decimal),
+                    float(quantity_decimal) if quantity_decimal is not None else None,
                     float(order_amount_decimal) if order_amount_decimal is not None else None,
                     float(price_decimal) if price_decimal is not None else None,
                     float(filled_qty_decimal) if filled_qty_decimal is not None else None,
@@ -1416,32 +1497,49 @@ class AccountLedger:
         normalized_currency = currency.strip().upper()
         if not normalized_currency:
             raise ValueError("currency is required")
-        self.conn.execute(
-            """
-            INSERT INTO cash_ledger_genesis (
-              account_seq, currency, as_of, opening_balance,
-              opening_balance_decimal, evidence_ref, approved_by, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(account_seq, currency) DO UPDATE SET
-              as_of = excluded.as_of,
-              opening_balance = excluded.opening_balance,
-              opening_balance_decimal = excluded.opening_balance_decimal,
-              evidence_ref = excluded.evidence_ref,
-              approved_by = excluded.approved_by,
-              created_at = excluded.created_at
-            """,
-            (
-                account_seq,
-                normalized_currency,
-                as_of,
-                float(Decimal(amount_text)),
-                amount_text,
-                evidence_ref,
-                approved_by,
-                utc_now(),
-            ),
+        values = (
+            account_seq,
+            normalized_currency,
+            as_of,
+            float(Decimal(amount_text)),
+            amount_text,
+            evidence_ref,
+            approved_by,
+            utc_now(),
         )
-        self.conn.commit()
+        with self.conn:
+            cursor = self.conn.execute(
+                """
+                INSERT INTO cash_ledger_genesis (
+                  account_seq, currency, as_of, opening_balance,
+                  opening_balance_decimal, evidence_ref, approved_by, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(account_seq, currency) DO NOTHING
+                """,
+                values,
+            )
+            if cursor.rowcount == 1:
+                return
+            existing = self.conn.execute(
+                """
+                SELECT as_of, opening_balance_decimal, evidence_ref, approved_by
+                FROM cash_ledger_genesis
+                WHERE account_seq = ? AND currency = ?
+                """,
+                (account_seq, normalized_currency),
+            ).fetchone()
+            if existing is None:
+                raise RuntimeError("cash ledger genesis reservation was lost")
+            if (
+                existing["as_of"] == as_of
+                and existing["opening_balance_decimal"] == amount_text
+                and existing["evidence_ref"] == evidence_ref
+                and existing["approved_by"] == approved_by
+            ):
+                return
+            raise ValueError(
+                "cash ledger genesis is immutable; record a separate correction event"
+            )
 
     def resolve_reconciliation_block(self, reconciliation_id: str, *, note: str) -> None:
         if not note.strip():

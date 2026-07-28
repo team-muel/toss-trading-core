@@ -7,8 +7,9 @@ import tempfile
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
+from toss_trading.cli.research_validate_bars import validate_parquet
 from toss_trading.research.reporting import (
     build_research_summary,
     render_visual_report,
@@ -96,6 +97,123 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _validate_code_revision(code_revision: str) -> str:
+    revision = code_revision.strip()
+    if not revision or revision.lower() == "unknown":
+        raise ValueError("an immutable code revision is required")
+    return revision
+
+
+def _canonical_json(value: Any) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _verified_manifests(
+    root: Path,
+    *,
+    code_revision: str,
+) -> tuple[dict[str, dict[str, Any]], list[Path]]:
+    lake_root = (root / "lake").resolve()
+    manifest_dir = lake_root / "catalog" / "manifests"
+    manifest_paths = sorted(manifest_dir.glob("*.json"))
+    if not manifest_paths:
+        raise ValueError("research run contains no data-lake manifests")
+
+    required = {
+        "manifest_id",
+        "layer",
+        "source",
+        "dataset",
+        "schema_version",
+        "retrieved_at",
+        "available_at",
+        "content_sha256",
+        "byte_count",
+        "media_type",
+        "relative_path",
+        "license_tag",
+        "code_revision",
+    }
+    manifests: dict[str, dict[str, Any]] = {}
+    parquet_from_manifests: set[Path] = set()
+    for manifest_path in manifest_paths:
+        payload = _read_json(manifest_path)
+        missing = sorted(required - set(payload))
+        if missing:
+            raise ValueError(
+                f"data-lake manifest lacks required fields: {manifest_path}: {missing}"
+            )
+        manifest_id = payload["manifest_id"]
+        if not isinstance(manifest_id, str) or manifest_path.stem != manifest_id:
+            raise ValueError(f"data-lake manifest identity mismatch: {manifest_path}")
+        if manifest_id in manifests:
+            raise ValueError(f"duplicate data-lake manifest id: {manifest_id}")
+        if payload["layer"] not in {"bronze", "silver"}:
+            raise ValueError(f"unsupported data-lake manifest layer: {manifest_id}")
+        if payload["code_revision"] != code_revision:
+            raise ValueError(f"data-lake manifest code revision mismatch: {manifest_id}")
+
+        relative_path = payload["relative_path"]
+        if not isinstance(relative_path, str) or not relative_path.strip():
+            raise ValueError(f"data-lake manifest has no object path: {manifest_id}")
+        object_path = (lake_root / relative_path).resolve()
+        try:
+            object_path.relative_to(lake_root)
+        except ValueError as exc:
+            raise ValueError(
+                f"data-lake manifest escapes the run lake: {manifest_id}"
+            ) from exc
+        if not object_path.is_file():
+            raise ValueError(f"data-lake object is missing: {manifest_id}")
+        if object_path.stat().st_size != payload["byte_count"]:
+            raise ValueError(f"data-lake object byte count mismatch: {manifest_id}")
+        if _sha256(object_path) != payload["content_sha256"]:
+            raise ValueError(f"data-lake object hash mismatch: {manifest_id}")
+
+        request_sha256 = payload.get("request_sha256")
+        request_metadata = payload.get("request_metadata")
+        if request_sha256 is not None:
+            actual_request_hash = hashlib.sha256(
+                _canonical_json(request_metadata)
+            ).hexdigest()
+            if actual_request_hash != request_sha256:
+                raise ValueError(
+                    f"data-lake request metadata hash mismatch: {manifest_id}"
+                )
+        if object_path.suffix == ".parquet":
+            if payload["layer"] != "silver":
+                raise ValueError(
+                    f"Parquet object must use a silver manifest: {manifest_id}"
+                )
+            parquet_from_manifests.add(object_path)
+        manifests[manifest_id] = payload
+
+    for manifest_id, payload in manifests.items():
+        parents = payload.get("parent_manifest_ids", [])
+        if not isinstance(parents, list):
+            raise ValueError(f"manifest parents must be a list: {manifest_id}")
+        missing_parents = sorted(set(parents) - set(manifests))
+        if missing_parents:
+            raise ValueError(
+                f"manifest parent lineage is incomplete: {manifest_id}: {missing_parents}"
+            )
+        if payload["layer"] == "silver" and not parents:
+            raise ValueError(f"silver manifest has no raw parent lineage: {manifest_id}")
+
+    parquet_files = sorted((lake_root / "silver").rglob("*.parquet"))
+    resolved_parquet = {path.resolve() for path in parquet_files}
+    if not resolved_parquet:
+        raise ValueError("research run contains no normalized market bars")
+    if resolved_parquet != parquet_from_manifests:
+        raise ValueError("normalized Parquet files and manifests do not match")
+    return manifests, parquet_files
+
+
 def _atomic_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     handle = tempfile.NamedTemporaryFile(
@@ -155,6 +273,19 @@ def verify_research_run(
     root = Path(run_dir)
     if not root.is_dir():
         raise ValueError(f"research run directory does not exist: {root}")
+    code_revision = _validate_code_revision(code_revision)
+    generated_outputs = (
+        root / "run-status.json",
+        root / "SHA256SUMS",
+        root / "reports" / "reporting-summary.json",
+        root / "reports" / "visual-report.html",
+    )
+    existing_outputs = [str(path) for path in generated_outputs if path.exists()]
+    if existing_outputs:
+        raise FileExistsError(
+            "research run is already verified and immutable: "
+            + ", ".join(existing_outputs)
+        )
     raw_bundle = _validate_toss_bundle(
         root / "input" / "toss-candles-raw.json",
         adjusted=False,
@@ -167,20 +298,52 @@ def verify_research_run(
     adjusted_symbols = set(adjusted_bundle["request"].get("symbols", []))
     if raw_symbols != adjusted_symbols:
         raise ValueError("Toss raw and adjusted bundles use different universes")
+    raw_request = {
+        key: value
+        for key, value in raw_bundle["request"].items()
+        if key != "adjusted"
+    }
+    adjusted_request = {
+        key: value
+        for key, value in adjusted_bundle["request"].items()
+        if key != "adjusted"
+    }
+    if raw_request != adjusted_request:
+        raise ValueError("Toss raw and adjusted bundles use different requests")
 
     qa = _read_json(root / "reports" / "market-bars-qa.json")
-    if qa.get("ok") is not True:
-        raise ValueError("market-bar QA did not pass")
     required_adjustments = {"raw", "split_adjusted"}
-    if not required_adjustments.issubset(set(qa.get("adjustments", []))):
-        raise ValueError("market-bar QA lacks Toss raw/split-adjusted coverage")
+    manifests, parquet_files = _verified_manifests(
+        root,
+        code_revision=code_revision,
+    )
+    recomputed_qa = validate_parquet(
+        [str(path) for path in parquet_files],
+        required_adjustments=required_adjustments,
+    )
+    if recomputed_qa.get("ok") is not True:
+        raise ValueError("recomputed market-bar QA did not pass")
+    if qa != recomputed_qa:
+        raise ValueError("stored market-bar QA does not match recomputed results")
 
-    manifests = sorted((root / "lake" / "catalog" / "manifests").glob("*.json"))
-    if not manifests:
-        raise ValueError("research run contains no data-lake manifests")
-    parquet_files = sorted((root / "lake" / "silver").rglob("*.parquet"))
-    if not parquet_files:
-        raise ValueError("research run contains no normalized market bars")
+    strategy_path: Path | None = None
+    if strategy_experiment is not None:
+        source_strategy = Path(strategy_experiment).resolve()
+        if not source_strategy.is_file():
+            raise ValueError(f"strategy experiment does not exist: {source_strategy}")
+        strategy_path = root / "gold" / "experiments" / source_strategy.name
+        if strategy_path.resolve() != source_strategy:
+            strategy_path.parent.mkdir(parents=True, exist_ok=True)
+            source_text = source_strategy.read_text(encoding="utf-8")
+            if strategy_path.exists():
+                if strategy_path.read_text(encoding="utf-8") != source_text:
+                    raise FileExistsError(
+                        f"immutable strategy experiment conflict: {strategy_path}"
+                    )
+            else:
+                _atomic_text(strategy_path, source_text)
+        else:
+            strategy_path = source_strategy
 
     verified_at = datetime.now(timezone.utc).isoformat()
     toss_status = {
@@ -224,7 +387,13 @@ def verify_research_run(
             "manifests": len(manifests),
             "parquet_files": len(parquet_files),
         },
-        strategy_experiment=strategy_experiment,
+        strategy_experiment=strategy_path,
+        available_manifest_ids={
+            manifest_id
+            for manifest_id, manifest in manifests.items()
+            if manifest["layer"] == "silver"
+            and "/adjustment=total_return/" in f"/{manifest['relative_path']}"
+        },
     )
     _atomic_json(root / "reports" / "reporting-summary.json", summary)
     _atomic_text(
@@ -238,15 +407,6 @@ def verify_research_run(
         if path.is_file()
         and path.name not in {"SHA256SUMS", "run-status.json"}
     )
-    checksums = [
-        f"{_sha256(path)}  {path.relative_to(root).as_posix()}"
-        for path in artifact_paths
-    ]
-    (root / "SHA256SUMS").write_text(
-        "\n".join(checksums) + "\n",
-        encoding="utf-8",
-    )
-
     status = {
         "schema_version": "research-automation-run-v2",
         "run_id": root.name,
@@ -271,4 +431,14 @@ def verify_research_run(
         },
     }
     _atomic_json(root / "run-status.json", status)
+    checksum_paths = sorted(
+        path
+        for path in root.rglob("*")
+        if path.is_file() and path.name != "SHA256SUMS"
+    )
+    checksums = [
+        f"{_sha256(path)}  {path.relative_to(root).as_posix()}"
+        for path in checksum_paths
+    ]
+    _atomic_text(root / "SHA256SUMS", "\n".join(checksums) + "\n")
     return status
