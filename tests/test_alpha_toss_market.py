@@ -15,7 +15,7 @@ from toss_trading.alpha.datafields import (
     forward_returns_panel,
     momentum_datafield,
 )
-from toss_trading.risk.hub import RiskHub
+from toss_trading.risk import OrderIntent, RiskHub
 
 
 def candle(ts, close):
@@ -93,7 +93,7 @@ class TossMarketDatafieldTest(unittest.TestCase):
             "runtime": {"live_trading_enabled": False},
             "starter_guardrails": {
                 "max_open_orders": 10,
-                "single_trade_max_loss_nav_pct": 10.0,
+                "single_trade_max_loss_nav_pct": 100.0,
                 "single_live_order_notional_nav_pct": 100.0,
             },
         }
@@ -103,13 +103,29 @@ class TossMarketDatafieldTest(unittest.TestCase):
             "source_health_ok": True,
             "rate_limit_ok": True,
             "open_orders_count": 0,
+            "account_seq": "1",
+            "snapshot_run_id": "run-1",
+            "policy_hash": "policy-1",
             "nav": 1.0,
             "drawdown_pct": 0.0,
-            "proposed_order_notional": signals[0].target_weight,
             "available_cash": 1.0,
             "allowed_symbols": set(momentum),
         }
-        decision = RiskHub(policy).evaluate_signal(signals[0], state)
+        intent = OrderIntent.create(
+            signals[0],
+            {
+                "client_order_id": "toss-alpha-1",
+                "order_amount": signals[0].target_weight,
+            },
+            account_seq="1",
+            snapshot_run_id="run-1",
+            policy_hash="policy-1",
+            currency="USD",
+            reference_price=None,
+        )
+        decision = RiskHub(policy).evaluate_signal(
+            signals[0], state, order_intent=intent
+        )
         self.assertTrue(decision.approved, decision.reason)
 
     def test_backtest_panel_produces_metrics(self):

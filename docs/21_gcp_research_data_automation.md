@@ -18,13 +18,15 @@ GCS 버킷에 보관합니다.
 
 | 실행 | 시각 | 범위 | 목적 |
 | --- | --- | --- | --- |
-| daily | 12시간마다, 최대 15분 지연 | 최근 45일, FRED revision 90일 | 새 봉과 최근 정정분 수집 |
+| daily | 매일 23:30 UTC 이후 최대 15분 지연 | 최근 45일, FRED revision 90일 | 미국 시장 데이터 확정 후 새 봉과 최근 정정분 수집 |
 | weekly | 일요일 03:30 UTC 이후 최대 15분 지연 | 2004년 이후 전체 | 장기 누락·정정 재대사 |
+| prune | 월요일 04:30 UTC 이후 최대 15분 지연 | 검증 완료 로컬 실행·불변 릴리스 | 일간 14일, 주간 90일, `previous` 롤백 링크를 포함해 현재+직전 릴리스 2개 유지 |
 
 systemd 단위:
 
 - `toss-research-daily.timer`
 - `toss-research-weekly.timer`
+- `toss-research-prune.timer`
 - `toss-research-automation@daily.service`
 - `toss-research-automation@weekly.service`
 
@@ -62,7 +64,8 @@ research-runtime/runs/<mode>-<UTC timestamp>-<revision>/
 6. bronze manifest와 silver Parquet이 존재함
 7. 모든 산출물의 SHA-256이 생성됨
 
-검증이 실패하면 GCS 업로드와 latest 상태 갱신을 하지 않습니다.
+검증이 실패하면 GCS 업로드와 BigQuery 이력 갱신을 하지 않습니다. GCS에는
+`run_id`별 새 객체만 생성하며 mutable `latest` 객체를 두지 않습니다.
 
 ## 자동 수집 범위
 
@@ -104,9 +107,17 @@ SEC weekly 수집은 ticker map, submissions, companyfacts를 보관합니다.
 ## GCP 사용 범위
 
 - Compute Engine: 고정 IP가 있는 수집 실행기
-- 전용 서비스 계정: VM workload identity
+- 현재 VM workload identity는 Foundation과 공유합니다. research 프로세스는
+  account secret을 로드하지 않지만, live 검토 전에는 research 전용
+  VM/service account로 분리해야 합니다.
 - Secret Manager: Toss와 승인된 외부 공급자 자격증명
 - Cloud Storage: private 연구 데이터, 버전 관리, 이전 버전 90일 lifecycle
+- runtime bucket 권한: `roles/storage.objectCreator`; run-id 경로의 새 객체만 생성.
+  일반 `gcloud storage cp`가 수행하는 사전 객체 조회를 쓰지 않고,
+  `ifGenerationMatch=0`인 resumable create-only 업로더로 기존 객체의
+  조회·덮어쓰기·삭제 권한 없이 업로드합니다. 작은 Parquet 객체가 많은
+  주간 run은 최대 16개 worker로 제한해 병렬 생성하며, worker 상한은
+  코드에서 32개로 강제합니다.
 - Ops Agent와 Cloud Logging: JSONL 구조화 로그 수집
 - Cloud Monitoring: 실패·QA·heartbeat·백업·중복 실행 경보
 - Cloud Build: 전용 `toss-research-build` 서비스 계정으로 고정 의존성 테스트,
@@ -134,9 +145,20 @@ research_backup_upload_ok
 research_reporting_summary
 research_reporting_upload_ok
 research_reporting_upload_failed
+research_email_ok
+research_email_failed
+research_interpretation_ok
+research_interpretation_failed
+research_strategy_artifact_ok
+research_strategy_promotion_pending
+research_strategy_promotion_blocked
+research_weekly_automation_ok
+research_weekly_stale
+research_hypothesis_planning_failed
+research_hypothesis_evaluation_failed
 ```
 
-연구 자동화에는 기존 6개 Foundation 경보와 별도로 6개 경보를 둡니다.
+연구 자동화에는 기존 Foundation 경보와 별도로 15개 경보를 둡니다.
 
 - runner 실패
 - 데이터 검증 실패
@@ -144,6 +166,26 @@ research_reporting_upload_failed
 - 23시간 동안 성공 heartbeat 없음
 - 23시간 동안 GCS 업로드 heartbeat 없음
 - 실행 lock 경합
+- Gmail 전달 실패
+- Vertex AI 해석 fallback
+- 전략 승격 차단
+- 주간 연구가 8일 이상 오래됨
+- VM 디스크 사용률 85% 초과
+- VM 메모리 사용률 85% 초과
+- Ops Agent heartbeat 30분 누락
+- AI 가설 제안 실패
+- 후보 통계 평가 실패
+
+전향 OOS 최소 표본을 정상적으로 수집하는 동안에는
+`research_strategy_promotion_pending`만 기록하며 실패 경보를 보내지 않습니다.
+최소 표본이 완성된 뒤 방법론 또는 벤치마크 관문을 통과하지 못한 경우에만
+`research_strategy_promotion_blocked` 경보를 보냅니다.
+
+대시보드 상시 확인을 줄이기 위해 현재·이전 실행의 검증 근거를 Vertex AI가
+해석한 연구 보고서를 Gmail API로 발송합니다. 근거 계약, AI 실패 시 `FACTS`
+대체 보고서, 최소 OAuth 범위와 실제 적용 순서는
+`docs/24_gmail_research_digest.md`를 따릅니다. 장애 알림은 Gmail 및 Vertex AI
+경로와 독립적인 Cloud Monitoring notification channel을 계속 사용합니다.
 
 ## 배포와 검증
 
@@ -249,3 +291,18 @@ snapshot, audit, 로컬 백업과 GCS 백업 성공으로 종료됐습니다.
 남아 있습니다. 압축 릴리스에 Git 메타데이터가 없어 revision이
 `unknown`이 된 원인을 수정했으며, 최신 상태 포인터와 이후 실행은
 검증된 릴리스 디렉터리 이름에서 revision을 자동 복구합니다.
+
+## 2026-08-08 P0 runtime 재검증
+
+- `personal-agent-vm`: `RUNNING`
+- foundation, research daily, research weekly timers: 모두 `active`, `enabled`
+- Foundation `v0-empty-safe`: 2026-08-08 13:12:05 KST 성공, snapshot·audit·
+  로컬/GCS 백업 성공, `code_revision=36a60066a485...`
+- 2026-08-03~06 daily: Toss, Tiingo, FRED 수집과 전체 automation 성공
+- 2026-08-08 첫 실행: Tiingo read timeout으로 실패
+- 당일 복구 run `daily-20260808T050927Z-36a60066a485`: 전체 성공, GCS와
+  BigQuery 업로드 및 digest 전송 성공
+- Tiingo/FRED gate: 활성, SEC contact gate: 비활성
+- 디스크 사용률: 25%
+- 현재 VM service account는 여전히 Foundation 계정과 공유한다. 목표 분리
+  절차와 금지 권한은 `docs/27_p0_identity_and_holdout_remediation.md`에 고정했다.

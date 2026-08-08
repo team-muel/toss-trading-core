@@ -11,6 +11,12 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable
 
+from toss_trading.research.prospective import assess_collection_continuity
+from toss_trading.research.costs import ExecutionCostModel
+
+
+STRATEGY_IMPLEMENTATION_VERSION = 3
+
 
 @dataclass(frozen=True)
 class PricePoint:
@@ -28,8 +34,8 @@ class DualMomentumConfig:
     skip_recent_trading_days: int = 21
     top_k: int = 1
     minimum_absolute_momentum: float = 0.0
-    commission_bps: float = 1.5
-    slippage_bps: float = 2.0
+    walk_forward_train_days: int = 504
+    walk_forward_test_days: int = 126
 
     def validate(self) -> None:
         if not self.candidate_symbols:
@@ -42,8 +48,8 @@ class DualMomentumConfig:
             raise ValueError("skip_recent_trading_days must be nonnegative")
         if not 1 <= self.top_k <= len(self.candidate_symbols):
             raise ValueError("top_k is outside the candidate universe")
-        if min(self.commission_bps, self.slippage_bps) < 0:
-            raise ValueError("cost assumptions must be nonnegative")
+        if min(self.walk_forward_train_days, self.walk_forward_test_days) <= 0:
+            raise ValueError("walk-forward train and test windows must be positive")
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,9 @@ class Rebalance:
     target_weights: dict[str, float]
     turnover: float
     cost_fraction: float
+    gross_order_notional_usd: float = 0.0
+    commission_cost_fraction: float = 0.0
+    slippage_cost_fraction: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -63,6 +72,23 @@ class BacktestResult:
     daily_returns: tuple[tuple[str, float], ...]
     rebalances: tuple[Rebalance, ...]
     metrics: dict[str, float]
+    benchmark_metrics: dict[str, dict[str, float]]
+    benchmark_daily_returns: dict[str, tuple[tuple[str, float], ...]]
+    walk_forward_folds: tuple["WalkForwardFold", ...]
+    execution_cost_model: ExecutionCostModel
+
+
+@dataclass(frozen=True)
+class WalkForwardFold:
+    train_start: str
+    train_end: str
+    test_start: str
+    test_end: str
+    metrics: dict[str, float]
+    benchmark_name: str
+    benchmark_metrics: dict[str, float]
+    excess_metrics: dict[str, float]
+    passed_relative_return: bool
 
 
 def _number(value: str) -> float:
@@ -130,13 +156,154 @@ def _metrics(returns: list[float], equity: list[float], turnover: float) -> dict
     }
 
 
+def _static_portfolio_daily_returns(
+    panel: dict[str, dict[str, float]],
+    dates: list[str],
+    weights: dict[str, float],
+) -> tuple[tuple[str, float], ...]:
+    returns: list[float] = []
+    for index in range(1, len(dates)):
+        previous_date = dates[index - 1]
+        current_date = dates[index]
+        daily_return = sum(
+            weight
+            * (panel[current_date][symbol] / panel[previous_date][symbol] - 1.0)
+            for symbol, weight in weights.items()
+        )
+        returns.append((current_date, daily_return))
+    return tuple(returns)
+
+
+def _metrics_from_daily_returns(
+    daily_returns: Iterable[tuple[str, float]],
+    *,
+    turnover: float = 0.0,
+) -> dict[str, float]:
+    values = [value for _, value in daily_returns]
+    equity = 1.0
+    equity_values = [equity]
+    for value in values:
+        equity *= 1.0 + value
+        equity_values.append(equity)
+    return _metrics(values, equity_values, turnover)
+
+
+def _benchmark_daily_returns(
+    panel: dict[str, dict[str, float]],
+    dates: list[str],
+    config: DualMomentumConfig,
+) -> dict[str, tuple[tuple[str, float], ...]]:
+    portfolios = {
+        "equal-weight candidates": {
+            symbol: 1.0 / len(config.candidate_symbols)
+            for symbol in config.candidate_symbols
+        },
+        "cash": {config.cash_symbol: 1.0},
+    }
+    if "SPY" in panel[dates[0]]:
+        portfolios["SPY buy-and-hold"] = {"SPY": 1.0}
+    if {"SPY", "TLT"}.issubset(panel[dates[0]]):
+        portfolios["60/40"] = {"SPY": 0.6, "TLT": 0.4}
+    return {
+        name: _static_portfolio_daily_returns(panel, dates, weights)
+        for name, weights in sorted(portfolios.items())
+    }
+
+
+def _walk_forward_folds(
+    daily_returns: list[tuple[str, float]],
+    rebalances: list[Rebalance],
+    benchmark_daily_returns: tuple[tuple[str, float], ...],
+    *,
+    benchmark_name: str,
+    train_days: int,
+    test_days: int,
+) -> tuple[WalkForwardFold, ...]:
+    """Evaluate sequential, non-overlapping OOS windows.
+
+    The strategy is pre-registered and has no fitted coefficients, so the
+    training window is evidence available before each fixed test window rather
+    than a parameter-search interval.
+    """
+
+    folds: list[WalkForwardFold] = []
+    benchmark_by_date = dict(benchmark_daily_returns)
+    test_start = train_days
+    while test_start + test_days <= len(daily_returns):
+        train_start = test_start - train_days
+        test_end = test_start + test_days
+        test_slice = daily_returns[test_start:test_end]
+        test_dates = {item[0] for item in test_slice}
+        test_values = [item[1] for item in test_slice]
+        benchmark_slice = [
+            (item_date, benchmark_by_date[item_date])
+            for item_date, _ in test_slice
+            if item_date in benchmark_by_date
+        ]
+        if len(benchmark_slice) != len(test_slice):
+            raise ValueError("walk-forward benchmark is not date-aligned")
+        paired_excess = [
+            value - benchmark_by_date[item_date]
+            for item_date, value in test_slice
+        ]
+        equity = 1.0
+        equity_values = [equity]
+        for value in test_values:
+            equity *= 1.0 + value
+            equity_values.append(equity)
+        turnover = sum(
+            item.turnover
+            for item in rebalances
+            if item.effective_date in test_dates
+        )
+        strategy_metrics = _metrics(test_values, equity_values, turnover)
+        benchmark_metrics = _metrics_from_daily_returns(benchmark_slice)
+        excess_total_return = (
+            strategy_metrics["total_return"] - benchmark_metrics["total_return"]
+        )
+        excess_volatility = (
+            statistics.stdev(paired_excess) * math.sqrt(252.0)
+            if len(paired_excess) > 1
+            else 0.0
+        )
+        annualized_mean_excess = statistics.fmean(paired_excess) * 252.0
+        folds.append(
+            WalkForwardFold(
+                train_start=daily_returns[train_start][0],
+                train_end=daily_returns[test_start - 1][0],
+                test_start=test_slice[0][0],
+                test_end=test_slice[-1][0],
+                metrics=strategy_metrics,
+                benchmark_name=benchmark_name,
+                benchmark_metrics=benchmark_metrics,
+                excess_metrics={
+                    "total_return": excess_total_return,
+                    "annualized_mean_excess": annualized_mean_excess,
+                    "tracking_error": excess_volatility,
+                    "information_ratio": (
+                        annualized_mean_excess / excess_volatility
+                        if excess_volatility > 0
+                        else 0.0
+                    ),
+                },
+                passed_relative_return=excess_total_return > 0.0,
+            )
+        )
+        test_start = test_end
+    return tuple(folds)
+
+
 def run_dual_momentum_backtest(
     points: Iterable[PricePoint],
     config: DualMomentumConfig,
+    *,
+    execution_cost_model: ExecutionCostModel,
 ) -> BacktestResult:
     """Run a monthly 12-1-style total-return momentum baseline with next-day execution."""
 
     config.validate()
+    cost_model = execution_cost_model
+    cost_model.validate()
     panel: dict[str, dict[str, float]] = {}
     availability: dict[tuple[str, str], str] = {}
     for point in points:
@@ -161,7 +328,6 @@ def run_dual_momentum_backtest(
     daily_returns: list[tuple[str, float]] = []
     rebalances: list[Rebalance] = []
     total_turnover = 0.0
-    cost_rate = (config.commission_bps + config.slippage_bps) / 10_000.0
 
     for index in range(1, len(dates)):
         current_date = dates[index]
@@ -178,7 +344,12 @@ def run_dual_momentum_backtest(
         if pending is not None:
             signal_date, scores, target = pending
             turnover = _turnover(weights, target)
-            transaction_cost = turnover * cost_rate
+            cost_estimate = cost_model.estimate_rebalance(
+                weights,
+                target,
+                equity_multiple=equity,
+            )
+            transaction_cost = cost_estimate["total_fraction"]
             total_turnover += turnover
             weights = target
             rebalances.append(
@@ -189,6 +360,13 @@ def run_dual_momentum_backtest(
                     target_weights=target,
                     turnover=turnover,
                     cost_fraction=transaction_cost,
+                    gross_order_notional_usd=cost_estimate[
+                        "gross_order_notional_usd"
+                    ],
+                    commission_cost_fraction=cost_estimate[
+                        "commission_fraction"
+                    ],
+                    slippage_cost_fraction=cost_estimate["slippage_fraction"],
                 )
             )
             pending = None
@@ -210,9 +388,9 @@ def run_dual_momentum_backtest(
             old_date = dates[old_index]
             scores: dict[str, float] = {}
             for symbol in config.candidate_symbols:
-                if not _available_on_or_before(
-                    availability[(recent_date, symbol)],
-                    current_date,
+                if not all(
+                    _available_on_or_before(availability[(price_date, symbol)], current_date)
+                    for price_date in (old_date, recent_date)
                 ):
                     raise ValueError(
                         f"point-in-time violation for {symbol} on {current_date}"
@@ -234,6 +412,20 @@ def run_dual_momentum_backtest(
                 target = {config.cash_symbol: 1.0}
             pending = (current_date, scores, target)
 
+    benchmark_daily_returns = _benchmark_daily_returns(panel, dates, config)
+    primary_benchmark = (
+        "SPY buy-and-hold"
+        if "SPY buy-and-hold" in benchmark_daily_returns
+        else "equal-weight candidates"
+    )
+    folds = _walk_forward_folds(
+        daily_returns,
+        rebalances,
+        benchmark_daily_returns[primary_benchmark],
+        benchmark_name=primary_benchmark,
+        train_days=config.walk_forward_train_days,
+        test_days=config.walk_forward_test_days,
+    )
     return BacktestResult(
         config=config,
         equity_curve=tuple(equity_curve),
@@ -244,6 +436,13 @@ def run_dual_momentum_backtest(
             [value for _, value in equity_curve],
             total_turnover,
         ),
+        benchmark_metrics={
+            name: _metrics_from_daily_returns(values)
+            for name, values in benchmark_daily_returns.items()
+        },
+        benchmark_daily_returns=benchmark_daily_returns,
+        walk_forward_folds=folds,
+        execution_cost_model=cost_model,
     )
 
 
@@ -254,6 +453,8 @@ def write_experiment_record(
     data_manifest_ids: Iterable[str],
     code_revision: str,
     benchmark_names: Iterable[str],
+    validation_protocol: dict[str, object] | None = None,
+    prospective_observations: Iterable[dict[str, object]] = (),
 ) -> Path:
     """Persist a reproducible experiment record without mutating prior results."""
 
@@ -270,16 +471,212 @@ def write_experiment_record(
     )
     if not benchmarks:
         raise ValueError("at least one benchmark name is required")
+    unavailable_benchmarks = sorted(set(benchmarks) - set(result.benchmark_metrics))
+    if unavailable_benchmarks:
+        raise ValueError(
+            f"requested benchmark results are unavailable: {unavailable_benchmarks}"
+        )
+    selected_benchmark_metrics = {
+        name: result.benchmark_metrics[name]
+        for name in benchmarks
+    }
+    headline_metrics: dict[str, float] | None = result.metrics
+    headline_benchmarks = selected_benchmark_metrics
+    protocol_record: dict[str, object] = {
+        "version": 1,
+        "parameter_selection": "fixed_before_run",
+        "walk_forward_role": "diagnostic_only",
+        "untouched_holdout": False,
+        "headline_metrics_scope": "full_sample",
+    }
+    prospective_holdout: dict[str, object] | None = None
+    diagnostic_benchmark_metrics = selected_benchmark_metrics
+    diagnostic_metrics = result.metrics
+    published_rebalances = list(result.rebalances)
+    published_folds = list(result.walk_forward_folds)
+    published_equity_curve = list(result.equity_curve)
+    diagnostic_sample_end = result.daily_returns[-1][0]
+    if validation_protocol is not None:
+        if validation_protocol.get("schema_version") != "research-validation-v2":
+            raise ValueError("unsupported validation protocol schema")
+        if validation_protocol.get("strategy") != "broad_etf_dual_momentum_v1":
+            raise ValueError("validation protocol strategy mismatch")
+        if (
+            validation_protocol.get("implementation_version")
+            != STRATEGY_IMPLEMENTATION_VERSION
+        ):
+            raise ValueError("validation protocol implementation mismatch")
+        execution_cost_policy = validation_protocol.get("execution_cost_policy")
+        if not isinstance(execution_cost_policy, dict) or not all(
+            (
+                execution_cost_policy.get("commission"),
+                execution_cost_policy.get("slippage"),
+                execution_cost_policy.get("artifact_must_record_exact_model") is True,
+            )
+        ):
+            raise ValueError("validation protocol execution cost policy is incomplete")
+        registered_at = validation_protocol.get("registered_at")
+        prospective_start = validation_protocol.get("prospective_oos_start")
+        minimum_days = validation_protocol.get("minimum_trading_days")
+        if not isinstance(registered_at, str) or not isinstance(
+            prospective_start,
+            str,
+        ):
+            raise ValueError("validation protocol dates are required")
+        try:
+            registration_date = date.fromisoformat(registered_at)
+            holdout_start_date = date.fromisoformat(prospective_start)
+        except ValueError as exc:
+            raise ValueError("validation protocol dates must be ISO dates") from exc
+        if registration_date >= holdout_start_date:
+            raise ValueError("validation protocol must predate prospective OOS")
+        if (
+            isinstance(minimum_days, bool)
+            or not isinstance(minimum_days, int)
+            or minimum_days < 63
+        ):
+            raise ValueError("minimum_trading_days must be at least 63")
+        expected_config = json.loads(
+            json.dumps(asdict(result.config), sort_keys=True)
+        )
+        if validation_protocol.get("config") != expected_config:
+            raise ValueError("validation protocol config mismatch")
+        primary_benchmark = validation_protocol.get("primary_benchmark")
+        if primary_benchmark not in benchmarks:
+            raise ValueError("validation protocol primary benchmark is unavailable")
+        prospective_returns = [
+            item
+            for item in result.daily_returns
+            if item[0] >= prospective_start
+        ]
+        continuity = assess_collection_continuity(
+            validation_protocol,
+            (item[0] for item in prospective_returns),
+            prospective_observations,
+        )
+        observed_days = int(continuity["verified_trading_days"])
+        holdout_complete = observed_days >= minimum_days
+        evaluation_returns = prospective_returns[:observed_days][:minimum_days]
+        evaluation_dates = {item[0] for item in evaluation_returns}
+        holdout_turnover = sum(
+            item.turnover
+            for item in result.rebalances
+            if item.effective_date in evaluation_dates
+        )
+        if holdout_complete:
+            headline_metrics = _metrics_from_daily_returns(
+                evaluation_returns,
+                turnover=holdout_turnover,
+            )
+            headline_benchmarks = {
+                name: _metrics_from_daily_returns(
+                    [
+                        item
+                        for item in result.benchmark_daily_returns[name]
+                        if item[0] in evaluation_dates
+                    ]
+                )
+                for name in benchmarks
+            }
+        else:
+            headline_metrics = None
+            headline_benchmarks = {}
+
+        historical_returns = [
+            item for item in result.daily_returns if item[0] < prospective_start
+        ]
+        if not historical_returns:
+            raise ValueError("prospective protocol has no historical diagnostic sample")
+        historical_dates = {item[0] for item in historical_returns}
+        historical_turnover = sum(
+            item.turnover
+            for item in result.rebalances
+            if item.effective_date in historical_dates
+        )
+        diagnostic_metrics = _metrics_from_daily_returns(
+            historical_returns,
+            turnover=historical_turnover,
+        )
+        diagnostic_benchmark_metrics = {
+            name: _metrics_from_daily_returns(
+                [
+                    item
+                    for item in result.benchmark_daily_returns[name]
+                    if item[0] in historical_dates
+                ]
+            )
+            for name in benchmarks
+        }
+        diagnostic_sample_end = historical_returns[-1][0]
+        publication_end = (
+            evaluation_returns[-1][0]
+            if holdout_complete and evaluation_returns
+            else diagnostic_sample_end
+        )
+        published_equity_curve = [
+            item for item in result.equity_curve if item[0] <= publication_end
+        ]
+        published_rebalances = [
+            item
+            for item in result.rebalances
+            if item.effective_date <= publication_end
+        ]
+        published_folds = [
+            item
+            for item in result.walk_forward_folds
+            if item.test_end < prospective_start
+        ]
+        protocol_record = dict(validation_protocol)
+        protocol_record.update(
+            {
+                "version": 3,
+                "parameter_selection": "pre_registered_no_fit",
+                "walk_forward_role": "historical_diagnostic_only",
+                "untouched_holdout": True,
+                "headline_metrics_scope": "prospective_holdout",
+                "diagnostic_metrics_scope": "historical_pre_holdout_only",
+            }
+        )
+        holdout_state = (
+            "invalid_data_gap"
+            if continuity["state"] == "invalid_data_gap"
+            else "completed"
+            if holdout_complete
+            else "collecting"
+        )
+        prospective_holdout = {
+            "state": holdout_state,
+            "start": prospective_start,
+            "end": (
+                evaluation_returns[-1][0]
+                if holdout_complete
+                else None
+            ),
+            "minimum_trading_days": minimum_days,
+            "observed_trading_days": observed_days,
+            "available_trading_days": len(prospective_returns),
+            "metrics_revealed": holdout_complete,
+            "collection_continuity": continuity,
+        }
     payload = {
         "strategy": "broad_etf_dual_momentum_v1",
+        "strategy_implementation_version": STRATEGY_IMPLEMENTATION_VERSION,
         "input_adjustment": "total_return",
         "config": asdict(result.config),
+        "execution_cost_model": result.execution_cost_model.as_record(),
         "data_manifest_ids": manifest_ids,
         "code_revision": revision,
         "benchmark_names": benchmarks,
-        "metrics": result.metrics,
-        "rebalances": [asdict(item) for item in result.rebalances],
-        "equity_curve": result.equity_curve,
+        "benchmark_metrics": headline_benchmarks,
+        "metrics": headline_metrics,
+        "full_sample_benchmark_metrics": diagnostic_benchmark_metrics,
+        "full_sample_metrics": diagnostic_metrics,
+        "diagnostic_sample_end": diagnostic_sample_end,
+        "rebalances": [asdict(item) for item in published_rebalances],
+        "walk_forward_folds": [asdict(item) for item in published_folds],
+        "validation_protocol": protocol_record,
+        "prospective_holdout": prospective_holdout,
+        "equity_curve": published_equity_curve,
     }
     canonical = json.dumps(
         payload,

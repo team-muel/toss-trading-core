@@ -92,6 +92,31 @@ class ResearchCliTest(unittest.TestCase):
                 )
             ingest_result = json.loads(ingest_output.getvalue())
             parquet = next((root / "lake" / "silver").rglob("*.parquet"))
+            calibration = root / "cost-calibration.json"
+            calibration.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "execution-cost-calibration-v1",
+                        "portfolio_notional_usd": 10_000,
+                        "commission": {
+                            "source": "test_schedule",
+                            "normalized_bps": 10.0,
+                            "minimum_commission_usd": 0.0,
+                            "valid_through": "2099-12-31",
+                        },
+                        "slippage": {
+                            "source": "test_policy",
+                            "tiers": [
+                                {
+                                    "maximum_order_notional_usd": None,
+                                    "slippage_bps": 2.0,
+                                }
+                            ],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
 
             backtest_output = StringIO()
             with redirect_stdout(backtest_output):
@@ -106,12 +131,15 @@ class ResearchCliTest(unittest.TestCase):
                             "TLT",
                             "--cash-symbol",
                             "SGOV",
+                            "--cost-calibration",
+                            str(calibration),
                             "--lookback-days",
                             "20",
                             "--skip-days",
                             "2",
-                            "--data-manifest-id",
-                            ingest_result["normalized_manifest_ids"][0],
+                            "--manifest-root",
+                            str(root / "lake" / "catalog" / "manifests"),
+                            "--align-common-history",
                             "--output-root",
                             str(root / "lake"),
                             "--code-revision",
@@ -123,7 +151,13 @@ class ResearchCliTest(unittest.TestCase):
             result = json.loads(backtest_output.getvalue())
             self.assertGreater(result["rebalances"], 0)
             self.assertGreater(result["metrics"]["total_return"], 0)
-            self.assertTrue(Path(result["experiment_record"]).is_file())
+            experiment_path = Path(result["experiment_record"])
+            self.assertTrue(experiment_path.is_file())
+            experiment = json.loads(experiment_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                experiment["data_manifest_ids"],
+                ingest_result["normalized_manifest_ids"],
+            )
 
 
 if __name__ == "__main__":

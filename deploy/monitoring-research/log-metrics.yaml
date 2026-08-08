@@ -17,6 +17,18 @@ metrics:
     event: research_reporting_upload_ok
   - name: research_reporting_upload_failed_count
     event: research_reporting_upload_failed
+  - name: research_interpretation_failed_count
+    event: research_interpretation_failed
+  - name: research_email_failed_count
+    event: research_email_failed
+  - name: research_weekly_stale_count
+    event: research_weekly_stale
+  - name: research_strategy_promotion_blocked_count
+    event: research_strategy_promotion_blocked
+  - name: research_hypothesis_planning_failed_count
+    event: research_hypothesis_planning_failed
+  - name: research_hypothesis_evaluation_failed_count
+    event: research_hypothesis_evaluation_failed
 
 distributions:
   - name: research_quality_error_rows

@@ -2,13 +2,13 @@
 
 ## 결정
 
-2026-07-24 기준 개인·비공개 연구 범위에서 다음 조합을 채택한다.
+2026-08-08 기준 개인·비공개 연구 범위에서 다음 조합을 채택한다.
 
 | 역할 | 공급자 | 상태 | 핵심 이유 |
 |---|---|---|---|
-| 미국 ETF 일봉·총수익률 | Tiingo EOD | 계정·토큰 대기 | raw와 배당·분할 반영 adjusted OHLCV를 함께 제공 |
+| 미국 ETF 일봉·총수익률 | Tiingo EOD | 내부 연구 활성 | raw와 배당·분할 반영 adjusted OHLCV를 함께 제공 |
 | 부트스트랩·교차 검증 | Toss Open API candles | 수집 가능 | 이미 승인된 고정 IP와 Secret Manager 자격증명을 사용 |
-| 거시경제 point-in-time | FRED/ALFRED | 키·series 권리 검토 대기 | vintage/realtime period로 발표 당시 관측치를 재현 가능 |
+| 거시경제 point-in-time | FRED/ALFRED | 승인 series 활성 | vintage/realtime period로 발표 당시 관측치를 재현 가능 |
 | CIK·공시 이벤트 | SEC EDGAR | 수집 가능 | 인증 없는 공식 JSON과 nightly bulk 파일 제공 |
 | 옵션·기업행동 보강 | Massive | 후순위 | 일봉 aggregate가 배당 조정되지 않아 총수익률 기준선에는 부적합 |
 
@@ -138,6 +138,8 @@ python -m toss_trading.cli.research_validate_bars `
 - 거래소 캘린더, benchmark, USD/KRW 환율, 세금·수수료 시계열을 추가해야
   실제 순수익 비교가 가능하다.
 - FRED/ALFRED는 API 키와 series별 권리 registry가 준비될 때까지 수집하지 않는다.
+- FRED/ALFRED의 API 응답을 GCS에 장기 보관하는 행위도 series별 권리 검토에
+  포함하며, API 키만 준비됐다는 이유로 gate를 해제하지 않는다.
 
 ## 2026-07-24 실제 수집 결과
 
@@ -184,9 +186,9 @@ Toss가 뉴욕 장 시작 전에도 당일 일봉을 반환하는 것을 확인�
 2011-12-21부터 시작하는 이유와 `SPLG`의 Toss vendor symbol은 별도 매핑 검증
 대상이다.
 
-Tiingo는 주 공급자로 선정했지만 계정 약관 수락과
-`TIINGO_API_TOKEN` 등록 전이므로 아직 실제 raw/total-return 수집을 시작하지
-않았다. SEC는 개인 연락처를 외부 전송하지 않는 URL형 User-Agent로 시도했을 때
+Tiingo는 약관 수락과 `TIINGO_API_TOKEN` 등록을 완료해 2026-07-30부터 실제
+raw/total-return 수집을 수행한다. FRED도 승인된 registry series만 수집한다.
+SEC는 개인 연락처를 외부 전송하지 않는 URL형 User-Agent로 시도했을 때
 403이어서, 사용자가 SEC에 보낼 연락 이메일을 명시적으로 승인하기 전까지
 중단했다.
 
@@ -209,3 +211,25 @@ Cloud Logging에서 서로 대조했다.
 `ready_for_upload=true`는 허용된 `SPLG` 미지원 오류를 제외한 산출물이
 checksum·정규화·QA·백업 조건을 통과했다는 뜻이다. 배당 포함
 total-return 데이터가 확보됐다는 뜻도, 전략이 검증됐다는 뜻도 아니다.
+
+## 2026-08-08 P0 재검증
+
+### P1 ticker 매핑 해소
+
+위의 2026-07 수집표와 `SPLG` 404는 당시 실행 증거로 보존한다. 현재 공식 티커는
+`SPYM`이며, Toss는 `SPYM`으로 조회한다. Tiingo는 연속 과거 이력 제공을 위해
+`SPLG`를 공급자 별칭으로 요청하되 저장 symbol은 `SPYM`으로 정규화한다. 따라서
+과거의 “14개 성공 + 허용된 누락” 정책은 다음 배포부터 사용하지 않는다.
+
+Tiingo 수집이 성공한 run의 QA는 Toss/Tiingo raw bar를 종목·거래일·주기로 join한다.
+겹침이 없거나 종가 차이가 100 bps를 넘는 행이 있으면 업로드 전에 실패하며,
+거래량 20% 초과 차이는 공급자 정의 차이를 고려해 경고로 기록한다.
+
+- Tiingo와 FRED는 runtime gate가 `1`이며 2026-08-03~06 daily 실행에서 연속
+  성공했다.
+- 2026-08-08 08:44 KST 실행은 Tiingo read timeout으로 실패했다.
+- 같은 날 `daily-20260808T050927Z-36a60066a485` 복구 실행이 Tiingo를 포함해
+  완료됐고 2026-08-07 데이터까지 허용 지연 1일 안에 회복했다.
+- 향후 Tiingo 성공은 `prospective_collection_observations.jsonl`에 원장으로
+  기록한다. 3 calendar day를 넘긴 백필은 전향 표본으로 세지 않는다.
+- SEC 연락처 승인은 여전히 비활성이다.

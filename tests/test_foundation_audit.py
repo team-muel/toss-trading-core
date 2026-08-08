@@ -109,6 +109,58 @@ class FoundationAuditTest(unittest.TestCase):
             self.assertIn("v1_requires_nonzero_holdings", result.as_text())
             self.assertIn("v1_requires_target_order_id", result.as_text())
 
+    def test_v2_audit_requires_cash_genesis_and_closed_continuity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "foundation.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            FoundationSnapshotter(fake, ledger).snapshot(
+                account_seq="1",
+                target_order_id="closed-1",
+                include_closed_orders=True,
+                policy_hash="policy-1",
+                code_revision="abc123",
+            )
+            ledger.close()
+
+            missing = audit_foundation_db(
+                db_path=db_path,
+                profile="v2-live-readiness",
+            )
+            self.assertFalse(missing.ok)
+            self.assertIn("v2_missing_cash_genesis:USD", missing.as_text())
+
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.record_cash_ledger_genesis(
+                account_seq="1",
+                currency="USD",
+                as_of="2026-07-30T00:00:00+00:00",
+                opening_balance="2500",
+                evidence_ref="broker-statement:2026-07-30",
+                approved_by="operator",
+            )
+            ledger.close()
+
+            ready = audit_foundation_db(
+                db_path=db_path,
+                profile="v2-live-readiness",
+            )
+            self.assertTrue(ready.ok, ready.as_text())
+
     def test_v1_audit_ignores_commission_rows_without_amount(self):
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "foundation.sqlite"

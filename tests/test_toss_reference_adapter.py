@@ -28,6 +28,14 @@ class RecordingAdapter(TossReadOnlyAdapter):
 
 
 class TossReferenceAdapterTest(unittest.TestCase):
+    def test_live_and_conditional_write_capabilities_remain_disabled(self):
+        capabilities = RecordingAdapter().capabilities
+
+        self.assertFalse(capabilities.order_entry)
+        self.assertFalse(capabilities.order_cancel)
+        self.assertFalse(capabilities.conditional_order_entry)
+        self.assertFalse(capabilities.conditional_order_modify)
+
     def test_reference_endpoints_are_read_only_and_not_account_bound(self):
         adapter = RecordingAdapter()
 

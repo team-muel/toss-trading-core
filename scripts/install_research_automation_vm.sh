@@ -27,7 +27,9 @@ sudo systemd-analyze verify \
   deploy/systemd/toss-foundation.timer \
   deploy/systemd/toss-research-automation@.service \
   deploy/systemd/toss-research-daily.timer \
-  deploy/systemd/toss-research-weekly.timer
+  deploy/systemd/toss-research-weekly.timer \
+  deploy/systemd/toss-research-prune.service \
+  deploy/systemd/toss-research-prune.timer
 sudo install -m 0644 deploy/systemd/toss-foundation.service \
   /etc/systemd/system/toss-foundation.service
 sudo install -m 0644 deploy/systemd/toss-foundation.timer \
@@ -38,6 +40,10 @@ sudo install -m 0644 deploy/systemd/toss-research-daily.timer \
   /etc/systemd/system/toss-research-daily.timer
 sudo install -m 0644 deploy/systemd/toss-research-weekly.timer \
   /etc/systemd/system/toss-research-weekly.timer
+sudo install -m 0644 deploy/systemd/toss-research-prune.service \
+  /etc/systemd/system/toss-research-prune.service
+sudo install -m 0644 deploy/systemd/toss-research-prune.timer \
+  /etc/systemd/system/toss-research-prune.timer
 sudo install -m 0644 deploy/ops-agent/toss-foundation.yaml \
   /etc/google-cloud-ops-agent/config.yaml
 sudo systemctl daemon-reload
@@ -45,9 +51,11 @@ sudo systemctl restart google-cloud-ops-agent
 sudo systemctl enable --now \
   toss-foundation.timer \
   toss-research-daily.timer \
-  toss-research-weekly.timer
+  toss-research-weekly.timer \
+  toss-research-prune.timer
 
 sudo systemctl is-active google-cloud-ops-agent
 sudo systemctl is-enabled toss-foundation.timer
 sudo systemctl is-enabled toss-research-daily.timer
 sudo systemctl is-enabled toss-research-weekly.timer
+sudo systemctl is-enabled toss-research-prune.timer

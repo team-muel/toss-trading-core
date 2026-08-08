@@ -38,6 +38,51 @@ def _finite_number(value: Any, *, field: str) -> float:
     return result
 
 
+def _collection_failure_snapshot(
+    failures: Any,
+    *,
+    field: str,
+) -> list[dict[str, Any]]:
+    if not isinstance(failures, list):
+        raise ValueError(f"{field} must be a list")
+    result: list[dict[str, Any]] = []
+    for index, failure in enumerate(failures):
+        if not isinstance(failure, dict):
+            raise ValueError(f"{field}[{index}] must be an object")
+        symbol = failure.get("symbol")
+        status_code = failure.get("status_code")
+        code = failure.get("code")
+        reason = failure.get("reason")
+        if (
+            not isinstance(symbol, str)
+            or not symbol.strip()
+            or isinstance(status_code, bool)
+            or not isinstance(status_code, int)
+            or not isinstance(code, str)
+            or not code.strip()
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            raise ValueError(f"{field}[{index}] lacks normalized failure fields")
+        result.append(
+            {
+                "symbol": symbol.strip().upper(),
+                "status_code": status_code,
+                "code": code.strip(),
+                "reason": reason.strip(),
+            }
+        )
+    return sorted(
+        result,
+        key=lambda item: (
+            item["symbol"],
+            item["status_code"],
+            item["code"],
+            item["reason"],
+        ),
+    )
+
+
 def strategy_snapshot(
     experiment_path: str | Path | None,
     *,
@@ -48,10 +93,24 @@ def strategy_snapshot(
         return {
             "state": "not_available",
             "reason": "verified_total_return_history_not_available",
+            "artifact_state": "not_available",
+            "methodology_state": "not_evaluated",
+            "methodology_reason": "strategy_artifact_not_available",
+            "benchmark_state": "not_evaluated",
+            "benchmark_reason": "strategy_artifact_not_available",
+            "promotion_state": "blocked",
+            "promotion_reason": "strategy_artifact_not_available",
+            "primary_benchmark": None,
+            "prospective_state": None,
+            "prospective_observed_days": None,
+            "prospective_required_days": None,
             "strategy": None,
             "experiment_id": None,
             "code_revision": None,
             "metrics": {key: None for key in STRATEGY_METRIC_KEYS},
+            "benchmark_metrics": {
+                key: None for key in STRATEGY_METRIC_KEYS
+            },
         }
 
     path = Path(experiment_path)
@@ -60,11 +119,12 @@ def strategy_snapshot(
     metrics = payload.get("metrics")
     if not isinstance(strategy, str) or not strategy.strip():
         raise ValueError(f"strategy experiment has no strategy name: {path}")
-    if not isinstance(metrics, dict):
+    if metrics is not None and not isinstance(metrics, dict):
         raise ValueError(f"strategy experiment has no metrics object: {path}")
-    missing = [key for key in STRATEGY_METRIC_KEYS if key not in metrics]
-    if missing:
-        raise ValueError(f"strategy experiment lacks metrics: {missing}")
+    if isinstance(metrics, dict):
+        missing = [key for key in STRATEGY_METRIC_KEYS if key not in metrics]
+        if missing:
+            raise ValueError(f"strategy experiment lacks metrics: {missing}")
     code_revision = payload.get("code_revision")
     if (
         not isinstance(code_revision, str)
@@ -108,27 +168,281 @@ def strategy_snapshot(
     )
     if path.stem != expected_experiment_id:
         raise ValueError(f"strategy experiment content address mismatch: {path}")
-    normalized_metrics = {
-        key: _finite_number(metrics[key], field=key)
-        for key in STRATEGY_METRIC_KEYS
+    normalized_metrics: dict[str, float | None]
+    if metrics is None:
+        normalized_metrics = {
+            key: None for key in STRATEGY_METRIC_KEYS
+        }
+    else:
+        normalized_metrics = {
+            key: _finite_number(metrics[key], field=key)
+            for key in STRATEGY_METRIC_KEYS
+        }
+        if normalized_metrics["trading_days"] < 1:
+            raise ValueError("strategy trading_days must be positive")
+        if normalized_metrics["turnover"] < 0:
+            raise ValueError("strategy turnover must be nonnegative")
+        if normalized_metrics["annualized_volatility"] < 0:
+            raise ValueError("strategy annualized_volatility must be nonnegative")
+        if not -1 <= normalized_metrics["max_drawdown"] <= 0:
+            raise ValueError("strategy max_drawdown must be between -1 and 0")
+    validation_protocol = payload.get("validation_protocol")
+    primary_benchmark = (
+        validation_protocol.get("primary_benchmark", "SPY buy-and-hold")
+        if isinstance(validation_protocol, dict)
+        else "SPY buy-and-hold"
+    )
+    if not isinstance(primary_benchmark, str) or not primary_benchmark:
+        raise ValueError("strategy experiment has invalid primary benchmark")
+    benchmark_payload = payload.get("benchmark_metrics")
+    normalized_benchmark_metrics = {
+        key: None for key in STRATEGY_METRIC_KEYS
     }
-    if normalized_metrics["trading_days"] < 1:
-        raise ValueError("strategy trading_days must be positive")
-    if normalized_metrics["turnover"] < 0:
-        raise ValueError("strategy turnover must be nonnegative")
-    if normalized_metrics["annualized_volatility"] < 0:
-        raise ValueError("strategy annualized_volatility must be nonnegative")
-    if not -1 <= normalized_metrics["max_drawdown"] <= 0:
-        raise ValueError("strategy max_drawdown must be between -1 and 0")
+    benchmark_state = "not_evaluated"
+    benchmark_reason = "primary_benchmark_not_available"
+    if metrics is not None and isinstance(benchmark_payload, dict) and isinstance(
+        benchmark_payload.get(primary_benchmark),
+        dict,
+    ):
+        primary_metrics = benchmark_payload[primary_benchmark]
+        benchmark_missing = [
+            key for key in STRATEGY_METRIC_KEYS if key not in primary_metrics
+        ]
+        if benchmark_missing:
+            raise ValueError(
+                f"primary benchmark lacks metrics: {benchmark_missing}"
+            )
+        normalized_benchmark_metrics = {
+            key: _finite_number(primary_metrics[key], field=f"benchmark.{key}")
+            for key in STRATEGY_METRIC_KEYS
+        }
+        benchmark_passed = (
+            normalized_metrics["cagr"] > normalized_benchmark_metrics["cagr"]
+            and normalized_metrics["sharpe_zero_rate"]
+            > normalized_benchmark_metrics["sharpe_zero_rate"]
+            and normalized_metrics["max_drawdown"]
+            >= normalized_benchmark_metrics["max_drawdown"]
+        )
+        benchmark_state = "passed" if benchmark_passed else "failed"
+        benchmark_reason = (
+            None
+            if benchmark_passed
+            else "strategy_did_not_beat_primary_benchmark_gate"
+        )
+
+    walk_forward_folds = payload.get("walk_forward_folds")
+    prospective_holdout = payload.get("prospective_holdout")
+    prospective_state = None
+    prospective_observed_days = None
+    prospective_required_days = None
+    if isinstance(prospective_holdout, dict):
+        prospective_state = prospective_holdout.get("state")
+        prospective_observed_days = prospective_holdout.get(
+            "observed_trading_days"
+        )
+        prospective_required_days = prospective_holdout.get(
+            "minimum_trading_days"
+        )
+        if prospective_state not in {
+            "collecting",
+            "completed",
+            "invalid_data_gap",
+        }:
+            raise ValueError("strategy experiment has invalid prospective state")
+        for value, field in (
+            (prospective_observed_days, "observed_trading_days"),
+            (prospective_required_days, "minimum_trading_days"),
+        ):
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise ValueError(
+                    f"strategy experiment has invalid prospective {field}"
+                )
+        if prospective_required_days < 63:
+            raise ValueError("prospective minimum_trading_days must be at least 63")
+        if prospective_state == "completed" and (
+            prospective_observed_days < prospective_required_days
+            or prospective_holdout.get("metrics_revealed") is not True
+        ):
+            raise ValueError("completed prospective holdout is inconsistent")
+        if prospective_state in {"collecting", "invalid_data_gap"} and (
+            prospective_holdout.get("metrics_revealed") is not False
+            or metrics is not None
+        ):
+            raise ValueError("unsealed prospective holdout leaked metrics")
+    prospective_protocol = (
+        isinstance(validation_protocol, dict)
+        and validation_protocol.get("untouched_holdout") is True
+        and validation_protocol.get("headline_metrics_scope")
+        == "prospective_holdout"
+        and validation_protocol.get("parameter_selection")
+        == "pre_registered_no_fit"
+        and isinstance(walk_forward_folds, list)
+    )
+    if prospective_protocol and prospective_state == "collecting":
+        methodology_state = "collecting"
+        methodology_reason = "prospective_holdout_insufficient_observations"
+        benchmark_reason = "prospective_holdout_not_complete"
+    elif prospective_protocol and prospective_state == "invalid_data_gap":
+        methodology_state = "failed"
+        methodology_reason = "prospective_collection_continuity_failed"
+        benchmark_reason = "prospective_holdout_invalid"
+    elif (
+        prospective_protocol
+        and prospective_state == "completed"
+        and metrics is not None
+    ):
+        methodology_state = "passed"
+        methodology_reason = None
+    else:
+        methodology_state = "incomplete"
+        methodology_reason = "true_out_of_sample_protocol_not_implemented"
+    promotion_eligible = (
+        methodology_state == "passed" and benchmark_state == "passed"
+    )
+    promotion_state = "eligible" if promotion_eligible else "blocked"
+    if promotion_eligible:
+        promotion_reason = None
+    elif methodology_state != "passed":
+        promotion_reason = methodology_reason
+    else:
+        promotion_reason = benchmark_reason
     return {
         "state": "available",
         "reason": None,
+        "artifact_state": "available",
+        "methodology_state": methodology_state,
+        "methodology_reason": methodology_reason,
+        "benchmark_state": benchmark_state,
+        "benchmark_reason": benchmark_reason,
+        "promotion_state": promotion_state,
+        "promotion_reason": promotion_reason,
+        "primary_benchmark": primary_benchmark,
+        "prospective_state": prospective_state,
+        "prospective_observed_days": prospective_observed_days,
+        "prospective_required_days": prospective_required_days,
         "strategy": strategy.strip(),
         "experiment_id": path.stem,
         "code_revision": code_revision,
         "data_manifest_ids": sorted(set(manifest_ids)),
         "metrics": normalized_metrics,
+        "benchmark_metrics": normalized_benchmark_metrics,
     }
+
+
+def autonomous_research_snapshot(
+    plan_path: str | Path | None,
+    evaluation_path: str | Path | None = None,
+) -> dict[str, Any]:
+    if plan_path is None:
+        snapshot = {
+            "state": "not_scheduled",
+            "created_count": 0,
+            "reused_count": 0,
+            "registered_count": None,
+            "model": None,
+            "failure_reason_type": None,
+        }
+    else:
+        payload = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("hypothesis plan result must be an object")
+        state = payload.get("state")
+        if state not in {
+            "completed",
+            "failed",
+            "disabled",
+            "capacity_reached",
+            "weekly_limit_reached",
+        }:
+            raise ValueError("hypothesis plan result has invalid state")
+        created = payload.get("created", [])
+        reused = payload.get("reused", [])
+        if (
+            not isinstance(created, list)
+            or not isinstance(reused, list)
+            or any(not isinstance(value, str) for value in [*created, *reused])
+        ):
+            raise ValueError("hypothesis plan result has invalid hypothesis ids")
+        registered_count = payload.get("registered_count")
+        if registered_count is not None and (
+            isinstance(registered_count, bool)
+            or not isinstance(registered_count, int)
+            or registered_count < 0
+        ):
+            raise ValueError("hypothesis plan registered_count is invalid")
+        snapshot = {
+            "state": state,
+            "created_count": len(created),
+            "reused_count": len(reused),
+            "registered_count": registered_count,
+            "model": payload.get("model"),
+            "failure_reason_type": payload.get("failure_reason_type"),
+        }
+    snapshot.update(
+        {
+            "evaluation_state": "not_scheduled",
+            "evaluated_count": 0,
+            "historically_qualified_count": 0,
+            "evaluation_failed_count": 0,
+            "promotion_authorized": False,
+            "execution_authorized": False,
+        }
+    )
+    if evaluation_path is None:
+        return snapshot
+    evaluation = json.loads(Path(evaluation_path).read_text(encoding="utf-8"))
+    if (
+        not isinstance(evaluation, dict)
+        or evaluation.get("schema_version")
+        != "autonomous-candidate-evaluation-summary-v1"
+        or evaluation.get("state") != "completed"
+    ):
+        raise ValueError("candidate evaluation summary is invalid")
+    lists = {}
+    for field in (
+        "evaluated",
+        "reused",
+        "historically_qualified",
+        "evaluation_failed",
+    ):
+        value = evaluation.get(field)
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError(f"candidate evaluation {field} is invalid")
+        lists[field] = value
+    candidate_results = evaluation.get("candidate_results")
+    if not isinstance(candidate_results, list):
+        raise ValueError("candidate evaluation candidate_results is invalid")
+    normalized_candidates = []
+    for item in candidate_results:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("hypothesis_id"), str)
+            or not isinstance(item.get("state"), str)
+            or not isinstance(item.get("failed_gates"), list)
+            or any(not isinstance(gate, str) for gate in item["failed_gates"])
+        ):
+            raise ValueError("candidate evaluation candidate result is invalid")
+        normalized_candidates.append(item)
+    if evaluation.get("promotion_authorized") is not False or evaluation.get(
+        "execution_authorized"
+    ) is not False:
+        raise ValueError("historical candidate evaluation cannot authorize promotion")
+    snapshot.update(
+        {
+            "evaluation_state": "completed",
+            "evaluated_count": len(lists["evaluated"]),
+            "historically_qualified_count": len(lists["historically_qualified"]),
+            "evaluation_failed_count": len(lists["evaluation_failed"]),
+            "candidate_results": sorted(
+                normalized_candidates, key=lambda item: item["hypothesis_id"]
+            ),
+        }
+    )
+    return snapshot
 
 
 def build_research_summary(
@@ -142,8 +456,17 @@ def build_research_summary(
     quality: dict[str, Any],
     artifacts: dict[str, Any],
     strategy_experiment: str | Path | None = None,
+    hypothesis_plan: str | Path | None = None,
+    hypothesis_evaluation: str | Path | None = None,
     available_manifest_ids: set[str] | None = None,
 ) -> dict[str, Any]:
+    symbols = quality.get("symbols")
+    if (
+        not isinstance(symbols, list)
+        or any(not isinstance(symbol, str) or not symbol.strip() for symbol in symbols)
+    ):
+        raise ValueError("quality symbols must be a list of non-empty strings")
+    normalized_symbols = sorted({symbol.strip().upper() for symbol in symbols})
     quality_error_rows = sum(
         int(quality[key])
         for key in (
@@ -151,6 +474,14 @@ def build_research_summary(
             "invalid_rows",
             "coverage_mismatch_rows",
         )
+    )
+    raw_failures = _collection_failure_snapshot(
+        toss["raw_failures"],
+        field="toss.raw_failures",
+    )
+    adjusted_failures = _collection_failure_snapshot(
+        toss["adjusted_failures"],
+        field="toss.adjusted_failures",
     )
     summary = {
         "schema_version": "research-visual-report-v1",
@@ -164,8 +495,10 @@ def build_research_summary(
             "symbols_requested": int(toss["symbols_requested"]),
             "raw_pages": int(toss["raw_pages"]),
             "adjusted_pages": int(toss["adjusted_pages"]),
-            "raw_failure_count": len(toss["raw_failures"]),
-            "adjusted_failure_count": len(toss["adjusted_failures"]),
+            "raw_failure_count": len(raw_failures),
+            "adjusted_failure_count": len(adjusted_failures),
+            "raw_failures": raw_failures,
+            "adjusted_failures": adjusted_failures,
         },
         "quality": {
             "adjustments": sorted(quality["adjustments"]),
@@ -175,7 +508,8 @@ def build_research_summary(
                 quality["coverage_mismatch_rows"]
             ),
             "error_rows": quality_error_rows,
-            "symbol_count": len(quality["symbols"]),
+            "symbol_count": len(normalized_symbols),
+            "symbols": normalized_symbols,
         },
         "artifacts": {
             "source_files": int(artifacts["source_files"]),
@@ -187,6 +521,9 @@ def build_research_summary(
             strategy_experiment,
             expected_code_revision=code_revision,
             available_manifest_ids=available_manifest_ids,
+        ),
+        "autonomous_research": autonomous_research_snapshot(
+            hypothesis_plan, hypothesis_evaluation
         ),
     }
     return summary
@@ -202,6 +539,7 @@ def summary_to_bigquery_row(
     quality = summary["quality"]
     artifacts = summary["artifacts"]
     strategy = summary["strategy"]
+    autonomous = summary.get("autonomous_research", {})
     metrics = strategy["metrics"]
     row = {
         "schema_version": summary["schema_version"],
@@ -235,12 +573,44 @@ def summary_to_bigquery_row(
         "artifact_parquet_files": artifacts["parquet_files"],
         "strategy_state": strategy["state"],
         "strategy_reason": strategy["reason"],
+        "strategy_artifact_state": strategy["artifact_state"],
+        "strategy_methodology_state": strategy["methodology_state"],
+        "strategy_methodology_reason": strategy["methodology_reason"],
+        "strategy_benchmark_state": strategy["benchmark_state"],
+        "strategy_benchmark_reason": strategy["benchmark_reason"],
+        "strategy_promotion_state": strategy["promotion_state"],
+        "strategy_promotion_reason": strategy["promotion_reason"],
+        "strategy_primary_benchmark": strategy["primary_benchmark"],
+        "strategy_prospective_state": strategy["prospective_state"],
+        "strategy_prospective_observed_days": strategy[
+            "prospective_observed_days"
+        ],
+        "strategy_prospective_required_days": strategy[
+            "prospective_required_days"
+        ],
         "strategy_name": strategy["strategy"],
         "strategy_experiment_id": strategy["experiment_id"],
         "strategy_code_revision": strategy["code_revision"],
+        "autonomous_research_state": autonomous.get("state"),
+        "autonomous_hypotheses_created": autonomous.get("created_count"),
+        "autonomous_hypotheses_reused": autonomous.get("reused_count"),
+        "autonomous_hypotheses_registered": autonomous.get("registered_count"),
+        "autonomous_research_model": autonomous.get("model"),
+        "autonomous_evaluation_state": autonomous.get("evaluation_state"),
+        "autonomous_hypotheses_evaluated": autonomous.get("evaluated_count"),
+        "autonomous_hypotheses_historically_qualified": autonomous.get(
+            "historically_qualified_count"
+        ),
+        "autonomous_hypotheses_evaluation_failed": autonomous.get(
+            "evaluation_failed_count"
+        ),
+        "autonomous_promotion_authorized": autonomous.get(
+            "promotion_authorized", False
+        ),
     }
     for key in STRATEGY_METRIC_KEYS:
         row[f"strategy_{key}"] = metrics[key]
+        row[f"benchmark_{key}"] = strategy["benchmark_metrics"][key]
     return row
 
 
@@ -267,14 +637,36 @@ def build_monitoring_event(summary: dict[str, Any]) -> dict[str, Any]:
         ),
         "artifact_source_bytes": row["artifact_source_bytes"],
         "strategy_state": row["strategy_state"],
+        "strategy_artifact_state": row["strategy_artifact_state"],
+        "strategy_methodology_state": row["strategy_methodology_state"],
+        "strategy_benchmark_state": row["strategy_benchmark_state"],
+        "strategy_promotion_state": row["strategy_promotion_state"],
+        "strategy_prospective_state": row["strategy_prospective_state"],
+        "strategy_prospective_observed_days": row[
+            "strategy_prospective_observed_days"
+        ],
+        "strategy_prospective_required_days": row[
+            "strategy_prospective_required_days"
+        ],
     }
-    if row["strategy_state"] == "available":
+    if (
+        row["strategy_state"] == "available"
+        and row["strategy_total_return"] is not None
+    ):
         for key in STRATEGY_METRIC_KEYS:
             event[f"strategy_{key}"] = row[f"strategy_{key}"]
+            event[f"benchmark_{key}"] = row[f"benchmark_{key}"]
         event["strategy_name"] = row["strategy_name"]
         event["strategy_experiment_id"] = row["strategy_experiment_id"]
+        event["strategy_primary_benchmark"] = row[
+            "strategy_primary_benchmark"
+        ]
     else:
         event["strategy_reason"] = row["strategy_reason"]
+    if row["strategy_promotion_state"] == "blocked":
+        event["strategy_promotion_reason"] = row[
+            "strategy_promotion_reason"
+        ]
     return event
 
 
@@ -310,7 +702,10 @@ def render_visual_report(summary: dict[str, Any]) -> str:
         "정상" if collection_failure_count == 0 else "부분 성공"
     )
     strategy_state = (
-        escaped(strategy["strategy"])
+        (
+            f"{escaped(strategy['strategy'])} ? "
+            f"?? {escaped(strategy['promotion_state'])}"
+        )
         if strategy["state"] == "available"
         else "총수익률 데이터 확보 전 · 미측정"
     )
@@ -371,7 +766,8 @@ grid-column:span 12}}.strategy-metric{{grid-column:span 6}}}}
   </section>
   <section class="panel third"><h2>전략 성과</h2>
     <div class="hero" style="font-size:20px">{strategy_state}</div>
-    <p class="note">검증되지 않은 값은 0이 아니라 미측정으로 표시합니다.</p>
+    <p class="note">산출물·방법론·벤치마크를 분리해 판정하며, 승격 eligible 전에는
+    연구 후보로만 취급합니다.</p>
   </section>
   <section class="panel half"><h2>공급자 상태</h2>{providers}</section>
   <section class="panel half"><h2>품질 세부 지표</h2>
@@ -384,8 +780,10 @@ grid-column:span 12}}.strategy-metric{{grid-column:span 6}}}}
   </section>
   <section class="panel"><h2>전략 기준선 성과</h2>
     <div class="grid">{strategy_cards}</div>
-    <p class="note">성과는 total-return 일봉, 입력 manifest, 코드 revision이 모두
-    검증된 불변 experiment가 연결된 경우에만 표시합니다.</p>
+    <p class="note">표시된 값은 재현 가능한 산출물의 관측치입니다. 실전 적합성은
+    방법론 {escaped(strategy["methodology_state"])}, 벤치마크
+    {escaped(strategy["benchmark_state"])}, 승격
+    {escaped(strategy["promotion_state"])} 상태를 함께 확인해야 합니다.</p>
   </section>
 </div>
 <footer>이 HTML은 실행 산출물의 서명 대상입니다. 장기 이력은 BigQuery,

@@ -29,12 +29,14 @@ Environment=TOSS_BROKER_BASE_URL_SECRET=toss-broker-base-url
 Environment=FOUNDATION_LOAD_GCP_SECRETS=1
 Environment=FOUNDATION_AUDIT_PROFILE=v0-empty-safe
 Environment=FOUNDATION_MAX_ORDER_DETAILS=1
-Environment=FOUNDATION_INCLUDE_CLOSED_ORDERS=0
+Environment=FOUNDATION_INCLUDE_CLOSED_ORDERS=1
+Environment=FOUNDATION_CLOSED_ORDER_LOOKBACK_DAYS=7
 Environment=FOUNDATION_DB_PATH=/home/seoje/toss-trading/runtime/foundation_account_state.sqlite
 Environment=FOUNDATION_REPORT_PATH=/home/seoje/toss-trading/runtime/foundation_account_state_report.txt
 Environment=FOUNDATION_JSON_LOG_PATH=/home/seoje/toss-trading/runtime/foundation_runner.jsonl
 Environment=FOUNDATION_BACKUP_DIR=/home/seoje/toss-trading/runtime/backups
 Environment=FOUNDATION_LOCAL_BACKUP_RETENTION_DAYS=14
+Environment=FOUNDATION_RESEARCH_COST_CALIBRATION_PATH=/home/seoje/toss-trading/runtime/research_execution_cost_calibration.json
 Environment=FOUNDATION_LOCK_PATH=/home/seoje/toss-trading/runtime/foundation_runner.lock
 Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/runtime/toss_api.lock
 Environment=FOUNDATION_GCS_BACKUP_URI=gs://toss-trading-core-lab-foundation-backups/foundation

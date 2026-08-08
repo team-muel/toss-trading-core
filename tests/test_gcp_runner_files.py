@@ -36,6 +36,8 @@ class GcpRunnerFilesTest(unittest.TestCase):
             "deploy/monitoring/log-metrics.yaml",
             "deploy/systemd/toss-foundation.service",
             "deploy/systemd/toss-foundation.timer",
+            "scripts/check_research_identity_gcp.sh",
+            "docs/27_p0_identity_and_holdout_remediation.md",
         ]:
             self.assertTrue(Path(path).exists(), path)
 
@@ -73,6 +75,8 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("trap on_error ERR", runner)
         self.assertIn("date -u", runner)
         self.assertIn("foundation_runner_ok", runner)
+        self.assertIn("research_export_cost_model", runner)
+        self.assertIn("foundation_research_cost_calibration_ok", runner)
 
     def test_cloud_monitoring_event_contract_is_documented_and_emitted(self):
         docs = Path("docs/16_cloud_monitoring_runner_health.md").read_text(encoding="utf-8")
@@ -95,6 +99,8 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("gcloud secrets versions access", loader)
         self.assertIn("gcloud CLI is required", loader)
         self.assertIn("secret_loader_loaded env=", loader)
+        self.assertIn("reason=invalid_control_character", loader)
+        self.assertIn("value=\"${value%$'\\r'}\"", loader)
         self.assertNotIn("echo \"${value}\"", loader)
 
     def test_foundation_runner_recovers_revision_from_release_path(self):
@@ -126,6 +132,36 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertNotIn(":/snap/bin:", service)
         self.assertIn("OnUnitActiveSec=6h", timer)
         self.assertIn("Persistent=true", timer)
+
+    def test_research_identity_is_separate_and_foundation_secrets_are_forbidden(self):
+        service = Path(
+            "deploy/systemd/toss-research-automation@.service"
+        ).read_text(encoding="utf-8")
+        provisioner = Path(
+            "scripts/provision_research_automation_gcp.sh"
+        ).read_text(encoding="utf-8")
+        checker = Path("scripts/check_research_identity_gcp.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("toss-research-client-id", service)
+        self.assertIn("toss-research-client-secret", service)
+        self.assertNotIn("Environment=TOSS_CLIENT_ID_SECRET=toss-client-id", service)
+        self.assertIn("toss-research-runner", provisioner)
+        self.assertIn("refuses the Foundation service account", provisioner)
+        self.assertIn("foundation_secret_access", checker)
+        self.assertIn("research_record_observation", provisioner + service + Path(
+            "scripts/run_research_automation_gcp.sh"
+        ).read_text(encoding="utf-8"))
+        research_runner = Path("scripts/run_research_automation_gcp.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("--cross-provider-source", research_runner)
+        self.assertIn("research_validate_instruments", research_runner)
+        self.assertIn("research_instrument_identity_ok", research_runner)
+        self.assertIn("--instrument-master", research_runner)
+        self.assertIn("--cost-calibration", research_runner)
+        self.assertIn("RESEARCH_EXECUTION_COST_CALIBRATION", service)
 
     def test_ops_agent_collects_and_parses_foundation_jsonl(self):
         config = Path("deploy/ops-agent/toss-foundation.yaml").read_text(

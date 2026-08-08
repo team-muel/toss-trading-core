@@ -62,8 +62,8 @@ Codex의 매일 19:00 KST 24시간 집중 관찰 자동화는 2026-07-23 사용�
 | P0-A | 계좌·주문 안전장치 | 실패 run cash backfill, 초기잔고, 통화별 buying-power, 미해결 BLOCK, EOD 대사 | live 계속 차단 |
 | P0-B | 저장소 진실성 | branch/CI/release SHA, wheel resource smoke test, monitoring IaC | P0-A와 병렬 |
 | 상시 운영 | 연구 데이터 자동화·보고 | daily/weekly timer, GCS, BigQuery, dashboard, research 경보 6개 유지 | 코드 반영, 재배포 필요 |
-| P1-A | total-return 공급자 활성화 | Tiingo 약관·키 승인 후 실제 raw/total-return 수집과 QA | 전략 검증의 현재 핵심 blocker |
-| P1-B | 데이터 정합성 보강 | `SPLG` vendor symbol 결정, point-in-time universe, corporate action·상장/폐지 이력 | P1-A와 병렬 |
+| 완료(P1-A) | total-return 공급자 활성화 | Tiingo 약관·토큰 승인, 15종 raw/total-return 운영 수집, Toss raw 교차검증 | 2026-08-08 증거 재확인 |
+| 완료(P1-B) | 데이터 정합성·실험 보강 | `SPYM`/`SPLG` 시점별 공급자 매핑, point-in-time master, immutable gold, benchmark-relative walk-forward, 실제 계좌·거래규모 비용 모델 | immutable release와 v3 gold를 함께 검증 |
 | P1-C | 거시·공시 활성화 | FRED series 권리·키, SEC 연락처 승인 후 자동 gate 해제 | 사용자 승인 필요 |
 | P2 | baseline 백테스트 | 비용후 dual-momentum, benchmark, OOS/walk-forward | 검증된 total-return 데이터 |
 | P3 | signal safety와 persistent paper | 강제 RiskDecision, stale gate, 체결·잔고·비용 simulator | P0/P2 |

@@ -4,16 +4,16 @@
 
 ## Official Base
 
-- Approved schema version: `1.2.4`
-- Approved SHA-256: `7000d89ea3d783b0fa36d32e31750e85e139098306dbfce53a75fc4891019f1b`
+- Approved schema version: `1.2.13`
+- Approved SHA-256: `af93bc7d0d31eda3e24131f0acaa83d6b9c304a801161fbc06ba9a9824f8b92f`
 - Base server: `https://openapi.tossinvest.com`
 - Auth: OAuth2 Client Credentials Grant
 - Token endpoint: `POST /oauth2/token`
 - Account context header: `X-Tossinvest-Account: {accountSeq}`
 - Runtime style: REST API
 
-2026-07-23 `latest/openapi.json`을 다시 다운로드해 같은 SHA-256과
-OpenAPI version `1.2.4`를 확인했습니다. 현재 공식 paths에는 별도 현금
+2026-08-08 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
+OpenAPI version `1.2.13`을 확인했습니다. 현재 공식 paths에는 별도 현금
 잔고 또는 balance endpoint가 없고, 현금 관련 주문 전 constraint는
 `GET /api/v1/buying-power`의 `cashBuyingPower`입니다. 따라서 내부 초기
 현금잔고를 이 값에서 역산하지 않습니다.
@@ -34,6 +34,12 @@ OpenAPI version `1.2.4`를 확인했습니다. 현재 공식 paths에는 별도 
 
 ## Important Order Rules
 
+OpenAPI 1.2.13에는 `/api/v1/conditional-orders`의 `SINGLE`, `OCO`, `OTO`
+조건주문도 포함됩니다. 이 경로들은 계약에는 기록했지만
+`config/default_policy.yaml`에서 계속 비활성화하며, 현재
+`TossReadOnlyAdapter`는 생성·정정·취소할 수 없습니다. 승인된 경로와 method는
+`config/toss_openapi_contract.json`에 고정합니다.
+
 - `clientOrderId`는 멱등성 키입니다.
 - `clientOrderId` 미전달 시 멱등성이 적용되지 않습니다.
 - 동일 `clientOrderId` 재요청은 이전 주문 결과를 재반환합니다.
@@ -42,16 +48,14 @@ OpenAPI version `1.2.4`를 확인했습니다. 현재 공식 paths에는 별도 
 - 1억원 이상 주문은 `confirmHighValueOrder=true`가 필요합니다.
 - 클라이언트는 unknown enum 값을 허용해야 합니다.
 
-## CLOSED Order Contract Caution
+## CLOSED Order Continuity
 
-OpenAPI 1.2.4는 `/api/v1/orders`의 `status` enum에 `OPEN`, `CLOSED`를 모두
-노출하고 CLOSED용 cursor/limit 설명도 제공합니다. 그러나 같은 문서의
-`PaginatedOrderResponse` 설명에는 `status=CLOSED`가 `400 closed-not-supported`를
-반환한다고 적혀 있습니다. 이 모순이 공식 문서에서 해소되기 전까지 Foundation은
-2026-07-21 실제 GCP 계정에서는 `status=CLOSED`가 200과 종료 주문을 반환했습니다.
-따라서 구현은 CLOSED 조회를 명시적 opt-in으로 허용하되, 기본 6시간 runner에서는
-끄고 유지합니다. v1은 OPEN에서 확보하거나 검증된 CLOSED 목록에서 복구한 정확한
-`orderId`의 `/api/v1/orders/{orderId}` 상세를 같은 snapshot run에서 검증합니다.
+OpenAPI 1.2.13은 `/api/v1/orders`의 `OPEN`, `CLOSED`와 CLOSED용 cursor
+pagination을 명시합니다. 2026-07-21 실제 GCP 계정에서도 종료 주문 반환을
+확인했습니다. 기본 6시간 runner는 KST 기준 최근 7일을 중첩 조회해 실행 사이에
+OPEN에서 사라진 주문을 놓치지 않습니다. v1은 OPEN 또는 CLOSED 목록에서 얻은
+정확한 `orderId`의 `/api/v1/orders/{orderId}` 상세를 같은 snapshot run에서
+검증합니다.
 
 ## Order Status
 
@@ -150,7 +154,8 @@ Rate limit은 client x API group 기준입니다. 현재 공식 overview 기준:
 
 Toss API만으로 가능한 실거래 MVP:
 
-- 국내/미국 주식·ETF 현물 주문
+- 기술 API 범위는 국내/미국 주식·ETF이나, 이 저장소의 live 후보는 전용 계좌의
+  미국 상장 USD long-only ETF 현물 주문으로 한정
 - REST polling 기반 주문 상태 대사
 - `cashBuyingPower` constraint 기반 주문 가능 금액 통제
 - sellable quantity 기반 매도 가능 수량 통제

@@ -44,6 +44,15 @@ _load_secret_env() {
     --project="${GCP_PROJECT_ID}" \
     --secret="${secret_name}")"
 
+  # PowerShell/stdin uploads can leave a trailing carriage return in a
+  # single-line secret. Normalize that one transport artifact, then reject
+  # any remaining line break without ever logging the secret value.
+  value="${value%$'\r'}"
+  if [[ "${value}" == *$'\r'* || "${value}" == *$'\n'* ]]; then
+    echo "secret_loader_skip env=${env_name} reason=invalid_control_character" >&2
+    return 2
+  fi
+
   if [[ -z "${value}" ]]; then
     echo "secret_loader_skip env=${env_name} reason=empty_secret" >&2
     return 0

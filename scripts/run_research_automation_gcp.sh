@@ -21,6 +21,10 @@ GCS_URI="${RESEARCH_GCS_URI:-}"
 BIGQUERY_DATASET="${RESEARCH_BIGQUERY_DATASET:-toss_research_reporting}"
 BIGQUERY_TABLE="${RESEARCH_BIGQUERY_TABLE:-run_summaries}"
 STRATEGY_EXPERIMENT="${RESEARCH_STRATEGY_EXPERIMENT:-}"
+PROSPECTIVE_OBSERVATION_LEDGER="${RESEARCH_PROSPECTIVE_OBSERVATION_LEDGER:-${RUNTIME_ROOT}/prospective_collection_observations.jsonl}"
+EXECUTION_COST_CALIBRATION="${RESEARCH_EXECUTION_COST_CALIBRATION:-/home/seoje/toss-trading/runtime/research_execution_cost_calibration.json}"
+: "${RESEARCH_PORTFOLIO_NOTIONAL_USD:?RESEARCH_PORTFOLIO_NOTIONAL_USD is required}"
+PORTFOLIO_NOTIONAL_USD="${RESEARCH_PORTFOLIO_NOTIONAL_USD}"
 CODE_REVISION="${FOUNDATION_CODE_REVISION:-}"
 if [[ -z "${CODE_REVISION}" ]] && command -v git >/dev/null 2>&1; then
   CODE_REVISION="$(git -C "${ROOT_DIR}" rev-parse --verify HEAD 2>/dev/null || true)"
@@ -108,15 +112,9 @@ export PYTHONPATH="${PYTHONPATH:-src}"
 : "${GCP_PROJECT_ID:=toss-trading-core-lab}"
 : "${TOSS_CLIENT_ID_SECRET:=toss-client-id}"
 : "${TOSS_CLIENT_SECRET_SECRET:=toss-client-secret}"
-: "${TOSS_ACCOUNT_SEQ_SECRET:=toss-account-seq}"
-: "${TOSS_API_ENV_SECRET:=toss-api-env}"
-: "${TOSS_BROKER_BASE_URL_SECRET:=toss-broker-base-url}"
 export GCP_PROJECT_ID
 export TOSS_CLIENT_ID_SECRET
 export TOSS_CLIENT_SECRET_SECRET
-export TOSS_ACCOUNT_SEQ_SECRET
-export TOSS_API_ENV_SECRET
-export TOSS_BROKER_BASE_URL_SECRET
 
 # shellcheck disable=SC1091
 source "scripts/load_gcp_secrets.sh"
@@ -136,6 +134,13 @@ load_optional_secret() {
     --secret="${secret_name}" 2>/dev/null)"; then
     return 1
   fi
+  value="${value%$'\r'}"
+  if [[ "${value}" == *$'\r'* || "${value}" == *$'\n'* ]]; then
+    echo \
+      "optional_secret_rejected env=${env_name} reason=invalid_control_character" \
+      >&2
+    return 1
+  fi
   if [[ -z "${value}" ]]; then
     return 1
   fi
@@ -150,6 +155,15 @@ read -r START_DATE THROUGH_DATE REALTIME_START REALTIME_END < <(
 
 json_log "research_automation_start" "" "running" ""
 PROVIDER_STATES=("toss=collected")
+
+"${PYTHON_BIN}" -m toss_trading.cli.research_validate_instruments \
+  --universe "data/universe.csv" \
+  --instrument-master "data/instrument_master.csv" \
+  --instrument-history "data/instrument_history.csv" \
+  --corporate-actions "data/corporate_actions.csv" \
+  --as-of "$(date -u +%F)" \
+  > "${REPORT_DIR}/instrument-identity-qa.json"
+json_log "research_instrument_identity_ok" "" "passed" ""
 
 "${PYTHON_BIN}" -m toss_trading.cli.research_collect_toss collect \
   --universe "data/universe.csv" \
@@ -196,9 +210,12 @@ if [[ "${RESEARCH_TIINGO_LICENSE_ACCEPTED:-0}" == "1" ]] \
     "${TIINGO_API_TOKEN_SECRET:-tiingo-api-token}"; then
   "${PYTHON_BIN}" -m toss_trading.cli.research_collect_tiingo \
     --universe "data/universe.csv" \
+    --instrument-master "data/instrument_master.csv" \
     --start-date "${START_DATE}" \
     --end-date "${THROUGH_DATE}" \
     --output-root "${LAKE_DIR}" \
+    --observation-ledger "${PROSPECTIVE_OBSERVATION_LEDGER}" \
+    --run-id "${RUN_ID}" \
     --code-revision "${CODE_REVISION}" \
     > "${REPORT_DIR}/tiingo-collection.json"
   TIINGO_STATE="collected"
@@ -257,13 +274,138 @@ else
 fi
 PROVIDER_STATES+=("fred-alfred=${FRED_STATE}")
 
+BAR_VALIDATION_ARGS=(
+  --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet"
+  --data-source-policy "${ROOT_DIR}/config/data_sources.yaml"
+  --require-adjustment raw
+  --require-adjustment split_adjusted
+)
+if [[ "${TIINGO_STATE}" == "collected" ]]; then
+  BAR_VALIDATION_ARGS+=(
+    --require-adjustment total_return
+    --cross-provider-source toss-openapi
+    --cross-provider-source tiingo-eod
+  )
+fi
 if ! "${PYTHON_BIN}" -m toss_trading.cli.research_validate_bars \
-  --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet" \
-  --require-adjustment raw \
-  --require-adjustment split_adjusted \
+  "${BAR_VALIDATION_ARGS[@]}" \
   > "${REPORT_DIR}/market-bars-qa.json"; then
   json_log "research_validation_failed" "" "failed" "market_bar_qa"
   exit 65
+fi
+
+HYPOTHESIS_PLAN_RESULT=""
+HYPOTHESIS_EVALUATION_RESULT=""
+if [[ "${RUN_MODE}" == "weekly" \
+  && "${TIINGO_STATE}" == "collected" \
+  && "${RESEARCH_AUTONOMOUS_PLANNING_ENABLED:-1}" == "1" ]]; then
+  HYPOTHESIS_PLAN_RESULT="${REPORT_DIR}/hypothesis-plan.json"
+  if "${PYTHON_BIN}" -m toss_trading.cli.research_plan_hypotheses \
+    --policy "${ROOT_DIR}/config/autonomous_research_policy.json" \
+    --universe "${ROOT_DIR}/data/universe.csv" \
+    --ledger-dir "${RUNTIME_ROOT}/hypothesis-ledger" \
+    --output-dir "${LAKE_DIR}/gold/hypotheses" \
+    --project-id "${GCP_PROJECT_ID}" \
+    --location "${RESEARCH_INTERPRETATION_LOCATION:-global}" \
+    --model "${RESEARCH_HYPOTHESIS_MODEL:-gemini-3.1-flash-lite}" \
+    --result "${HYPOTHESIS_PLAN_RESULT}" \
+    > "${RUNTIME_ROOT}/last-hypothesis-plan.json"; then
+    json_log "research_hypothesis_planning_ok" "vertex-ai" "completed" ""
+  else
+    json_log \
+      "research_hypothesis_planning_failed" \
+      "vertex-ai" \
+      "failed" \
+      "bounded_hypothesis_planner"
+  fi
+fi
+
+if [[ "${RUN_MODE}" == "weekly" \
+  && "${TIINGO_STATE}" == "collected" \
+  && "${RESEARCH_AUTONOMOUS_PLANNING_ENABLED:-1}" == "1" ]]; then
+  if [[ ! -f "${EXECUTION_COST_CALIBRATION}" ]]; then
+    json_log \
+      "research_cost_calibration_failed" \
+      "toss-account-commission" \
+      "failed" \
+      "sanitized_cost_calibration_missing"
+    exit 65
+  fi
+  HYPOTHESIS_EVALUATION_RESULT="${REPORT_DIR}/hypothesis-evaluation.json"
+  if "${PYTHON_BIN}" -m toss_trading.cli.research_evaluate_hypotheses \
+    --policy "${ROOT_DIR}/config/autonomous_research_policy.json" \
+    --ledger-dir "${RUNTIME_ROOT}/hypothesis-ledger" \
+    --output-dir "${LAKE_DIR}/gold/hypothesis_evaluations" \
+    --run-id "${RUN_ID}" \
+    --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet" \
+    --manifest-root "${LAKE_DIR}/catalog/manifests" \
+    --code-revision "${CODE_REVISION}" \
+    --instrument-master "${ROOT_DIR}/data/instrument_master.csv" \
+    --cost-calibration "${EXECUTION_COST_CALIBRATION}" \
+    --portfolio-notional-usd "${PORTFOLIO_NOTIONAL_USD}" \
+    --result "${HYPOTHESIS_EVALUATION_RESULT}" \
+    > "${RUNTIME_ROOT}/last-hypothesis-evaluation.json"; then
+    json_log "research_hypothesis_evaluation_ok" "candidate-engine" "completed" ""
+  else
+    HYPOTHESIS_EVALUATION_RESULT=""
+    json_log \
+      "research_hypothesis_evaluation_failed" \
+      "candidate-engine" \
+      "failed" \
+      "historical_candidate_evaluation"
+  fi
+fi
+
+if [[ -z "${STRATEGY_EXPERIMENT}" \
+  && "${RUN_MODE}" == "weekly" \
+  && "${TIINGO_STATE}" == "collected" ]]; then
+  "${PYTHON_BIN}" -m toss_trading.cli.research_backtest \
+    --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet" \
+    --candidate SPY \
+    --candidate QQQ \
+    --candidate VTV \
+    --candidate XLP \
+    --candidate XLU \
+    --candidate TLT \
+    --candidate GLD \
+    --cash-symbol SGOV \
+    --manifest-root "${LAKE_DIR}/catalog/manifests" \
+    --align-common-history \
+    --instrument-master "${ROOT_DIR}/data/instrument_master.csv" \
+    --cost-calibration "${EXECUTION_COST_CALIBRATION}" \
+    --portfolio-notional-usd "${PORTFOLIO_NOTIONAL_USD}" \
+    --validation-protocol \
+    "${ROOT_DIR}/config/research_validation_protocol.json" \
+    --prospective-observation-ledger \
+    "${PROSPECTIVE_OBSERVATION_LEDGER}" \
+    --output-root "${LAKE_DIR}" \
+    --code-revision "${CODE_REVISION}" \
+    > "${REPORT_DIR}/strategy-backtest.json"
+  STRATEGY_EXPERIMENT="$(
+    "${PYTHON_BIN}" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["experiment_record"])' \
+      "${REPORT_DIR}/strategy-backtest.json"
+  )"
+  if [[ -z "${STRATEGY_EXPERIMENT}" \
+    || ! -f "${STRATEGY_EXPERIMENT}" ]]; then
+    json_log \
+      "research_strategy_artifact_failed" \
+      "broad_etf_dual_momentum_v1" \
+      "failed" \
+      "experiment_artifact_missing"
+    exit 65
+  fi
+  json_log \
+    "research_strategy_artifact_ok" \
+    "broad_etf_dual_momentum_v1" \
+    "available" \
+    "$(basename "${STRATEGY_EXPERIMENT}" .json)"
+elif [[ -z "${STRATEGY_EXPERIMENT}" ]]; then
+  json_log \
+    "research_strategy_artifact_skipped" \
+    "broad_etf_dual_momentum_v1" \
+    "skipped" \
+    "weekly_total_return_run_required"
 fi
 
 VERIFY_ARGS=(
@@ -277,28 +419,68 @@ done
 if [[ -n "${STRATEGY_EXPERIMENT}" ]]; then
   VERIFY_ARGS+=(--strategy-experiment "${STRATEGY_EXPERIMENT}")
 fi
+if [[ -n "${HYPOTHESIS_PLAN_RESULT}" \
+  && -f "${HYPOTHESIS_PLAN_RESULT}" ]]; then
+  VERIFY_ARGS+=(--hypothesis-plan "${HYPOTHESIS_PLAN_RESULT}")
+fi
+if [[ -n "${HYPOTHESIS_EVALUATION_RESULT}" \
+  && -f "${HYPOTHESIS_EVALUATION_RESULT}" ]]; then
+  VERIFY_ARGS+=(--hypothesis-evaluation "${HYPOTHESIS_EVALUATION_RESULT}")
+fi
 "${PYTHON_BIN}" -m toss_trading.cli.research_automation verify \
   "${VERIFY_ARGS[@]}" \
   > "${RUNTIME_ROOT}/last-verification.json"
 "${PYTHON_BIN}" -m toss_trading.cli.research_reporting event \
   --summary "${REPORT_DIR}/reporting-summary.json" \
   >> "${JSON_LOG_PATH}"
+mapfile -t STRATEGY_GATE < <(
+  "${PYTHON_BIN}" -c \
+    'import json,sys; s=json.load(open(sys.argv[1], encoding="utf-8")).get("strategy", {}); print(s.get("artifact_state", s.get("state", "not_available"))); print(s.get("methodology_state", "incomplete")); print(s.get("promotion_state", "blocked")); print(s.get("promotion_reason") or "")' \
+    "${REPORT_DIR}/reporting-summary.json"
+)
+STRATEGY_ARTIFACT_STATE="${STRATEGY_GATE[0]:-not_available}"
+STRATEGY_METHODOLOGY_STATE="${STRATEGY_GATE[1]:-incomplete}"
+STRATEGY_PROMOTION_STATE="${STRATEGY_GATE[2]:-blocked}"
+STRATEGY_PROMOTION_REASON="${STRATEGY_GATE[3]:-unknown}"
+if [[ "${STRATEGY_ARTIFACT_STATE}" == "available" \
+  && "${STRATEGY_METHODOLOGY_STATE}" == "collecting" \
+  && "${STRATEGY_PROMOTION_STATE}" == "blocked" ]]; then
+  json_log \
+    "research_strategy_promotion_pending" \
+    "broad_etf_dual_momentum_v1" \
+    "collecting" \
+    "${STRATEGY_PROMOTION_REASON}"
+elif [[ "${STRATEGY_ARTIFACT_STATE}" == "available" \
+  && "${STRATEGY_PROMOTION_STATE}" == "blocked" ]]; then
+  json_log \
+    "research_strategy_promotion_blocked" \
+    "broad_etf_dual_momentum_v1" \
+    "blocked" \
+    "${STRATEGY_PROMOTION_REASON}"
+elif [[ "${STRATEGY_PROMOTION_STATE}" == "eligible" ]]; then
+  json_log \
+    "research_strategy_promotion_eligible" \
+    "broad_etf_dual_momentum_v1" \
+    "eligible" \
+    ""
+fi
 json_log "research_validation_ok" "" "passed" ""
 
 if [[ -z "${GCS_URI}" ]]; then
   echo "RESEARCH_GCS_URI is required after local verification" >&2
   exit 66
 fi
-gcloud storage rsync "${RUN_DIR}" "${GCS_URI%/}/runs/${RUN_ID}" --recursive
-gcloud storage cp \
-  "${RUN_DIR}/run-status.json" \
-  "${GCS_URI%/}/status/latest-${RUN_MODE}.json"
-gcloud storage cp \
-  "${REPORT_DIR}/reporting-summary.json" \
-  "${GCS_URI%/}/reports/latest-${RUN_MODE}.json"
-gcloud storage cp \
-  "${REPORT_DIR}/visual-report.html" \
-  "${GCS_URI%/}/reports/latest-${RUN_MODE}.html"
+"${PYTHON_BIN}" -m toss_trading.cli.research_upload_gcs \
+  --source-dir "${RUN_DIR}" \
+  --destination-uri "${GCS_URI%/}/runs/${RUN_ID}" \
+  --workers 16 \
+  --alias \
+    "${RUN_DIR}/run-status.json=${GCS_URI%/}/status/${RUN_ID}.json" \
+  --alias \
+    "${REPORT_DIR}/reporting-summary.json=${GCS_URI%/}/reports/${RUN_ID}.json" \
+  --alias \
+    "${REPORT_DIR}/visual-report.html=${GCS_URI%/}/reports/${RUN_ID}.html" \
+  > "${RUNTIME_ROOT}/last-gcs-upload.json"
 json_log "research_backup_upload_ok" "" "uploaded" "${GCS_URI%/}/runs/${RUN_ID}"
 
 if ! "${PYTHON_BIN}" -m toss_trading.cli.research_reporting \
@@ -322,5 +504,102 @@ json_log \
   "inserted" \
   "${BIGQUERY_DATASET}.${BIGQUERY_TABLE}"
 
+if [[ "${RESEARCH_EMAIL_ENABLED:-0}" == "1" ]]; then
+  if ! load_optional_secret \
+      "GMAIL_OAUTH_CLIENT_ID" \
+      "${GMAIL_OAUTH_CLIENT_ID_SECRET:-toss-research-gmail-oauth-client-id}" \
+    || ! load_optional_secret \
+      "GMAIL_OAUTH_CLIENT_SECRET" \
+      "${GMAIL_OAUTH_CLIENT_SECRET_SECRET:-toss-research-gmail-oauth-client-secret}" \
+    || ! load_optional_secret \
+      "GMAIL_OAUTH_REFRESH_TOKEN" \
+      "${GMAIL_OAUTH_REFRESH_TOKEN_SECRET:-toss-research-gmail-oauth-refresh-token}"; then
+    json_log \
+      "research_email_failed" \
+      "gmail" \
+      "failed" \
+      "oauth_secret_missing"
+    json_log "research_automation_failed" "gmail" "failed" "email_delivery"
+    exit 68
+  fi
+  export GMAIL_OAUTH_CLIENT_ID
+  export GMAIL_OAUTH_CLIENT_SECRET
+  export GMAIL_OAUTH_REFRESH_TOKEN
+  PREVIOUS_SUMMARY_ARGS=()
+  PREVIOUS_SUMMARY_PATH="${RUNTIME_ROOT}/latest-${RUN_MODE}/reports/reporting-summary.json"
+  if [[ -f "${PREVIOUS_SUMMARY_PATH}" ]]; then
+    PREVIOUS_SUMMARY_ARGS=(--previous-summary "${PREVIOUS_SUMMARY_PATH}")
+  fi
+  INTERPRETATION_DIR="${RUNTIME_ROOT}/interpretations"
+  INTERPRETATION_PATH="${INTERPRETATION_DIR}/${RUN_ID}.json"
+  mkdir -p "${INTERPRETATION_DIR}"
+  if ! "${PYTHON_BIN}" -m toss_trading.cli.research_reporting \
+    interpret \
+    --summary "${REPORT_DIR}/reporting-summary.json" \
+    "${PREVIOUS_SUMMARY_ARGS[@]}" \
+    --output "${INTERPRETATION_PATH}" \
+    --project-id "${GCP_PROJECT_ID}" \
+    --location "${RESEARCH_INTERPRETATION_LOCATION:-global}" \
+    --model "${RESEARCH_INTERPRETATION_MODEL:-gemini-3.1-flash-lite}" \
+    > "${RUNTIME_ROOT}/last-interpretation.json"; then
+    json_log \
+      "research_interpretation_failed" \
+      "vertex-ai" \
+      "failed" \
+      "interpretation_artifact"
+    json_log "research_automation_failed" "vertex-ai" "failed" "interpretation"
+    exit 68
+  fi
+  INTERPRETATION_SOURCE="$(
+    "${PYTHON_BIN}" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["source"])' \
+      "${INTERPRETATION_PATH}"
+  )"
+  if [[ "${INTERPRETATION_SOURCE}" == "vertex_ai" ]]; then
+    json_log "research_interpretation_ok" "vertex-ai" "interpreted" ""
+  else
+    json_log \
+      "research_interpretation_failed" \
+      "vertex-ai" \
+      "fallback" \
+      "fact_only_report"
+  fi
+  if ! "${PYTHON_BIN}" -m toss_trading.cli.research_reporting \
+    email \
+    --summary "${REPORT_DIR}/reporting-summary.json" \
+    "${PREVIOUS_SUMMARY_ARGS[@]}" \
+    --interpretation "${INTERPRETATION_PATH}" \
+    --sender "${RESEARCH_EMAIL_SENDER:?RESEARCH_EMAIL_SENDER is required}" \
+    --recipient "${RESEARCH_EMAIL_RECIPIENT:?RESEARCH_EMAIL_RECIPIENT is required}" \
+    --delivery-ledger "${RUNTIME_ROOT}/research_email.sqlite" \
+    > "${RUNTIME_ROOT}/last-email-delivery.json"; then
+    json_log "research_email_failed" "gmail" "failed" "gmail_api_delivery"
+    json_log "research_automation_failed" "gmail" "failed" "email_delivery"
+    exit 68
+  fi
+  json_log "research_email_ok" "gmail" "sent_or_already_sent" ""
+else
+  json_log "research_email_skipped" "gmail" "disabled" "oauth_not_configured"
+fi
+
+"${PYTHON_BIN}" -m toss_trading.cli.research_record_observation \
+  --ledger "${PROSPECTIVE_OBSERVATION_LEDGER}" \
+  --run-id "${RUN_ID}" \
+  --code-revision "${CODE_REVISION}" \
+  > "${REPORT_DIR}/prospective-observation-commit.json"
 ln -sfn "${RUN_DIR}" "${RUNTIME_ROOT}/latest-${RUN_MODE}"
 json_log "research_automation_ok" "" "completed" ""
+if [[ "${RUN_MODE}" == "weekly" ]]; then
+  json_log "research_weekly_automation_ok" "" "completed" ""
+elif [[ "${RUN_MODE}" == "daily" ]]; then
+  WEEKLY_SUMMARY="${RUNTIME_ROOT}/latest-weekly/reports/reporting-summary.json"
+  if ! "${PYTHON_BIN}" -c \
+    'import datetime as d,json,sys; p=json.load(open(sys.argv[1], encoding="utf-8")); t=d.datetime.fromisoformat(p["verified_at"].replace("Z","+00:00")); raise SystemExit(0 if d.datetime.now(d.timezone.utc)-t <= d.timedelta(days=8) else 1)' \
+    "${WEEKLY_SUMMARY}" 2>/dev/null; then
+    json_log \
+      "research_weekly_stale" \
+      "weekly" \
+      "stale" \
+      "no_successful_weekly_run_within_eight_days"
+  fi
+fi

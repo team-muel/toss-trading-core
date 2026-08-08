@@ -1,0 +1,16 @@
+[Unit]
+Description=Prune verified Toss research runtime and old immutable releases
+After=toss-research-automation@daily.service
+
+[Service]
+Type=oneshot
+User=seoje
+Group=seoje
+WorkingDirectory=/home/seoje/toss-trading/current
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/seoje/toss-trading/research-runtime /home/seoje/toss-trading/releases
+ExecStart=/home/seoje/toss-trading/current/scripts/prune_research_runtime.sh --apply

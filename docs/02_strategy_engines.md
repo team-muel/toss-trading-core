@@ -2,7 +2,7 @@
 
 ## Scope
 
-Toss live 자동화 대상은 국내/미국 주식 및 ETF 현물 주문입니다. 전략 엔진은 주문을 직접 내지 않고 `signal_log`와 target proposal만 생성합니다. 최종 주문은 account state, data quality, risk hub, rate limit gate를 통과해야 합니다.
+Toss live 후보 범위는 전용 계좌의 미국 상장 USD long-only ETF 현물 주문입니다. 국내 종목과 개별주는 research-only입니다. 전략 엔진은 주문을 직접 내지 않고 `signal_log`와 target proposal만 생성합니다. 최종 주문은 account state, data quality, risk hub, rate limit gate를 통과해야 합니다.
 
 ## Engine Matrix
 
@@ -37,11 +37,13 @@ Toss live 자동화 대상은 국내/미국 주식 및 ETF 현물 주문입니�
 - 다음 거래일부터 목표 비중 적용
 - 절대 모멘텀 0 초과 후보 중 상대 모멘텀 상위 1개
 - 통과 후보가 없으면 `SGOV`
-- commission 1.5 bps와 slippage 2.0 bps를 turnover에 적용
+- Foundation이 내보낸 현재 Toss 미국 수수료와 사전 선언된 주문금액별 slippage
+  tier를 매도·매수 양쪽 체결금액에 적용
 - SPY buy-and-hold, 동일가중, 60/40, 현금성 benchmark와 비교
 
-이 수치는 수익을 보장하는 calibrated policy가 아니라 하나의 falsifiable
-baseline입니다. OOS를 확인한 뒤 이 숫자를 최적화해 소급 변경하지 않습니다.
+전략 파라미터는 수익을 보장하는 calibrated policy가 아니라 하나의 falsifiable
+baseline입니다. 비용 정책은 성과가 아니라 계좌 schedule과 주문금액으로 결정하며
+OOS를 확인한 뒤 최적화해 소급 변경하지 않습니다.
 실험 config, 입력 manifest와 code revision은 `gold/experiments`에 함께
 기록합니다.
 

@@ -62,6 +62,9 @@ Massive는 REST와 WebSocket을 통해 options, stocks, indices, futures, divide
 ### FRED
 
 FRED는 daily/batch 성격의 금리와 release calendar에 적합합니다.
+API 접근 가능 여부와 내부 장기 보관·재배포 권리는 별개입니다. series별
+저작권, 출처 표시, 보관 허용 범위를 검토하고 승인하기 전에는 자동 수집을
+활성화하지 않습니다.
 
 주요 사용:
 

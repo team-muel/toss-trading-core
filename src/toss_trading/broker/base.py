@@ -9,6 +9,8 @@ class BrokerCapabilities:
     order_cancel: bool = False
     fills: bool = False
     balances: bool = False
+    conditional_order_entry: bool = False
+    conditional_order_modify: bool = False
     options_trading: bool = False
     margin_status: bool = False
 

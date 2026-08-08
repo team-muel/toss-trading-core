@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import Iterable
+
+import yaml
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -16,7 +19,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--expected-symbol", action="append", default=[])
     parser.add_argument("--require-adjustment", action="append", default=[])
+    parser.add_argument(
+        "--cross-provider-source",
+        action="append",
+        default=[],
+        help="Supply exactly two raw-bar sources that must have auditable overlap.",
+    )
+    parser.add_argument("--data-source-policy")
+    parser.add_argument("--max-cross-provider-close-error-bps", type=float)
+    parser.add_argument("--volume-warning-ratio", type=float)
     return parser
+
+
+def _cross_provider_policy(path: str | None) -> tuple[float, float]:
+    if path is None:
+        return 100.0, 0.20
+    payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    try:
+        policy = payload["providers"]["toss_candles"]["automation"][
+            "raw_cross_validation"
+        ]
+        return (
+            float(policy["maximum_close_error_bps"]),
+            float(policy["volume_difference_warning_ratio"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("data-source policy lacks raw cross-validation limits") from exc
 
 
 def validate_parquet(
@@ -24,6 +52,9 @@ def validate_parquet(
     *,
     expected_symbols: Iterable[str] = (),
     required_adjustments: Iterable[str] = (),
+    cross_provider_sources: Iterable[str] = (),
+    max_cross_provider_close_error_bps: float = 100.0,
+    volume_warning_ratio: float = 0.20,
 ) -> dict:
     try:
         import duckdb
@@ -31,6 +62,12 @@ def validate_parquet(
         raise RuntimeError(
             "DuckDB is required for Parquet validation; install toss-trading[research]"
         ) from exc
+
+    provider_pair = tuple(item.strip() for item in cross_provider_sources if item.strip())
+    if provider_pair and len(provider_pair) != 2:
+        raise ValueError("cross-provider validation requires exactly two sources")
+    if max_cross_provider_close_error_bps < 0 or volume_warning_ratio < 0:
+        raise ValueError("cross-provider tolerances must be nonnegative")
 
     connection = duckdb.connect()
     try:
@@ -170,6 +207,76 @@ def validate_parquet(
             ORDER BY source, adjustment, symbol
             """
         ).fetchall()
+        provider_cross_check = None
+        if provider_pair:
+            source_a, source_b = provider_pair
+            cross_rows = connection.execute(
+                """
+                SELECT
+                  a.symbol,
+                  COUNT(*) AS overlap_rows,
+                  MAX(ABS(a.close / b.close - 1.0) * 10000.0) AS max_close_error_bps,
+                  AVG(ABS(a.close / b.close - 1.0) * 10000.0) AS mean_close_error_bps,
+                  SUM(CASE WHEN ABS(a.close / b.close - 1.0) * 10000.0 > ? THEN 1 ELSE 0 END)
+                    AS close_outlier_rows,
+                  SUM(
+                    CASE
+                      WHEN GREATEST(a.volume, b.volume) > 0
+                       AND ABS(a.volume - b.volume) / GREATEST(a.volume, b.volume) > ?
+                      THEN 1 ELSE 0
+                    END
+                  ) AS volume_warning_rows
+                FROM bars a
+                JOIN bars b
+                  ON b.symbol = a.symbol
+                 AND b.exchange_local_date = a.exchange_local_date
+                 AND b.interval = a.interval
+                 AND b.adjustment = 'raw'
+                 AND b.source = ?
+                WHERE a.adjustment = 'raw'
+                  AND a.source = ?
+                GROUP BY a.symbol
+                ORDER BY a.symbol
+                """,
+                [
+                    max_cross_provider_close_error_bps,
+                    volume_warning_ratio,
+                    source_b,
+                    source_a,
+                ],
+            ).fetchall()
+            overlap_rows = sum(int(row[1]) for row in cross_rows)
+            close_outlier_rows = sum(int(row[4]) for row in cross_rows)
+            volume_warning_rows = sum(int(row[5]) for row in cross_rows)
+            provider_cross_check = {
+                "sources": [source_a, source_b],
+                "state": (
+                    "missing_overlap"
+                    if not overlap_rows
+                    else "failed"
+                    if close_outlier_rows
+                    else "warning"
+                    if volume_warning_rows
+                    else "ok"
+                ),
+                "overlap_rows": overlap_rows,
+                "overlap_symbols": len(cross_rows),
+                "close_outlier_rows": close_outlier_rows,
+                "volume_warning_rows": volume_warning_rows,
+                "max_close_error_bps_allowed": max_cross_provider_close_error_bps,
+                "volume_warning_ratio": volume_warning_ratio,
+                "symbol_summary": [
+                    {
+                        "symbol": row[0],
+                        "overlap_rows": int(row[1]),
+                        "max_close_error_bps": float(row[2]),
+                        "mean_close_error_bps": float(row[3]),
+                        "close_outlier_rows": int(row[4]),
+                        "volume_warning_rows": int(row[5]),
+                    }
+                    for row in cross_rows
+                ],
+            }
     finally:
         connection.close()
 
@@ -191,6 +298,10 @@ def validate_parquet(
         or coverage_mismatch_rows
         or missing_symbols
         or missing_adjustments
+        or (
+            provider_cross_check is not None
+            and provider_cross_check["state"] in {"missing_overlap", "failed"}
+        )
     )
     result = {
         "adjustments": sorted(adjustments),
@@ -209,6 +320,7 @@ def validate_parquet(
         "missing_adjustments": missing_adjustments,
         "missing_symbols": missing_symbols,
         "ok": ok,
+        "provider_cross_check": provider_cross_check,
         "summary": [
             {
                 "source": source,
@@ -247,10 +359,24 @@ def validate_parquet(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    policy_close_bps, policy_volume_ratio = _cross_provider_policy(
+        args.data_source_policy
+    )
     result = validate_parquet(
         args.parquet,
         expected_symbols=args.expected_symbol,
         required_adjustments=args.require_adjustment,
+        cross_provider_sources=args.cross_provider_source,
+        max_cross_provider_close_error_bps=(
+            args.max_cross_provider_close_error_bps
+            if args.max_cross_provider_close_error_bps is not None
+            else policy_close_bps
+        ),
+        volume_warning_ratio=(
+            args.volume_warning_ratio
+            if args.volume_warning_ratio is not None
+            else policy_volume_ratio
+        ),
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0 if result["ok"] else 1

@@ -96,10 +96,6 @@ def _sum_decimal_text(*values: Any) -> str | None:
     return format(sum(decimals, Decimal("0")), "f")
 
 
-def _float_or_zero(value: Any) -> float:
-    return _float(value) or 0.0
-
-
 def _stored_decimal(row: sqlite3.Row, decimal_key: str, numeric_key: str) -> Decimal:
     value = row[decimal_key] if row[decimal_key] is not None else row[numeric_key]
     return Decimal(str(value))
@@ -486,7 +482,7 @@ class AccountLedger:
             INSERT INTO snapshot_run (
               run_id, account_seq, target_order_id, started_at, status, schema_version,
               normalizer_version, policy_hash, code_revision, created_at
-            ) VALUES (?, ?, ?, ?, 'RUNNING', 1, 'toss-openapi-1.2.4', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, 'RUNNING', 1, 'toss-openapi-1.2.13', ?, ?, ?)
             """,
             (run_id, account_seq, target_order_id, now, policy_hash, code_revision, now),
         )

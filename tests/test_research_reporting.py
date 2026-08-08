@@ -9,8 +9,10 @@ from scripts.render_bigquery_reporting import render_sql
 from scripts.render_research_dashboard import render_dashboard
 from scripts.render_research_log_metrics import render_log_metrics
 from scripts.render_research_monitoring import render as render_monitoring_policies
+from toss_trading.cli.research_reporting import _read_optional_previous_summary
 from toss_trading.research.reporting import (
     STRATEGY_METRIC_KEYS,
+    autonomous_research_snapshot,
     build_monitoring_event,
     build_research_summary,
     render_visual_report,
@@ -36,9 +38,29 @@ def sample_summary(
             "symbols_requested": 3,
             "raw_pages": 3,
             "adjusted_pages": 3,
-            "raw_failures": [{"symbol": "QQQ"}] if collection_failed else [],
+            "raw_failures": (
+                [
+                    {
+                        "symbol": "QQQ",
+                        "status_code": 404,
+                        "code": "stock-not-found",
+                        "reason": "provider_symbol_unavailable",
+                    }
+                ]
+                if collection_failed
+                else []
+            ),
             "adjusted_failures": (
-                [{"symbol": "QQQ"}] if collection_failed else []
+                [
+                    {
+                        "symbol": "QQQ",
+                        "status_code": 404,
+                        "code": "stock-not-found",
+                        "reason": "provider_symbol_unavailable",
+                    }
+                ]
+                if collection_failed
+                else []
             ),
         },
         quality={
@@ -59,6 +81,72 @@ def sample_summary(
 
 
 class ResearchReportingTest(unittest.TestCase):
+    def test_autonomous_evaluation_never_grants_promotion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            plan = root / "plan.json"
+            evaluation = root / "evaluation.json"
+            plan.write_text(
+                json.dumps(
+                    {
+                        "state": "completed",
+                        "created": ["one"],
+                        "reused": [],
+                        "registered_count": 1,
+                        "model": "gemini-test",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            evaluation.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "autonomous-candidate-evaluation-summary-v1",
+                        "state": "completed",
+                        "evaluated": ["one"],
+                        "reused": [],
+                        "historically_qualified": ["one"],
+                        "evaluation_failed": [],
+                        "candidate_results": [
+                            {
+                                "hypothesis_id": "one",
+                                "state": "historical_not_qualified",
+                                "failed_gates": [
+                                    "multiple_testing_adjusted_benchmark"
+                                ],
+                            }
+                        ],
+                        "promotion_authorized": False,
+                        "execution_authorized": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            snapshot = autonomous_research_snapshot(plan, evaluation)
+
+        self.assertEqual(snapshot["evaluated_count"], 1)
+        self.assertEqual(snapshot["historically_qualified_count"], 1)
+        self.assertFalse(snapshot["promotion_authorized"])
+
+    def test_invalid_previous_summary_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            previous = Path(tmp) / "legacy-summary.json"
+            previous.write_text(
+                json.dumps(
+                    {
+                        "schema_version": "research-visual-report-v1",
+                        "ready_for_upload": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertIsNone(_read_optional_previous_summary(previous))
+            self.assertIsNone(
+                _read_optional_previous_summary(Path(tmp) / "missing.json")
+            )
+
     def test_unavailable_strategy_is_null_not_fake_zero(self):
         summary = sample_summary()
         row = summary_to_bigquery_row(
@@ -127,11 +215,111 @@ class ResearchReportingTest(unittest.TestCase):
             event = build_monitoring_event(summary)
 
             self.assertEqual(summary["strategy"]["state"], "available")
+            self.assertEqual(
+                summary["strategy"]["artifact_state"], "available"
+            )
+            self.assertEqual(
+                summary["strategy"]["methodology_state"], "incomplete"
+            )
+            self.assertEqual(
+                summary["strategy"]["promotion_state"], "blocked"
+            )
+            self.assertEqual(row["strategy_promotion_state"], "blocked")
             self.assertEqual(row["strategy_total_return"], 0.1)
             self.assertEqual(event["strategy_total_return"], 0.1)
             self.assertEqual(
                 event["strategy_name"],
                 "broad_etf_dual_momentum_v1",
+            )
+
+    def test_prospective_collection_hides_partial_strategy_metrics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = {
+                "strategy": "broad_etf_dual_momentum_v1",
+                "strategy_implementation_version": 2,
+                "input_adjustment": "total_return",
+                "code_revision": "abc123",
+                "data_manifest_ids": ["manifest-1"],
+                "config": {},
+                "benchmark_names": ["SPY buy-and-hold"],
+                "benchmark_metrics": {},
+                "full_sample_metrics": {},
+                "full_sample_benchmark_metrics": {},
+                "metrics": None,
+                "rebalances": [],
+                "walk_forward_folds": [{"test_start": "2025-01-01"}],
+                "validation_protocol": {
+                    "schema_version": "research-validation-v2",
+                    "primary_benchmark": "SPY buy-and-hold",
+                    "parameter_selection": "pre_registered_no_fit",
+                    "walk_forward_role": "historical_diagnostic_only",
+                    "untouched_holdout": True,
+                    "headline_metrics_scope": "prospective_holdout",
+                },
+                "prospective_holdout": {
+                    "state": "collecting",
+                    "start": "2026-08-03",
+                    "end": None,
+                    "minimum_trading_days": 126,
+                    "observed_trading_days": 0,
+                    "metrics_revealed": False,
+                },
+                "equity_curve": [["2026-01-01", 1.0]],
+            }
+            canonical = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            digest = hashlib.sha256(canonical).hexdigest()
+            experiment_id = str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"experiment:{digest}")
+            )
+            path = Path(tmp) / f"{experiment_id}.json"
+            path.write_bytes(canonical)
+
+            summary = sample_summary(experiment=path)
+            row = summary_to_bigquery_row(summary)
+            event = build_monitoring_event(summary)
+
+            self.assertEqual(
+                summary["strategy"]["methodology_state"],
+                "collecting",
+            )
+            self.assertEqual(
+                summary["strategy"]["promotion_state"],
+                "blocked",
+            )
+            self.assertEqual(
+                summary["strategy"]["prospective_observed_days"],
+                0,
+            )
+            self.assertIsNone(row["strategy_total_return"])
+            self.assertNotIn("strategy_total_return", event)
+            self.assertIn("strategy_promotion_reason", event)
+
+            payload["prospective_holdout"]["state"] = "invalid_data_gap"
+            canonical = json.dumps(
+                payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            digest = hashlib.sha256(canonical).hexdigest()
+            invalid_path = Path(tmp) / str(
+                uuid.uuid5(uuid.NAMESPACE_URL, f"experiment:{digest}")
+            )
+            invalid_path = invalid_path.with_suffix(".json")
+            invalid_path.write_bytes(canonical)
+            invalid_summary = sample_summary(experiment=invalid_path)
+            self.assertEqual(
+                invalid_summary["strategy"]["methodology_reason"],
+                "prospective_collection_continuity_failed",
+            )
+            self.assertEqual(
+                invalid_summary["strategy"]["promotion_state"],
+                "blocked",
             )
 
     def test_fabricated_strategy_experiment_is_rejected(self):
@@ -186,8 +374,8 @@ class ResearchReportingTest(unittest.TestCase):
                 table_id="runs",
             )
 
-            self.assertEqual(len(metric_paths), 18)
-            self.assertEqual(len(policy_paths), 6)
+            self.assertEqual(len(metric_paths), 24)
+            self.assertEqual(len(policy_paths), 15)
             failure_metric = json.loads(
                 (
                     root

@@ -4,14 +4,31 @@ runtime:
   tax_reporting_currency: KRW
   live_trading_enabled: false
   broker_base_url: https://openapi.tossinvest.com
-  toss_openapi_schema_version: 1.2.4
-  toss_openapi_schema_hash: 7000d89ea3d783b0fa36d32e31750e85e139098306dbfce53a75fc4891019f1b
+  toss_openapi_schema_version: 1.2.13
+  toss_openapi_schema_hash: af93bc7d0d31eda3e24131f0acaa83d6b9c304a801161fbc06ba9a9824f8b92f
   toss_openapi_schema_hash_source: https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
-  # OpenAPI 1.2.4 exposes status=CLOSED in the query enum but the referenced
-  # PaginatedOrderResponse still says it returns 400 closed-not-supported.
-  # Keep CLOSED list polling disabled until Toss publishes an unambiguous contract.
-  closed_order_listing_supported: false
-  live_scope: equity_etf_only
+  toss_openapi_contract_review: config/toss_openapi_contract.json
+  # OpenAPI 1.2.13 explicitly documents paginated CLOSED order history.
+  # Poll it with a bounded overlap window so fills that disappear from OPEN
+  # between six-hour Foundation runs remain observable and replayable.
+  closed_order_listing_supported: true
+  closed_order_lookback_days: 7
+  broker_capabilities:
+    standard_order_entry:
+      documented: true
+      enabled: false
+    conditional_order_entry:
+      documented: true
+      enabled: false
+      supported_contract_types:
+        - SINGLE
+        - OCO
+        - OTO
+    conditional_order_modify:
+      documented: true
+      enabled: false
+    disabled_reason: "The foundation adapter is read-only; write capabilities require paper and shadow lifecycle evidence plus separate operator approval."
+  live_scope: us_listed_usd_long_only_etf_dedicated_account
 
 external_data:
   execution_truth_source: toss
@@ -57,7 +74,12 @@ calibration:
   report_numbers_are_initial_guardrails_only: true
   requires_paper_trade_calibration_before_live: true
   require_manual_approval_for_threshold_changes: true
-  minimum_observations_before_relaxing_limits: null
+  minimum_observations_before_relaxing_limits:
+    shadow_trading_days: 60
+    completed_rebalance_cycles: 3
+    order_lifecycle_scenarios: 30
+    unresolved_reconciliation_blocks: 0
+    unknown_order_states: 0
   calibration_inputs:
     - realized_slippage
     - reject_rate
@@ -115,8 +137,8 @@ broad_etf_dual_momentum:
   top_k: 1
   minimum_absolute_momentum: 0.0
   cash_symbol: SGOV
-  commission_bps: 1.5
-  slippage_bps: 2.0
+  walk_forward_train_days: 504
+  walk_forward_test_days: 126
   disabled_reason: "Research baseline must pass point-in-time OOS and paper gates."
 
 etf_relative_value:
