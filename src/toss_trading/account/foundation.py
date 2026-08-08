@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import replace
+from datetime import datetime, timedelta
 from typing import Any, Protocol
+from zoneinfo import ZoneInfo
 
 from toss_trading.account.ledger import AccountLedger, AccountStateExplanation
 from toss_trading.contracts import require_accounts
@@ -77,6 +79,7 @@ class FoundationSnapshotter:
         include_sellable_quantity: bool = True,
         include_order_details: bool = True,
         include_closed_orders: bool = False,
+        closed_order_lookback_days: int = 7,
         buying_power_currency: str | list[str] | tuple[str, ...] = "USD",
         max_order_pages: int = 20,
         max_order_details: int = 20,
@@ -163,8 +166,18 @@ class FoundationSnapshotter:
             closed_orders = 0
             closed_order_results = []
             if include_closed_orders:
+                if not 1 <= closed_order_lookback_days <= 31:
+                    raise ValueError("closed_order_lookback_days must be between 1 and 31")
+                today_kst = datetime.now(ZoneInfo("Asia/Seoul")).date()
+                closed_from = (
+                    today_kst - timedelta(days=closed_order_lookback_days - 1)
+                ).isoformat()
+                closed_to = today_kst.isoformat()
                 for result in self.adapter.get_all_orders(
-                    status="CLOSED", max_pages=max_order_pages
+                    status="CLOSED",
+                    from_date=closed_from,
+                    to_date=closed_to,
+                    max_pages=max_order_pages,
                 ):
                     closed_order_results.append(result)
                     closed_orders += self.ledger.ingest_orders(

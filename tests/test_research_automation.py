@@ -1,12 +1,15 @@
 import json
 import hashlib
+import io
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
 
 from toss_trading.cli.research_validate_bars import validate_parquet
-from toss_trading.cli.research_reporting import _read_summary
+from toss_trading.cli.research_reporting import _read_summary, main as reporting_main
 from toss_trading.research import DataLake, MarketBar
 from toss_trading.research.automation import (
     parse_provider_states,
@@ -31,6 +34,8 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertEqual(daily.realtime_start, "2026-04-26")
         self.assertEqual(weekly.start_date, "2004-01-01")
         self.assertEqual(weekly.realtime_start, "2004-01-01")
+        self.assertEqual(daily.realtime_end, "2026-07-24")
+        self.assertEqual(weekly.realtime_end, "2026-07-24")
 
     def test_provider_states_reject_ambiguous_values(self):
         self.assertEqual(
@@ -173,6 +178,34 @@ class ResearchAutomationTest(unittest.TestCase):
                     expected,
                     relative_path,
                 )
+            interpretation_path = root / "runtime-interpretation.json"
+            output = io.StringIO()
+            with patch.dict(
+                "os.environ",
+                {"RESEARCH_INTERPRETATION_ENABLED": "0"},
+            ), redirect_stdout(output):
+                exit_code = reporting_main(
+                    [
+                        "interpret",
+                        "--summary",
+                        str(summary_path),
+                        "--output",
+                        str(interpretation_path),
+                    ]
+                )
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(
+                json.loads(output.getvalue())["source"],
+                "deterministic_fallback",
+            )
+            saved_interpretation = json.loads(
+                interpretation_path.read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                saved_interpretation["current_run_id"],
+                root.name,
+            )
+            self.assertTrue(saved_interpretation["evidence_digest"])
             original_summary = summary_path.read_text(encoding="utf-8")
             summary_path.write_text(
                 original_summary.replace('"ready_for_upload":true', '"ready_for_upload":false'),
@@ -233,9 +266,13 @@ class ResearchAutomationTest(unittest.TestCase):
             "deploy/systemd/toss-research-automation@.service",
             "deploy/systemd/toss-research-daily.timer",
             "deploy/systemd/toss-research-weekly.timer",
+            "deploy/systemd/toss-research-prune.service",
+            "deploy/systemd/toss-research-prune.timer",
+            "scripts/prune_research_runtime.sh",
             "deploy/storage/research-lifecycle.json",
             "deploy/monitoring-research/log-metrics.yaml",
             "deploy/monitoring-research/research-reporting-upload-failed.yaml",
+            "deploy/monitoring-research/research-interpretation-failed.yaml",
             "deploy/monitoring-dashboard/research-visual-report.json",
             "deploy/bigquery/research_run_summary_schema.json",
             "deploy/bigquery/latest_run_summaries.sql",
@@ -251,6 +288,29 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("flock -u 8", runner)
         self.assertIn("TOSS_API_LOCK_PATH", runner)
         self.assertIn("research_validate_bars", runner)
+        self.assertIn("--require-adjustment total_return", runner)
+        self.assertIn("research_backtest", runner)
+        self.assertIn("--align-common-history", runner)
+        self.assertIn("--validation-protocol", runner)
+        self.assertIn("research_plan_hypotheses", runner)
+        self.assertIn("autonomous_research_policy.json", runner)
+        self.assertIn("research_hypothesis_planning_ok", runner)
+        self.assertIn("research_hypothesis_planning_failed", runner)
+        self.assertIn("--hypothesis-plan", runner)
+        self.assertIn("research_evaluate_hypotheses", runner)
+        self.assertIn("research_hypothesis_evaluation_ok", runner)
+        self.assertIn("research_hypothesis_evaluation_failed", runner)
+        self.assertIn("--hypothesis-evaluation", runner)
+        self.assertIn("research_strategy_artifact_ok", runner)
+        self.assertIn("research_strategy_promotion_pending", runner)
+        self.assertIn("research_strategy_promotion_blocked", runner)
+        self.assertIn(
+            'STRATEGY_METHODOLOGY_STATE}" == "collecting"',
+            runner,
+        )
+        self.assertIn("research_weekly_automation_ok", runner)
+        self.assertIn("research_weekly_stale", runner)
+        self.assertIn("strategy-backtest.json", runner)
         self.assertIn("research_automation verify", runner)
         self.assertIn(
             '> "${RUNTIME_ROOT}/last-verification.json"',
@@ -262,13 +322,51 @@ class ResearchAutomationTest(unittest.TestCase):
         )
         self.assertIn("research_reporting event", runner)
         self.assertIn("upload-bigquery", runner)
-        self.assertIn("gcloud storage rsync", runner)
+        self.assertIn("research_upload_gcs", runner)
+        self.assertIn(
+            '--destination-uri "${GCS_URI%/}/runs/${RUN_ID}"',
+            runner,
+        )
+        self.assertIn("last-gcs-upload.json", runner)
+        self.assertNotIn("--recursive", runner)
+        self.assertNotIn("gcloud storage rsync", runner)
+        self.assertNotIn(
+            '"${GCS_URI%/}/status/latest-${RUN_MODE}.json"',
+            runner,
+        )
+        self.assertNotIn(
+            '"${GCS_URI%/}/reports/latest-${RUN_MODE}.json"',
+            runner,
+        )
+        self.assertNotIn("TOSS_ACCOUNT_SEQ_SECRET", runner)
         self.assertIn("RESEARCH_TIINGO_LICENSE_ACCEPTED", runner)
         self.assertIn("RESEARCH_FRED_SERIES_RIGHTS_APPROVED", runner)
         self.assertIn("RESEARCH_SEC_CONTACT_APPROVED", runner)
+        self.assertIn(
+            "optional_secret_rejected env=${env_name} "
+            "reason=invalid_control_character",
+            runner,
+        )
+        self.assertIn("research_reporting \\", runner)
+        self.assertIn("research_email_ok", runner)
+        self.assertIn("research_email_failed", runner)
+        self.assertIn("research_interpretation_ok", runner)
+        self.assertIn("research_interpretation_failed", runner)
+        self.assertIn("research_reporting \\\n    interpret", runner)
+        self.assertIn("RESEARCH_INTERPRETATION_MODEL", runner)
+        self.assertIn("PREVIOUS_SUMMARY_ARGS", runner)
+        self.assertIn("GMAIL_OAUTH_REFRESH_TOKEN", runner)
+        self.assertIn("RESEARCH_EMAIL_RECIPIENT", runner)
+        self.assertIn("last-email-delivery.json", runner)
         self.assertIn('readlink -f "${ROOT_DIR}"', runner)
         self.assertIn('^[0-9a-f]{7,40}$', runner)
         self.assertIn('CODE_REVISION="${RELEASE_REVISION}"', runner)
+
+        provisioner = Path(
+            "scripts/provision_research_automation_gcp.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("aiplatform.googleapis.com", provisioner)
+        self.assertIn("roles/aiplatform.user", provisioner)
 
         installer = Path(
             "scripts/install_research_automation_vm.sh"
@@ -299,6 +397,19 @@ class ResearchAutomationTest(unittest.TestCase):
             research_service,
         )
         self.assertNotIn(":/snap/bin:", research_service)
+        self.assertNotIn("TOSS_ACCOUNT_SEQ_SECRET", research_service)
+        self.assertNotIn("TOSS_BROKER_BASE_URL_SECRET", research_service)
+
+        provisioner = Path(
+            "scripts/provision_research_automation_gcp.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("roles/storage.objectCreator", provisioner)
+        self.assertIn("remove-iam-policy-binding", provisioner)
+        self.assertIn("gmail.googleapis.com", provisioner)
+        self.assertIn(
+            "toss-research-gmail-oauth-refresh-token",
+            provisioner,
+        )
 
         cloudbuild = Path("cloudbuild.yaml").read_text(encoding="utf-8")
         self.assertIn(

@@ -16,7 +16,7 @@ class FoundationCliTest(unittest.TestCase):
         self.assertEqual(args.db, "runtime/foundation_account_state.sqlite")
         self.assertEqual(args.report, "runtime/foundation_account_state_report.txt")
         self.assertTrue(args.include_sellable_quantity)
-        self.assertFalse(args.include_closed_orders)
+        self.assertTrue(args.include_closed_orders)
         self.assertEqual(args.max_order_details, 20)
         self.assertIsNone(args.buying_power_currencies)
 
@@ -31,6 +31,10 @@ class FoundationCliTest(unittest.TestCase):
     def test_parser_can_include_closed_orders_explicitly(self):
         args = build_parser().parse_args(["--include-closed-orders"])
         self.assertTrue(args.include_closed_orders)
+
+    def test_parser_can_skip_closed_orders_for_diagnostics(self):
+        args = build_parser().parse_args(["--skip-closed-orders"])
+        self.assertFalse(args.include_closed_orders)
 
     def test_parser_accepts_multiple_buying_power_currencies(self):
         args = build_parser().parse_args(

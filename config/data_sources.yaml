@@ -1,5 +1,5 @@
 schema_version: research-data-sources-v1
-reviewed_at: "2026-07-25"
+reviewed_at: "2026-08-08"
 scope: private_internal_research
 redistribution_allowed: false
 
@@ -12,7 +12,7 @@ selection:
 
 providers:
   tiingo_eod:
-    decision: selected_pending_credential
+    decision: selected_active_internal_research
     product: Starter
     price_reviewed: "$0/month"
     license: Internal Use Only
@@ -36,6 +36,9 @@ providers:
       requests_per_day: 1000
       monthly_bandwidth_gb: 1
     credential_env: TIINGO_API_TOKEN
+    symbol_identity:
+      canonical_current: SPYM
+      provider_alias: SPLG
     official_docs: https://www.tiingo.com/documentation/end-of-day
     official_pricing: https://www.tiingo.com/about/pricing
 
@@ -74,9 +77,17 @@ providers:
       daily_recent_revision_window_days: 45
       weekly_full_reconciliation: true
       upload_requires_quality_pass: true
+      raw_cross_validation:
+        comparison_provider: tiingo_eod
+        maximum_close_error_bps: 100
+        volume_difference_warning_ratio: 0.20
+    symbol_identity:
+      canonical_current: SPYM
+      provider_symbol: SPYM
+      prior_ticker: SPLG
 
   fred_alfred:
-    decision: selected_pending_credential_and_series_review
+    decision: selected_active_approved_series_only
     license: series_level_rights_and_attribution_required
     permitted_use:
       - approved_series_internal_research

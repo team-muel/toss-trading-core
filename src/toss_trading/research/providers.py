@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -26,15 +27,6 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _json_bytes(value: Any) -> bytes:
-    return json.dumps(
-        value,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-
-
 def _response_body_bytes(response: Any) -> bytes:
     try:
         return response.read()
@@ -50,6 +42,26 @@ def _daily_event_time(local_date: str, timezone_name: str = "America/New_York") 
         tzinfo=ZoneInfo(timezone_name),
     )
     return local_close.astimezone(timezone.utc).isoformat()
+
+
+def _daily_estimated_available_at(
+    local_date: str,
+    timezone_name: str = "America/New_York",
+) -> str:
+    """Conservative same-session availability estimate for an EOD bar.
+
+    Raw manifests retain the real retrieval timestamp. Normalized historical
+    rows use 20:00 exchange-local time so a backfill remains usable in a
+    point-in-time simulation without pretending it was available at the close.
+    """
+
+    session_date = date.fromisoformat(local_date)
+    estimated_release = datetime.combine(
+        session_date,
+        datetime_time(hour=20),
+        tzinfo=ZoneInfo(timezone_name),
+    )
+    return estimated_release.astimezone(timezone.utc).isoformat()
 
 
 def _provider_timestamp(value: str) -> tuple[str, str]:
@@ -257,7 +269,7 @@ def ingest_toss_candle_bundle(
             row = MarketBar(
                 symbol=symbol,
                 event_time_utc=event_time,
-                available_at=retrieved_at,
+                available_at=_daily_estimated_available_at(exchange_date),
                 exchange_local_date=exchange_date,
                 interval=interval,
                 open=str(candle["openPrice"]),
@@ -269,7 +281,10 @@ def ingest_toss_candle_bundle(
                 session="regular",
                 adjustment=adjustment,
                 source="toss-openapi",
-                source_revision=f"toss-candles-adjusted={str(adjusted).lower()}",
+                source_revision=(
+                    f"toss-candles-adjusted={str(adjusted).lower()};"
+                    f"retrieved_at={retrieved_at}"
+                ),
                 raw_manifest_id=raw.manifest_id,
                 quality_flag=quality_flag,
             )
@@ -293,10 +308,21 @@ def ingest_toss_candle_bundle(
 class TiingoEodClient:
     token: str
     opener: Callable[..., Any] = urllib.request.urlopen
+    attempts: int = 3
+    timeout_seconds: int = 30
+    sleeper: Callable[[float], None] = time.sleep
 
     def fetch(self, symbol: str, *, start_date: str, end_date: str) -> bytes:
-        if not self.token:
+        token = self.token.strip()
+        if not token:
             raise RuntimeError("TIINGO_API_TOKEN is required")
+        if any(
+            ord(character) < 32 or ord(character) == 127
+            for character in token
+        ):
+            raise ValueError(
+                "TIINGO_API_TOKEN contains unsupported control characters"
+            )
         query = urllib.parse.urlencode(
             {
                 "startDate": start_date,
@@ -309,13 +335,30 @@ class TiingoEodClient:
         request = urllib.request.Request(
             url,
             headers={
-                "Authorization": f"Token {self.token}",
+                "Authorization": f"Token {token}",
                 "Accept": "application/json",
                 "User-Agent": "toss-trading-core-research/0.1",
             },
             method="GET",
         )
-        return _response_body_bytes(self.opener(request, timeout=30))
+        if self.attempts < 1:
+            raise ValueError("Tiingo attempts must be positive")
+        last_error: BaseException | None = None
+        for attempt in range(1, self.attempts + 1):
+            try:
+                return _response_body_bytes(
+                    self.opener(request, timeout=self.timeout_seconds)
+                )
+            except urllib.error.HTTPError as exc:
+                if exc.code not in {429, 500, 502, 503, 504}:
+                    raise
+                last_error = exc
+            except (TimeoutError, urllib.error.URLError, ConnectionError) as exc:
+                last_error = exc
+            if attempt < self.attempts:
+                self.sleeper(float(min(2 ** (attempt - 1), 4)))
+        assert last_error is not None
+        raise last_error
 
 
 def ingest_tiingo_eod_response(
@@ -328,10 +371,13 @@ def ingest_tiingo_eod_response(
     retrieved_at: str,
     code_revision: str,
     license_tag: str = TIINGO_LICENSE_TAG,
+    provider_symbol: str | None = None,
 ) -> tuple[DatasetManifest, list[DatasetManifest], int]:
     parsed = json.loads(body)
     if not isinstance(parsed, list):
         raise ValueError("Tiingo EOD response is not a JSON array")
+    canonical_symbol = symbol.strip().upper()
+    requested_symbol = (provider_symbol or symbol).strip().upper()
     raw = lake.store_raw(
         source="tiingo-eod",
         dataset="daily-prices",
@@ -340,7 +386,8 @@ def ingest_tiingo_eod_response(
         schema_version="tiingo-eod-prices-v1",
         available_at=retrieved_at,
         request={
-            "symbol": symbol.upper(),
+            "symbol": canonical_symbol,
+            "provider_symbol": requested_symbol,
             "start_date": start_date,
             "end_date": end_date,
             "resample_freq": "daily",
@@ -356,15 +403,18 @@ def ingest_tiingo_eod_response(
         local_date = str(item["date"])[:10]
         event_time = _daily_event_time(local_date)
         common = {
-            "symbol": symbol.upper(),
+            "symbol": canonical_symbol,
             "event_time_utc": event_time,
-            "available_at": retrieved_at,
+            "available_at": _daily_estimated_available_at(local_date),
             "exchange_local_date": local_date,
             "interval": "1d",
             "currency": "USD",
             "session": "regular",
             "source": "tiingo-eod",
-            "source_revision": "tiingo-eod-v1",
+            "source_revision": (
+                "tiingo-eod-v2;"
+                f"provider_symbol={requested_symbol};retrieved_at={retrieved_at}"
+            ),
             "raw_manifest_id": raw.manifest_id,
             "quality_flag": "ok",
         }
@@ -392,7 +442,7 @@ def ingest_tiingo_eod_response(
         )
     rows.sort(key=lambda row: (row.symbol, row.adjustment, row.event_time_utc))
     if not rows:
-        raise ValueError(f"Tiingo returned no EOD rows for {symbol}")
+        raise ValueError(f"Tiingo returned no EOD rows for {canonical_symbol}")
     normalized = lake.write_market_bars(
         rows,
         code_revision=code_revision,

@@ -46,9 +46,9 @@ def render(
             encoding="utf-8",
         )
         rendered.append(destination)
-    if len(rendered) != 6:
+    if len(rendered) != 15:
         raise ValueError(
-            f"expected six research monitoring policies, found {len(rendered)}"
+            f"expected 15 research monitoring policies, found {len(rendered)}"
         )
     return rendered
 

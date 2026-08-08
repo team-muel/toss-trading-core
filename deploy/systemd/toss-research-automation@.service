@@ -22,15 +22,15 @@ CapabilityBoundingSet=
 ReadWritePaths=/home/seoje/toss-trading/research-runtime /home/seoje/toss-trading/runtime
 EnvironmentFile=-/etc/toss-trading/research.env
 Environment=GCP_PROJECT_ID=toss-trading-core-lab
-Environment=TOSS_CLIENT_ID_SECRET=toss-client-id
-Environment=TOSS_CLIENT_SECRET_SECRET=toss-client-secret
-Environment=TOSS_ACCOUNT_SEQ_SECRET=toss-account-seq
-Environment=TOSS_API_ENV_SECRET=toss-api-env
-Environment=TOSS_BROKER_BASE_URL_SECRET=toss-broker-base-url
+Environment=TOSS_CLIENT_ID_SECRET=toss-research-client-id
+Environment=TOSS_CLIENT_SECRET_SECRET=toss-research-client-secret
 Environment=RESEARCH_RUNTIME_ROOT=/home/seoje/toss-trading/research-runtime
 Environment=RESEARCH_JSON_LOG_PATH=/home/seoje/toss-trading/research-runtime/research_automation.jsonl
 Environment=RESEARCH_LOCK_PATH=/home/seoje/toss-trading/research-runtime/research_automation.lock
+Environment=RESEARCH_PROSPECTIVE_OBSERVATION_LEDGER=/home/seoje/toss-trading/research-runtime/prospective_collection_observations.jsonl
 Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/runtime/toss_api.lock
+Environment=RESEARCH_EXECUTION_COST_CALIBRATION=/home/seoje/toss-trading/runtime/research_execution_cost_calibration.json
+Environment=RESEARCH_PORTFOLIO_NOTIONAL_USD=10000
 Environment=RESEARCH_GCS_URI=gs://toss-trading-core-lab-research-data/research
 Environment=RESEARCH_BIGQUERY_DATASET=toss_research_reporting
 Environment=RESEARCH_BIGQUERY_TABLE=run_summaries

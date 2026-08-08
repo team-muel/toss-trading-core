@@ -1,0 +1,20 @@
+displayName: Toss Research disk usage high
+combiner: OR
+enabled: true
+notificationChannels:
+  - __NOTIFICATION_CHANNEL__
+alertStrategy:
+  autoClose: 604800s
+conditions:
+  - displayName: VM filesystem used space above 85 percent for fifteen minutes
+    conditionThreshold:
+      filter: metric.type="agent.googleapis.com/disk/percent_used" AND resource.type="gce_instance" AND resource.labels.instance_id="__INSTANCE_ID__" AND metric.labels.state="used"
+      comparison: COMPARISON_GT
+      thresholdValue: 85
+      duration: 900s
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MEAN
+          crossSeriesReducer: REDUCE_MAX
+      trigger:
+        count: 1

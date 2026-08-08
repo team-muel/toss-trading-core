@@ -2,7 +2,7 @@ symbol,asset_class,currency,venue,role,engine_scope,enabled,notes
 SPY,ETF,USD,US,core_equity,broad_momentum;homogeneous_etf_rv,true,S&P 500 core ETF
 VOO,ETF,USD,US,core_equity,homogeneous_etf_rv,true,S&P 500 substitute
 IVV,ETF,USD,US,core_equity,homogeneous_etf_rv,true,S&P 500 substitute
-SPLG,ETF,USD,US,core_equity,homogeneous_etf_rv,true,S&P 500 substitute
+SPYM,ETF,USD,US,core_equity,homogeneous_etf_rv,true,S&P 500 substitute; ticker changed from SPLG on 2025-10-31
 QQQ,ETF,USD,US,growth_equity,broad_momentum,true,Nasdaq 100 growth proxy
 SMH,ETF,USD,US,sector_equity,broad_momentum,true,Semiconductor sector proxy
 SCHD,ETF,USD,US,dividend_equity,distribution_filter,true,Dividend ETF candidate

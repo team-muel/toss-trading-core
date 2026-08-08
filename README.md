@@ -6,7 +6,7 @@ Toss Invest Open API를 기준원장으로 사용해 USD 중심 현물 자동매
 
 - Toss는 실행, 계좌, 보유, 주문 상태의 기준원장입니다.
 - 외부 데이터 피드는 Toss를 대체하지 않고 신호, 필터, 리스크 판단을 보강합니다.
-- live MVP는 국내/미국 주식 및 ETF 현물 주문으로 제한합니다.
+- live 후보 범위는 전용 계좌의 미국 상장 USD long-only ETF 현물 주문으로 제한합니다.
 - 옵션, 숏/대차, 직접 T-bill ladder, 마진 기반 전략은 연구 또는 별도 브로커 모듈로 분리합니다.
 - 보고서의 숫자는 시장 법칙이 아니라 starter guardrail입니다. 실제 체결, 슬리피지, 손실분포, 대사 품질이 쌓인 뒤에만 calibration합니다.
 
@@ -49,21 +49,30 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/20_data_provider_selection_and_collection.md` | 실제 데이터 공급자 선정, 라이선스 게이트와 수집 결과 |
 | `docs/21_gcp_research_data_automation.md` | GCP 기반 daily/weekly 수집·QA·백업·자체검증 자동화 |
 | `docs/22_visual_reporting.md` | 운영·데이터 품질·전략 성과 통합 시각 보고와 BigQuery 이력 |
+| `docs/23_direction_and_readiness.md` | 고정 live 후보 범위, 권장 실행 순서, 증거 게이트와 No-Go 기준 |
+| `docs/24_gmail_research_digest.md` | Vertex AI 근거 기반 연구 해석 메일, Gmail OAuth와 안전 대체 경로 |
+| `docs/27_p0_identity_and_holdout_remediation.md` | P0 전향 표본 봉인·복구 증거와 research 전용 identity 전환 게이트 |
+| `docs/28_p1_research_data_completion.md` | P1 8개 작업의 구현·운영 증거·배포 경계 점검 |
 
-## Current Operating Snapshot — 2026-07-27
+## Current Operating Snapshot — 2026-08-08
 
-- GCP VM의 활성 runtime release는 `a6c1471`이며 자동 주문은 모든 정책에서
-  비활성입니다.
+- P1 이전 GCP research runtime 기준 release는 `36a60066a485`였습니다. 현재 활성
+  revision은 VM의 content-addressed `current` symlink와 gold의 `code_revision`이
+  일치하는지로 확인하며 자동 주문은 모든 정책에서 비활성입니다.
 - `toss-foundation.timer`는 `OnUnitActiveSec=6h`, Foundation 경보 6개,
   research 경보 5개를 유지합니다.
 - research daily/weekly timer, Ops Agent, private GCS, BigQuery 이력과 통합
   Cloud Monitoring dashboard가 운영 중입니다.
-- 최신 daily 실행은 15개 ETF를 요청해 14개를 검증했습니다. `SPLG`는 Toss
-  provider에서 raw/adjusted 각각 `404 stock-not-found`였고, 검증된 14개
-  종목의 품질 오류는 0행입니다.
+- 과거 `SPLG` 404는 2025-10-31 공식 ticker 변경을 반영하지 못한 매핑 문제로
+  확정했습니다. 공식 유니버스는 `SPYM`, Toss 요청은 `SPYM`, Tiingo 연속 이력
+  요청은 공급자 별칭 `SPLG`로 분리했으며 Toss `SPYM` read-only 조회는 HTTP 200으로
+  검증했습니다.
 - Toss 자료는 `raw`와 `split_adjusted/estimated`까지만 전략과 격리해
-  보관합니다. 승인된 total-return 공급자가 없으므로 전략 성과 상태는
-  `not_available`이며 이는 0% 수익을 뜻하지 않습니다.
+  보관합니다. Tiingo total-return과 FRED 승인 series는 활성화됐고, baseline의
+  prospective 시작일은 2026-08-03입니다. 8월 8일 첫 daily 실행의 Tiingo
+  timeout은 같은 날 복구 실행으로 회복했으며 성과는 126거래일 전까지 봉인합니다.
+- OpenAPI 승인 계약은 1.2.13이며 조건주문 경로는 계약에만 등록하고 모든 쓰기
+  capability는 비활성화했습니다.
 
 ## Repository Layout
 

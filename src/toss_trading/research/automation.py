@@ -43,7 +43,10 @@ def resolve_collection_window(
         start_date=start.isoformat(),
         through_date=through.isoformat(),
         realtime_start=realtime_start.isoformat(),
-        realtime_end=today.isoformat(),
+        # The UTC prior day is never ahead of the US-hosted FRED service date.
+        # Long ALFRED ranges are split by the collector to remain below the
+        # API's per-request vintage-date limit.
+        realtime_end=through.isoformat(),
     )
 
 
@@ -269,6 +272,8 @@ def verify_research_run(
     code_revision: str,
     provider_states: dict[str, str],
     strategy_experiment: str | Path | None = None,
+    hypothesis_plan: str | Path | None = None,
+    hypothesis_evaluation: str | Path | None = None,
 ) -> dict:
     root = Path(run_dir)
     if not root.is_dir():
@@ -320,6 +325,11 @@ def verify_research_run(
     recomputed_qa = validate_parquet(
         [str(path) for path in parquet_files],
         required_adjustments=required_adjustments,
+        cross_provider_sources=(
+            ("toss-openapi", "tiingo-eod")
+            if provider_states.get("tiingo") == "collected"
+            else ()
+        ),
     )
     if recomputed_qa.get("ok") is not True:
         raise ValueError("recomputed market-bar QA did not pass")
@@ -359,6 +369,7 @@ def verify_research_run(
         "invalid_rows": qa["invalid_rows"],
         "coverage_mismatch_rows": qa["coverage_mismatch_rows"],
         "symbols": qa["symbols"],
+        "provider_cross_check": qa.get("provider_cross_check"),
     }
     reporting_names = {
         "reporting-summary.json",
@@ -388,6 +399,8 @@ def verify_research_run(
             "parquet_files": len(parquet_files),
         },
         strategy_experiment=strategy_path,
+        hypothesis_plan=hypothesis_plan,
+        hypothesis_evaluation=hypothesis_evaluation,
         available_manifest_ids={
             manifest_id
             for manifest_id, manifest in manifests.items()

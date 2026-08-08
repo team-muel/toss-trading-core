@@ -86,10 +86,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--include-closed-orders",
         action="store_true",
+        default=True,
         help=(
-            "Read CLOSED orders as an explicit diagnostic/recovery action. "
-            "Disabled by default because the OpenAPI 1.2.4 schema text still conflicts "
-            "with the verified server behavior."
+            "Read a bounded, overlapping CLOSED-order window. Enabled by default "
+            "under the approved OpenAPI 1.2.13 contract."
+        ),
+    )
+    parser.add_argument(
+        "--skip-closed-orders",
+        action="store_false",
+        dest="include_closed_orders",
+        help="Skip CLOSED-order continuity collection for a diagnostic run.",
+    )
+    parser.add_argument(
+        "--closed-order-lookback-days",
+        type=int,
+        default=None,
+        help=(
+            "Inclusive CLOSED-order overlap window in KST days. Defaults to the "
+            "approved policy value."
         ),
     )
     parser.add_argument(
@@ -148,7 +163,12 @@ def main(argv: list[str] | None = None) -> int:
     universe = load_universe(args.universe)
     mappings = load_instrument_mappings(args.instrument_master)
     validate_universe_mapping(universe, mappings)
-    _, policy_hash = load_policy(args.policy)
+    policy, policy_hash = load_policy(args.policy)
+    closed_order_lookback_days = args.closed_order_lookback_days
+    if closed_order_lookback_days is None:
+        closed_order_lookback_days = int(
+            policy["runtime"].get("closed_order_lookback_days", 7)
+        )
 
     db_path = Path(args.db)
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -174,6 +194,7 @@ def main(argv: list[str] | None = None) -> int:
             include_sellable_quantity=args.include_sellable_quantity,
             include_order_details=args.include_order_details,
             include_closed_orders=args.include_closed_orders,
+            closed_order_lookback_days=closed_order_lookback_days,
             buying_power_currency=args.buying_power_currencies or ["USD"],
             max_order_pages=args.max_order_pages,
             max_order_details=args.max_order_details,

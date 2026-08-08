@@ -1,0 +1,2 @@
+event_id,instrument_id,event_type,effective_date,old_symbol,new_symbol,source_url,reviewed_at
+US-SPYM-TICKER-20251031,US:SPYM,ticker_change,2025-10-31,SPLG,SPYM,https://www.sec.gov/Archives/edgar/data/1064642/000119312525245123/d272135d497.htm,2026-08-08

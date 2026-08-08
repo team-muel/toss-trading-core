@@ -25,20 +25,21 @@ they use read-only data paths and cannot enable broker order submission.
   research alert for reporting-upload failures and requires redeployment.
 - All `live_trading_enabled` and `live_orders_enabled` policy entries remain
   `false`.
-- The latest research run is upload-ready and has zero normalized data-quality
-  errors, but it is only partially collected: Toss returns `stock-not-found`
-  for `SPLG` in both raw and adjusted requests.
-- Strategy performance remains `not_available` until licensed, verified
-  total-return history is connected. An upload-ready run is not the same as a
-  strategy-ready dataset.
+- The historical Toss `SPLG` failure was a stale ticker mapping. The current
+  canonical ticker and Toss request symbol are `SPYM`; Tiingo retains `SPLG`
+  only as an auditable provider alias. A read-only Toss `SPYM` request returned
+  HTTP 200 and the 18-day Toss/Tiingo raw close cross-check had 0.0 bps maximum
+  error.
+- Licensed Tiingo total-return history and a sealed immutable gold experiment
+  now exist. Headline strategy performance remains hidden until the registered
+  prospective sample completes; availability is not proof of strategy quality.
 
 ## Required evidence
 
 - clean-checkout CI imports the runtime package and passes tests
-- OpenAPI 1.2.4 SHA-256
-  `7000d89ea3d783b0fa36d32e31750e85e139098306dbfce53a75fc4891019f1b`
-  is explicitly approved; CLOSED listing is disabled by default and available
-  only as an explicit recovery path verified against the real API
+- OpenAPI 1.2.13 SHA-256
+  `0f2cb7ef938fe1c50b7d69348705632ad488ea68d63fc762847f6c9485a3a111`
+  is explicitly approved; CLOSED listing runs with a bounded seven-day overlap
 - one complete run contains only 2xx broker evidence from one account
 - v1 uses an exact order ID captured while OPEN or recovered from the verified
   CLOSED listing, then validates that exact order detail
@@ -131,10 +132,11 @@ approved strategy universe and is not made strategy-eligible by this test.
    ledger, independently evidenced opening balance, reserved cash,
    buying-power reconciliation, and EOD report. This lane blocks every broker
    order mode.
-4. **P1 research lane — Total-return and point-in-time data.** Activate Tiingo
-   only after license/token approval, resolve the `SPLG` mapping, and build
-   corporate-action and effective-date history. This read-only lane proceeds in
-   parallel with P0.
+4. **P1 research lane — Total-return and point-in-time data (implemented).**
+   Tiingo is license/token gated, `SPYM`/`SPLG` aliases and corporate-action
+   effective dates are registered, raw providers are cross-checked, and v3
+   uses benchmark-relative folds plus sanitized account-scale costs. Activation
+   requires a matching immutable release and v3 gold revision.
 5. **P1 research extension — Macro and filings.** Activate FRED/ALFRED after
    series-rights approval and SEC after the outbound contact identity is
    approved.
@@ -185,8 +187,8 @@ an audit blocker. Independently evidenced opening cash, settlement availability,
 and buying-power reconciliation remain blocked work; cash events and open-order
 reservations alone do not make live trading eligible.
 
-The official OpenAPI 1.2.4 document was downloaded again on 2026-07-23. Its
-SHA-256 still matches the approved value, and it still exposes buying power
+The official OpenAPI 1.2.13 document was downloaded again on 2026-08-08. Its
+SHA-256 matches the approved value, and it still exposes buying power
 rather than a separate cash-balance endpoint. An independently evidenced
 opening balance is therefore a real external input, not a value the runtime may
 infer from `cashBuyingPower`.

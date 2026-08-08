@@ -7,7 +7,7 @@ from toss_trading.alpha import (
     to_signals,
 )
 from toss_trading.alpha import operators as ops
-from toss_trading.risk.hub import RiskHub
+from toss_trading.risk import OrderIntent, RiskHub
 
 
 def momentum_alpha() -> Alpha:
@@ -67,7 +67,7 @@ class ExpressionTest(unittest.TestCase):
             "runtime": {"live_trading_enabled": False},
             "starter_guardrails": {
                 "max_open_orders": 10,
-                "single_trade_max_loss_nav_pct": 10.0,
+                "single_trade_max_loss_nav_pct": 100.0,
                 "single_live_order_notional_nav_pct": 100.0,
             },
         }
@@ -77,13 +77,26 @@ class ExpressionTest(unittest.TestCase):
             "source_health_ok": True,
             "rate_limit_ok": True,
             "open_orders_count": 0,
+            "account_seq": "1",
+            "snapshot_run_id": "run-1",
+            "policy_hash": "policy-1",
             "nav": 1.0,
             "drawdown_pct": 0.0,
-            "proposed_order_notional": signal.target_weight,
             "available_cash": 1.0,
             "allowed_symbols": set(self.context["momentum"]),
         }
-        decision = RiskHub(policy).evaluate_signal(signal, portfolio_state)
+        intent = OrderIntent.create(
+            signal,
+            {"client_order_id": "alpha-1", "order_amount": signal.target_weight},
+            account_seq="1",
+            snapshot_run_id="run-1",
+            policy_hash="policy-1",
+            currency="USD",
+            reference_price=None,
+        )
+        decision = RiskHub(policy).evaluate_signal(
+            signal, portfolio_state, order_intent=intent
+        )
         self.assertTrue(decision.approved, decision.reason)
 
     def test_alpha_signal_still_blocked_when_source_health_bad(self):
@@ -101,7 +114,6 @@ class ExpressionTest(unittest.TestCase):
             "open_orders_count": 0,
             "nav": 1.0,
             "drawdown_pct": 0.0,
-            "proposed_order_notional": signal.target_weight,
             "available_cash": 1.0,
             "allowed_symbols": set(self.context["momentum"]),
         }

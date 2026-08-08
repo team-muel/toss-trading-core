@@ -63,7 +63,8 @@ export TOSS_API_ENV_SECRET="toss-api-env"
 export TOSS_BROKER_BASE_URL_SECRET="toss-broker-base-url"
 export FOUNDATION_LOAD_GCP_SECRETS=1
 export FOUNDATION_MAX_ORDER_DETAILS=1
-export FOUNDATION_INCLUDE_CLOSED_ORDERS=0  # explicit recovery only
+export FOUNDATION_INCLUDE_CLOSED_ORDERS=1
+export FOUNDATION_CLOSED_ORDER_LOOKBACK_DAYS=7
 export FOUNDATION_TARGET_ORDER_ID=""  # v1에서만 captured orderId 설정
 ```
 
@@ -204,8 +205,8 @@ profile=v1-funded-read-only
 The 2026-07-21 production-lab v1 run passed using an exact order ID recovered
 from a bounded CLOSED-order query. The run stored order detail, execution and
 delta, actual commission, settlement, and sellable-quantity evidence, then
-uploaded the v1 SQLite backup to the private bucket. Keep CLOSED lookup disabled
-for the normal scheduled v0 service.
+uploaded the v1 SQLite backup to the private bucket. The normal scheduled
+service now keeps a bounded seven-day CLOSED overlap for continuity.
 
 ## Restore Drill — 2026-07-21
 

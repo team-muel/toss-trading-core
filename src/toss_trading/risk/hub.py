@@ -1,7 +1,10 @@
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from math import isfinite
 
 from toss_trading.engines import Signal
+from toss_trading.risk.intent import OrderIntent
 
 
 @dataclass(frozen=True)
@@ -9,6 +12,12 @@ class RiskDecision:
     approved: bool
     reason: str
     adjusted_score: float | None = None
+    intent_hash: str | None = None
+    account_seq: str | None = None
+    snapshot_run_id: str | None = None
+    policy_hash: str | None = None
+    approved_notional_decimal: str | None = None
+    expires_at: str | None = None
 
 
 class RiskHub:
@@ -17,7 +26,13 @@ class RiskHub:
     def __init__(self, policy: dict) -> None:
         self.policy = policy
 
-    def evaluate_signal(self, signal: Signal, portfolio_state: dict) -> RiskDecision:
+    def evaluate_signal(
+        self,
+        signal: Signal,
+        portfolio_state: dict,
+        *,
+        order_intent: OrderIntent | None = None,
+    ) -> RiskDecision:
         runtime = self.policy.get("runtime", {})
         guardrails = self.policy.get("starter_guardrails", {})
         if runtime.get("live_trading_enabled") is True:
@@ -35,6 +50,21 @@ class RiskHub:
             return RiskDecision(False, "max open orders reached")
         if signal.side not in {"BUY", "SELL"}:
             return RiskDecision(False, "invalid signal side")
+        if order_intent is None:
+            return RiskDecision(False, "exact order intent is required")
+        if (
+            order_intent.symbol != signal.symbol_or_pair.strip().upper()
+            or order_intent.side != signal.side
+        ):
+            return RiskDecision(False, "order intent does not match signal")
+        if order_intent.account_seq != str(portfolio_state.get("account_seq") or ""):
+            return RiskDecision(False, "order intent account does not match current state")
+        if order_intent.snapshot_run_id != str(
+            portfolio_state.get("snapshot_run_id") or ""
+        ):
+            return RiskDecision(False, "order intent snapshot is not current")
+        if order_intent.policy_hash != str(portfolio_state.get("policy_hash") or ""):
+            return RiskDecision(False, "order intent policy is not current")
         allowed_symbols = set(portfolio_state.get("allowed_symbols") or ())
         if not allowed_symbols or signal.symbol_or_pair not in allowed_symbols:
             return RiskDecision(False, "signal symbol is outside the approved universe")
@@ -47,7 +77,17 @@ class RiskHub:
         if not isfinite(nav) or nav <= 0:
             return RiskDecision(False, "missing portfolio NAV")
 
-        max_loss_pct = signal.expected_max_loss / nav * 100
+        try:
+            proposed_notional_decimal = Decimal(order_intent.notional_decimal)
+        except InvalidOperation:
+            return RiskDecision(False, "order intent notional is invalid")
+        proposed_notional = float(proposed_notional_decimal)
+        # A long cash position can lose its entire principal. Do not trust an
+        # engine-supplied stop-loss estimate as the portfolio loss boundary.
+        independent_max_loss = (
+            proposed_notional if signal.side == "BUY" else 0.0
+        )
+        max_loss_pct = independent_max_loss / nav * 100
         limit = self.policy.get("portfolio_limits", {}).get("single_trade_max_loss_nav_pct")
         if limit is None:
             limit = self.policy["starter_guardrails"]["single_trade_max_loss_nav_pct"]
@@ -65,7 +105,6 @@ class RiskHub:
         if drawdown_limit is not None and drawdown_pct >= float(drawdown_limit):
             return RiskDecision(False, "drawdown kill switch limit reached")
 
-        proposed_notional = float(portfolio_state.get("proposed_order_notional", 0) or 0)
         if not isfinite(proposed_notional) or proposed_notional <= 0:
             return RiskDecision(False, "proposed order notional is missing")
         notional_limit = self.policy.get("portfolio_limits", {}).get(
@@ -79,5 +118,24 @@ class RiskHub:
             available_cash = float(portfolio_state.get("available_cash", 0) or 0)
             if not isfinite(available_cash) or available_cash < proposed_notional:
                 return RiskDecision(False, "available cash is insufficient")
+        else:
+            if order_intent.quantity_decimal is None:
+                return RiskDecision(False, "sell order must use an exact quantity")
+            sellable_quantity = float(portfolio_state.get("sellable_quantity", 0) or 0)
+            if (
+                not isfinite(sellable_quantity)
+                or sellable_quantity < float(order_intent.quantity_decimal)
+            ):
+                return RiskDecision(False, "sellable quantity is insufficient")
 
-        return RiskDecision(True, "approved_for_paper_after_all_gates")
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=30)
+        return RiskDecision(
+            True,
+            "approved_for_paper_after_all_gates",
+            intent_hash=order_intent.intent_hash,
+            account_seq=order_intent.account_seq,
+            snapshot_run_id=order_intent.snapshot_run_id,
+            policy_hash=order_intent.policy_hash,
+            approved_notional_decimal=order_intent.notional_decimal,
+            expires_at=expires_at.isoformat(),
+        )

@@ -34,6 +34,10 @@ class InstrumentMapping:
     mic: str
     effective_from: str
     effective_to: str | None
+    listed_from: str | None = None
+    delisted_on: str | None = None
+    identity_source: str = ""
+    identity_reviewed_at: str = ""
 
 
 def _bool(value: str) -> bool:
@@ -81,6 +85,10 @@ def load_instrument_mappings(path: str | Path) -> list[InstrumentMapping]:
             mic=row["mic"].strip(),
             effective_from=row["effective_from"].strip(),
             effective_to=row.get("effective_to", "").strip() or None,
+            listed_from=row.get("listed_from", "").strip() or None,
+            delisted_on=row.get("delisted_on", "").strip() or None,
+            identity_source=row.get("identity_source", "").strip(),
+            identity_reviewed_at=row.get("identity_reviewed_at", "").strip(),
         )
         for row in rows
     ]
@@ -106,6 +114,16 @@ def validate_universe_mapping(
                 if mapping.effective_to is not None
                 else None
             )
+            listed_from = (
+                date.fromisoformat(mapping.listed_from)
+                if mapping.listed_from is not None
+                else None
+            )
+            delisted_on = (
+                date.fromisoformat(mapping.delisted_on)
+                if mapping.delisted_on is not None
+                else None
+            )
         except ValueError as exc:
             raise ValueError(
                 f"invalid instrument effective date for {mapping.symbol_id}"
@@ -113,6 +131,20 @@ def validate_universe_mapping(
         if effective_to is not None and effective_to < effective_from:
             raise ValueError(
                 f"instrument effective_to precedes effective_from: {mapping.symbol_id}"
+            )
+        if listed_from is not None and effective_from < listed_from:
+            raise ValueError(
+                f"instrument mapping predates listing: {mapping.symbol_id}"
+            )
+        if delisted_on is not None and listed_from is not None and delisted_on < listed_from:
+            raise ValueError(
+                f"instrument delisting precedes listing: {mapping.symbol_id}"
+            )
+        if mapping.listed_from is not None and not (
+            mapping.identity_source and mapping.identity_reviewed_at
+        ):
+            raise ValueError(
+                f"point-in-time instrument evidence is incomplete: {mapping.symbol_id}"
             )
         if not all(
             (

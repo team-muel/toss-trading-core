@@ -117,14 +117,14 @@ Foundation v1 after the captured manual Toss app order has actually filled:
 ```bash
 export FOUNDATION_AUDIT_PROFILE="v1-funded-read-only"
 export FOUNDATION_TARGET_ORDER_ID="<captured-order-id>"
-export FOUNDATION_INCLUDE_CLOSED_ORDERS=1  # explicit recovery/diagnostic only
+export FOUNDATION_INCLUDE_CLOSED_ORDERS=1
+export FOUNDATION_CLOSED_ORDER_LOOKBACK_DAYS=7
 ./scripts/run_foundation_gcp.sh
 ```
 
-`FOUNDATION_INCLUDE_CLOSED_ORDERS` defaults to `0`. Keep the scheduled v0
-service at the default. Enable it only for a bounded recovery or v1 validation
-because the OpenAPI 1.2.4 schema text still conflicts with verified server
-behavior.
+`FOUNDATION_INCLUDE_CLOSED_ORDERS` defaults to `1`. OpenAPI 1.2.13 documents
+the paginated CLOSED list, so the scheduled service reads a bounded, overlapping
+seven-day window. Increase the lookback only for a reviewed recovery run.
 
 ## Outputs
 

@@ -38,6 +38,8 @@ class PaperBrokerAdapter:
         order_cancel=True,
         fills=True,
         balances=True,
+        conditional_order_entry=False,
+        conditional_order_modify=False,
         options_trading=False,
         margin_status=False,
     )
@@ -47,7 +49,7 @@ class PaperBrokerAdapter:
         db_path: str | Path = ":memory:",
         *,
         initial_cash: dict[str, str] | None = None,
-        commission_bps: str = "1.5",
+        commission_bps: str = "10",
         slippage_bps: str = "2.0",
     ) -> None:
         self.conn = sqlite3.connect(str(db_path))

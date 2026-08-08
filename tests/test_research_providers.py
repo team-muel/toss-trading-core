@@ -282,6 +282,25 @@ class ResearchProviderTest(unittest.TestCase):
             paths = {item.relative_path for item in normalized}
             self.assertTrue(any("adjustment=raw" in path for path in paths))
             self.assertTrue(any("adjustment=total_return" in path for path in paths))
+            import duckdb
+
+            parquet_pattern = str(Path(tmp) / "silver" / "**" / "*.parquet")
+            available_at, source_revision = duckdb.connect().execute(
+                """
+                SELECT
+                  CAST(available_at AS VARCHAR),
+                  source_revision
+                FROM read_parquet(?, union_by_name = true)
+                WHERE adjustment = 'total_return'
+                LIMIT 1
+                """,
+                [parquet_pattern],
+            ).fetchone()
+            self.assertTrue(str(available_at).startswith("2026-01-03 01:00:00"))
+            self.assertIn(
+                "retrieved_at=2026-01-04T00:00:00+00:00",
+                source_revision,
+            )
             output = StringIO()
             with redirect_stdout(output):
                 self.assertEqual(
@@ -359,6 +378,55 @@ class ResearchProviderTest(unittest.TestCase):
         )
         self.assertEqual(captured["authorization"], "Token secret-token")
         self.assertNotIn("secret-token", captured["url"])
+
+    def test_tiingo_token_normalizes_trailing_line_breaks(self):
+        captured = {}
+
+        def opener(request, timeout):
+            captured["authorization"] = request.get_header("Authorization")
+            return FakeHttpResponse(b"[]")
+
+        client = TiingoEodClient("secret-token\r\n", opener=opener)
+        client.fetch("SPY", start_date="2026-01-01", end_date="2026-01-02")
+
+        self.assertEqual(captured["authorization"], "Token secret-token")
+
+    def test_tiingo_token_rejects_control_characters_without_disclosure(self):
+        token = "secret\rvalue"
+        client = TiingoEodClient(token)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "unsupported control characters",
+        ) as error:
+            client.fetch("SPY", start_date="2026-01-01", end_date="2026-01-02")
+
+        self.assertNotIn(token, str(error.exception))
+
+    def test_tiingo_retries_a_timeout_with_bounded_backoff(self):
+        attempts = []
+        sleeps = []
+
+        def opener(request, timeout):
+            attempts.append(timeout)
+            if len(attempts) < 3:
+                raise TimeoutError("temporary timeout")
+            return FakeHttpResponse(b"[]")
+
+        client = TiingoEodClient(
+            "secret-token",
+            opener=opener,
+            attempts=3,
+            timeout_seconds=7,
+            sleeper=sleeps.append,
+        )
+
+        self.assertEqual(
+            client.fetch("SPY", start_date="2026-01-01", end_date="2026-01-02"),
+            b"[]",
+        )
+        self.assertEqual(attempts, [7, 7, 7])
+        self.assertEqual(sleeps, [1.0, 2.0])
 
     def test_sec_collection_deduplicates_ciks_and_stores_raw_json(self):
         calls = []

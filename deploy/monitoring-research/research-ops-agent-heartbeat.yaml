@@ -1,0 +1,18 @@
+displayName: Toss Research Ops Agent heartbeat missing
+combiner: OR
+enabled: true
+notificationChannels:
+  - __NOTIFICATION_CHANNEL__
+alertStrategy:
+  autoClose: 604800s
+conditions:
+  - displayName: No Ops Agent uptime metric for thirty minutes
+    conditionAbsent:
+      filter: metric.type="agent.googleapis.com/agent/uptime" AND resource.type="gce_instance" AND resource.labels.instance_id="__INSTANCE_ID__"
+      duration: 1800s
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_RATE
+          crossSeriesReducer: REDUCE_SUM
+      trigger:
+        count: 1

@@ -8,10 +8,11 @@ cd "${ROOT_DIR}"
 
 PROJECT_ID="${GCP_PROJECT_ID:-toss-trading-core-lab}"
 ZONE="${GCP_ZONE:-us-central1-a}"
-INSTANCE_NAME="${GCP_INSTANCE_NAME:-personal-agent-vm}"
+INSTANCE_NAME="${GCP_INSTANCE_NAME:-personal-research-agent-vm}"
 BUCKET_NAME="${RESEARCH_GCS_BUCKET:-toss-trading-core-lab-research-data}"
 BUILD_SOURCE_BUCKET="${CLOUD_BUILD_SOURCE_BUCKET:-${PROJECT_ID}_cloudbuild}"
-SERVICE_ACCOUNT="${RESEARCH_SERVICE_ACCOUNT:-toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
+RESEARCH_SERVICE_ACCOUNT_NAME="${RESEARCH_SERVICE_ACCOUNT_NAME:-toss-research-runner}"
+SERVICE_ACCOUNT="${RESEARCH_SERVICE_ACCOUNT:-${RESEARCH_SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com}"
 BUILD_SERVICE_ACCOUNT_NAME="${RESEARCH_BUILD_SERVICE_ACCOUNT_NAME:-toss-research-build}"
 BUILD_SERVICE_ACCOUNT="${BUILD_SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 BUILD_ARTIFACT_CONDITION="expression=resource.name.startsWith('projects/_/buckets/${BUCKET_NAME}/objects/builds/'),title=BuildArtifactsPrefix,description=Restrict Cloud Build to the builds prefix"
@@ -31,6 +32,18 @@ for command in gcloud bq; do
   fi
 done
 
+if [[ "${SERVICE_ACCOUNT}" == "toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com" ]]; then
+  echo "research provisioning refuses the Foundation service account" >&2
+  exit 78
+fi
+
+if ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" \
+  --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud iam service-accounts create "${RESEARCH_SERVICE_ACCOUNT_NAME}" \
+    --project="${PROJECT_ID}" \
+    --display-name="Toss research runtime"
+fi
+
 gcloud services enable \
   storage.googleapis.com \
   logging.googleapis.com \
@@ -38,7 +51,22 @@ gcloud services enable \
   secretmanager.googleapis.com \
   cloudbuild.googleapis.com \
   bigquery.googleapis.com \
+  gmail.googleapis.com \
+  aiplatform.googleapis.com \
   --project="${PROJECT_ID}"
+
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/aiplatform.user" \
+  --condition=None
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/logging.logWriter" \
+  --condition=None
+gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/monitoring.metricWriter" \
+  --condition=None
 
 if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" \
   --project="${PROJECT_ID}" >/dev/null 2>&1; then
@@ -50,9 +78,13 @@ fi
 gcloud storage buckets update "gs://${BUCKET_NAME}" \
   --versioning \
   --lifecycle-file="deploy/storage/research-lifecycle.json"
-gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+gcloud storage buckets remove-iam-policy-binding "gs://${BUCKET_NAME}" \
   --member="serviceAccount:${SERVICE_ACCOUNT}" \
   --role="roles/storage.objectAdmin" \
+  --condition=None >/dev/null 2>&1 || true
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET_NAME}" \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/storage.objectCreator" \
   --condition=None
 
 if ! gcloud iam service-accounts describe "${BUILD_SERVICE_ACCOUNT}" \
@@ -82,9 +114,14 @@ gcloud storage buckets add-iam-policy-binding "gs://${BUILD_SOURCE_BUCKET}" \
   --condition=None
 
 for secret_name in \
+  toss-research-client-id \
+  toss-research-client-secret \
   tiingo-api-token \
   fred-api-key \
-  sec-user-agent; do
+  sec-user-agent \
+  toss-research-gmail-oauth-client-id \
+  toss-research-gmail-oauth-client-secret \
+  toss-research-gmail-oauth-refresh-token; do
   if gcloud secrets describe "${secret_name}" \
     --project="${PROJECT_ID}" >/dev/null 2>&1; then
     gcloud secrets add-iam-policy-binding "${secret_name}" \

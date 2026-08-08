@@ -15,8 +15,10 @@ LOCK_PATH="${FOUNDATION_LOCK_PATH:-runtime/foundation_runner.lock}"
 TOSS_API_LOCK_PATH="${TOSS_API_LOCK_PATH:-runtime/toss_api.lock}"
 BUYING_POWER_CURRENCY="${FOUNDATION_BUYING_POWER_CURRENCY:-USD}"
 MAX_ORDER_DETAILS="${FOUNDATION_MAX_ORDER_DETAILS:-1}"
-INCLUDE_CLOSED_ORDERS="${FOUNDATION_INCLUDE_CLOSED_ORDERS:-0}"
+INCLUDE_CLOSED_ORDERS="${FOUNDATION_INCLUDE_CLOSED_ORDERS:-1}"
+CLOSED_ORDER_LOOKBACK_DAYS="${FOUNDATION_CLOSED_ORDER_LOOKBACK_DAYS:-7}"
 TARGET_ORDER_ID="${FOUNDATION_TARGET_ORDER_ID:-}"
+COST_CALIBRATION_PATH="${FOUNDATION_RESEARCH_COST_CALIBRATION_PATH:-runtime/research_execution_cost_calibration.json}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 CODE_REVISION="${FOUNDATION_CODE_REVISION:-}"
 if [[ -z "${CODE_REVISION}" ]] && command -v git >/dev/null 2>&1; then
@@ -40,6 +42,7 @@ mkdir -p \
   "$(dirname "${JSON_LOG_PATH}")" \
   "$(dirname "${LOCK_PATH}")" \
   "$(dirname "${TOSS_API_LOCK_PATH}")" \
+  "$(dirname "${COST_CALIBRATION_PATH}")" \
   "${BACKUP_DIR}"
 
 json_escape() {
@@ -138,6 +141,7 @@ SNAPSHOT_ARGS=(
   --report "${REPORT_PATH}"
   --buying-power-currency "${BUYING_POWER_CURRENCY}"
   --max-order-details "${MAX_ORDER_DETAILS}"
+  --closed-order-lookback-days "${CLOSED_ORDER_LOOKBACK_DAYS}"
   --json-log "${JSON_LOG_PATH}"
   --code-revision "${CODE_REVISION}"
 )
@@ -154,6 +158,14 @@ fi
   --db "${DB_PATH}" \
   --profile "${PROFILE}" \
   --json-log "${JSON_LOG_PATH}"
+
+"${PYTHON_BIN}" -m toss_trading.cli.research_export_cost_model \
+  --db "${DB_PATH}" \
+  --output "${COST_CALIBRATION_PATH}" \
+  --policy "${ROOT_DIR}/config/research_validation_protocol.json" \
+  --as-of "$(date -u +%F)" \
+  > "${COST_CALIBRATION_PATH}.status.json"
+json_log "foundation_research_cost_calibration_ok"
 
 BACKUP_TS="$(date -u +"%Y%m%dT%H%M%SZ")"
 BACKUP_PATH="${BACKUP_DIR}/foundation_account_state_${PROFILE}_${BACKUP_TS}.sqlite"

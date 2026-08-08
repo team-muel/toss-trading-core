@@ -39,7 +39,7 @@ TOSS_API_ENV
 | `orders.modify()` | `POST /api/v1/orders/{orderId}/modify` | review 상태 처리 |
 | `orders.cancel()` | `POST /api/v1/orders/{orderId}/cancel` | review 상태 처리 |
 | `orders.list_open()` | `GET /api/v1/orders` | OPEN 주문 대사 |
-| `orders.list_closed()` | `GET /api/v1/orders` | OpenAPI 1.2.4 계약 모순 해소 전 비활성화 |
+| `orders.list_closed()` | `GET /api/v1/orders` | OpenAPI 1.2.13 계약에 따라 7일 중첩 window로 정기 대사 |
 | `orders.get()` | `GET /api/v1/orders/{orderId}` | execution 누적 snapshot 생성 |
 | `buying_power.get()` | `GET /api/v1/buying-power` | `cashBuyingPower`를 broker constraint로 저장 |
 | `sellable_quantity.get()` | `GET /api/v1/sellable-quantity` | 매도 가능 수량 gate |
@@ -90,7 +90,7 @@ Toss 주문 상태는 REST polling으로 관리합니다.
 
 - create 직후 detail/list polling
 - OPEN 주문 주기 대사
-- CLOSED 목록은 OpenAPI 1.2.4 내부 설명이 서로 충돌하지만 2026-07-21 실제 GCP 호출에서 200 응답을 확인함. 기본 runner에서는 끄고 명시적 복구·검증 실행에서만 사용
+- CLOSED 목록은 OpenAPI 1.2.13이 cursor pagination을 명시합니다. 기본 runner가 7일 중첩 window로 수집하며, 범위를 넓히는 복구 실행만 명시적으로 수행합니다.
 - 종료 주문은 OPEN일 때 확보한 정확한 `orderId`로 상세 조회
 - rate-limit header 기반 cadence 조정
 - 429 발생 시 `Retry-After` 우선

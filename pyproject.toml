@@ -17,9 +17,13 @@ toss-research-collect-toss-reference = "toss_trading.cli.research_collect_toss_r
 toss-research-collect-tiingo = "toss_trading.cli.research_collect_tiingo:main"
 toss-research-collect-sec = "toss_trading.cli.research_collect_sec:main"
 toss-research-collect-fred = "toss_trading.cli.research_collect_fred:main"
+toss-research-export-cost-model = "toss_trading.cli.research_export_cost_model:main"
 toss-research-validate-bars = "toss_trading.cli.research_validate_bars:main"
+toss-research-validate-instruments = "toss_trading.cli.research_validate_instruments:main"
 toss-research-automation = "toss_trading.cli.research_automation:main"
 toss-research-reporting = "toss_trading.cli.research_reporting:main"
+toss-research-plan-hypotheses = "toss_trading.cli.research_plan_hypotheses:main"
+toss-research-evaluate-hypotheses = "toss_trading.cli.research_evaluate_hypotheses:main"
 
 [project.optional-dependencies]
 test = [
@@ -41,8 +45,8 @@ where = ["src"]
 
 [tool.setuptools.data-files]
 "share/toss-trading/schemas" = ["schemas/trading_ledger.sql"]
-"share/toss-trading/config" = ["config/default_policy.yaml", "config/data_sources.yaml", "config/fred_series.csv"]
-"share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv"]
+"share/toss-trading/config" = ["config/default_policy.yaml", "config/data_sources.yaml", "config/fred_series.csv", "config/autonomous_research_policy.json", "config/research_validation_protocol.json"]
+"share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv", "data/instrument_history.csv", "data/corporate_actions.csv"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

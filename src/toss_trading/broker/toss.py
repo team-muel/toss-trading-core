@@ -10,6 +10,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from toss_trading.account.ledger import AccountLedger
+from toss_trading.broker.base import BrokerCapabilities
 from toss_trading.broker.credentials import TossCredentials
 from toss_trading.runtime import TokenBucket
 
@@ -138,6 +139,18 @@ class TossApiResult:
 
 class TossReadOnlyAdapter:
     """Read-only Toss Open API adapter for foundation account-state ingestion."""
+
+    capabilities = BrokerCapabilities(
+        market_data=True,
+        order_entry=False,
+        order_cancel=False,
+        fills=True,
+        balances=True,
+        conditional_order_entry=False,
+        conditional_order_modify=False,
+        options_trading=False,
+        margin_status=False,
+    )
 
     def __init__(
         self,

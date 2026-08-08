@@ -25,8 +25,8 @@ This phase is still read-only. The system does not submit automatic orders. The 
 
 Use the Toss app, not this system, to create a small real account event. Prefer
 capturing the order ID while the manual order is still OPEN. If it fills first,
-use the verified explicit CLOSED-order recovery path; the normal scheduled
-runner does not enable that path.
+use the verified CLOSED-order path. The normal scheduled runner now keeps a
+bounded seven-day overlap; use a wider range only for reviewed recovery.
 
 Required event shape:
 
@@ -47,8 +47,8 @@ domestic-stock trial, both values returned HTTP 400 from
 `GET /api/v1/orders/{orderId}` and could not satisfy v1.
 
 If the order has already filled and the OPEN list is empty, do not guess an ID.
-Run the bounded CLOSED-order recovery explicitly, select the exact matching
-order, and require its order-detail response in the same v1 snapshot.
+Use the bounded CLOSED-order result, select the exact matching order, and
+require its order-detail response in the same v1 snapshot.
 
 The same limitation was confirmed in a 2026-07-21 US-stock trial: an overseas
 order filled before the OPEN snapshot, while the Toss web encrypted identifier

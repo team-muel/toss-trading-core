@@ -69,9 +69,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--profile",
-        choices=["v0-empty-safe", "v1-funded-read-only"],
+        choices=[
+            "v0-empty-safe",
+            "v1-funded-read-only",
+            "v2-live-readiness",
+        ],
         default="v0-empty-safe",
-        help="Validation profile. v1 requires funded/non-empty account evidence.",
+        help=(
+            "Validation profile. v1 requires funded account evidence; v2 also "
+            "requires immutable code/policy provenance, CLOSED continuity, and "
+            "cash-ledger genesis for every buying-power currency."
+        ),
     )
     parser.add_argument(
         "--json-log",
@@ -127,6 +135,7 @@ def _schema_failure(db_path: str | Path) -> str | None:
             "execution_snapshot_log",
             "execution_delta_log",
             "cash_ledger",
+            "cash_ledger_genesis",
             "broker_reconciliation_log",
         }
         existing = {
@@ -146,6 +155,8 @@ def _schema_failure(db_path: str | Path) -> str | None:
             "started_at",
             "completed_at",
             "status",
+            "policy_hash",
+            "code_revision",
         }
         missing_columns = sorted(required_run_columns - run_columns)
         if missing_columns:
@@ -205,11 +216,15 @@ def audit_foundation_db(
         run_id = str(run["run_id"])
         account_seq = str(run["account_seq"] or "").strip()
         target_order_id = str(run["target_order_id"] or "").strip()
+        policy_hash = str(run["policy_hash"] or "").strip()
+        code_revision = str(run["code_revision"] or "").strip()
         lines.extend(
             [
                 f"snapshot_run_id={run_id}",
                 f"snapshot_account_seq={account_seq or 'none'}",
                 f"target_order_id={'present' if target_order_id else 'none'}",
+                f"policy_hash={'present' if policy_hash else 'none'}",
+                f"code_revision={code_revision or 'none'}",
             ]
         )
         if not account_seq:
@@ -355,6 +370,23 @@ def audit_foundation_db(
                 (run_id, account_seq, target_order_id, target_order_id),
             )
             cash_event_gaps = ledger.cash_event_gaps(account_seq=account_seq)
+            genesis_currencies = {
+                str(row["currency"])
+                for row in conn.execute(
+                    """
+                    SELECT currency
+                    FROM cash_ledger_genesis
+                    WHERE account_seq = ?
+                    """,
+                    (account_seq,),
+                )
+            }
+            closed_list_raw_rows = _raw_success_count(
+                conn,
+                "/api/v1/orders?status=CLOSED",
+                run_id=run_id,
+                account_seq=account_seq,
+            )
             reserved_cash = ledger.reserved_open_buy_cash(
                 account_seq=account_seq,
                 run_id=run_id,
@@ -450,6 +482,13 @@ def audit_foundation_db(
                 f"account[{account_seq}].cash_event_gaps={cash_event_gaps or ['none']}"
             )
             lines.append(
+                f"account[{account_seq}].cash_genesis_currencies="
+                f"{sorted(genesis_currencies)}"
+            )
+            lines.append(
+                f"account[{account_seq}].closed_list_raw_rows={closed_list_raw_rows}"
+            )
+            lines.append(
                 f"account[{account_seq}].reserved_open_buy_cash="
                 f"{reserved_cash.amount_by_currency}"
             )
@@ -503,7 +542,7 @@ def audit_foundation_db(
                 failures.append(
                     f"account[{account_seq}].review_order_status_requires_order_detail:{status}"
                 )
-            if profile == "v1-funded-read-only":
+            if profile in {"v1-funded-read-only", "v2-live-readiness"}:
                 if not target_order_id:
                     failures.append(f"account[{account_seq}].v1_requires_target_order_id")
                 if explanation.holdings_count == 0:
@@ -524,6 +563,28 @@ def audit_foundation_db(
                     failures.append(f"account[{account_seq}].v1_requires_settlement_date")
                 if sellable_rows == 0:
                     failures.append(f"account[{account_seq}].v1_requires_sellable_quantity")
+            if profile == "v2-live-readiness":
+                buying_power_currencies = set(explanation.buying_power_by_currency)
+                missing_genesis = sorted(
+                    buying_power_currencies - genesis_currencies
+                )
+                if missing_genesis:
+                    failures.append(
+                        f"account[{account_seq}].v2_missing_cash_genesis:"
+                        f"{','.join(missing_genesis)}"
+                    )
+                if closed_list_raw_rows == 0:
+                    failures.append(
+                        f"account[{account_seq}].v2_requires_closed_order_continuity"
+                    )
+                if not policy_hash:
+                    failures.append(
+                        f"account[{account_seq}].v2_requires_policy_hash"
+                    )
+                if not code_revision or code_revision.lower() == "unknown":
+                    failures.append(
+                        f"account[{account_seq}].v2_requires_immutable_code_revision"
+                    )
 
         if failures:
             return FoundationAuditResult(

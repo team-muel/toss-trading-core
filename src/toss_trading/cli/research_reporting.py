@@ -11,6 +11,19 @@ from toss_trading.research.reporting import (
     build_monitoring_event,
     summary_to_bigquery_row,
 )
+from toss_trading.research.email_digest import (
+    EmailDeliveryLedger,
+    GmailApiClient,
+    deliver_research_digest,
+)
+from toss_trading.research.interpretation import (
+    DEFAULT_VERTEX_MODEL,
+    VertexResearchInterpreter,
+    build_research_evidence,
+    deterministic_interpretation,
+    load_interpretation,
+    save_interpretation,
+)
 
 
 def _read_summary(path: str | Path) -> dict[str, Any]:
@@ -57,6 +70,19 @@ def _read_summary(path: str | Path) -> dict[str, Any]:
     if summary_relative not in checked_paths or "run-status.json" not in checked_paths:
         raise ValueError("SHA256SUMS does not cover reporting and run status")
     return payload
+
+
+def _read_optional_previous_summary(
+    path: str | Path | None,
+) -> dict[str, Any] | None:
+    if not path:
+        return None
+    try:
+        return _read_summary(path)
+    except (OSError, ValueError):
+        # A prior run is comparison-only evidence. Never let a missing, legacy,
+        # or tampered prior artifact block the current verified report.
+        return None
 
 
 def insert_bigquery_row(
@@ -127,6 +153,54 @@ def build_parser() -> argparse.ArgumentParser:
             "run_summaries",
         ),
     )
+    interpret = subparsers.add_parser(
+        "interpret",
+        help="Create an evidence-bound Korean research interpretation.",
+    )
+    interpret.add_argument("--summary", required=True)
+    interpret.add_argument("--previous-summary")
+    interpret.add_argument("--output", required=True)
+    interpret.add_argument(
+        "--project-id",
+        default=os.environ.get("GCP_PROJECT_ID"),
+    )
+    interpret.add_argument(
+        "--location",
+        default=os.environ.get("RESEARCH_INTERPRETATION_LOCATION", "global"),
+    )
+    interpret.add_argument(
+        "--model",
+        default=os.environ.get(
+            "RESEARCH_INTERPRETATION_MODEL",
+            DEFAULT_VERTEX_MODEL,
+        ),
+    )
+    email = subparsers.add_parser(
+        "email",
+        help="Send one interpreted daily/weekly report through Gmail API OAuth.",
+    )
+    email.add_argument("--summary", required=True)
+    email.add_argument("--previous-summary")
+    email.add_argument("--interpretation", required=True)
+    email.add_argument(
+        "--sender",
+        default=os.environ.get("RESEARCH_EMAIL_SENDER"),
+    )
+    email.add_argument(
+        "--recipient",
+        default=os.environ.get("RESEARCH_EMAIL_RECIPIENT"),
+    )
+    email.add_argument(
+        "--dashboard-url",
+        default=os.environ.get("RESEARCH_DASHBOARD_URL"),
+    )
+    email.add_argument(
+        "--delivery-ledger",
+        default=os.environ.get(
+            "RESEARCH_EMAIL_LEDGER",
+            "research-runtime/research_email.sqlite",
+        ),
+    )
     return parser
 
 
@@ -143,22 +217,117 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
-    if not args.project_id:
-        raise ValueError("--project-id or GCP_PROJECT_ID is required")
-    insert_bigquery_row(
-        summary=summary,
-        project_id=args.project_id,
-        dataset_id=args.dataset_id,
-        table_id=args.table_id,
+    if args.command == "upload-bigquery":
+        if not args.project_id:
+            raise ValueError("--project-id or GCP_PROJECT_ID is required")
+        insert_bigquery_row(
+            summary=summary,
+            project_id=args.project_id,
+            dataset_id=args.dataset_id,
+            table_id=args.table_id,
+        )
+        print(
+            json.dumps(
+                {
+                    "dataset_id": args.dataset_id,
+                    "project_id": args.project_id,
+                    "run_id": summary["run_id"],
+                    "state": "inserted",
+                    "table_id": args.table_id,
+                },
+                sort_keys=True,
+            )
+        )
+        return 0
+
+    previous = _read_optional_previous_summary(
+        getattr(args, "previous_summary", None)
+    )
+    evidence = build_research_evidence(summary, previous=previous)
+    if args.command == "interpret":
+        output_path = Path(args.output)
+        state = "reused"
+        failure_type: str | None = None
+        if output_path.is_file():
+            interpretation = load_interpretation(
+                output_path,
+                evidence=evidence,
+            )
+        else:
+            state = "generated"
+            if os.environ.get("RESEARCH_INTERPRETATION_ENABLED", "1") == "1":
+                if not args.project_id:
+                    raise ValueError(
+                        "--project-id or GCP_PROJECT_ID is required for Vertex AI"
+                    )
+                try:
+                    interpretation = VertexResearchInterpreter(
+                        project_id=args.project_id,
+                        location=args.location,
+                        model=args.model,
+                    ).interpret(evidence)
+                except Exception as exc:
+                    failure_type = type(exc).__name__
+                    interpretation = deterministic_interpretation(
+                        summary,
+                        evidence=evidence,
+                        failure_reason=failure_type,
+                    )
+            else:
+                failure_type = "VertexInterpretationDisabled"
+                interpretation = deterministic_interpretation(
+                    summary,
+                    evidence=evidence,
+                    failure_reason=failure_type,
+                )
+            save_interpretation(interpretation, output_path)
+        result = {
+            "current_run_id": summary["run_id"],
+            "previous_run_id": evidence.previous_run_id,
+            "source": interpretation.source,
+            "state": state,
+        }
+        if failure_type:
+            result["fallback_reason_type"] = failure_type
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0
+
+    if not args.sender or not args.recipient:
+        raise ValueError("research email sender and recipient are required")
+    interpretation = load_interpretation(
+        args.interpretation,
+        evidence=evidence,
+    )
+    credentials = {
+        name: os.environ.get(name, "")
+        for name in (
+            "GMAIL_OAUTH_CLIENT_ID",
+            "GMAIL_OAUTH_CLIENT_SECRET",
+            "GMAIL_OAUTH_REFRESH_TOKEN",
+        )
+    }
+    missing = sorted(name for name, value in credentials.items() if not value)
+    if missing:
+        raise ValueError(f"missing Gmail OAuth environment: {', '.join(missing)}")
+    result = deliver_research_digest(
+        summary,
+        sender=args.sender,
+        recipient=args.recipient,
+        client=GmailApiClient(
+            client_id=credentials["GMAIL_OAUTH_CLIENT_ID"],
+            client_secret=credentials["GMAIL_OAUTH_CLIENT_SECRET"],
+            refresh_token=credentials["GMAIL_OAUTH_REFRESH_TOKEN"],
+        ),
+        ledger=EmailDeliveryLedger(args.delivery_ledger),
+        interpretation=interpretation,
+        dashboard_url=args.dashboard_url,
     )
     print(
         json.dumps(
             {
-                "dataset_id": args.dataset_id,
-                "project_id": args.project_id,
                 "run_id": summary["run_id"],
-                "state": "inserted",
-                "table_id": args.table_id,
+                "state": result["state"],
+                "interpretation_source": interpretation.source,
             },
             sort_keys=True,
         )
