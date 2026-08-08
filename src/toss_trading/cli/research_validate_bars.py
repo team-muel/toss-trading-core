@@ -28,23 +28,40 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-source-policy")
     parser.add_argument("--max-cross-provider-close-error-bps", type=float)
     parser.add_argument("--volume-warning-ratio", type=float)
+    parser.add_argument("--cross-provider-lookback-calendar-days", type=int)
     return parser
 
 
-def _cross_provider_policy(path: str | None) -> tuple[float, float]:
+def load_cross_provider_policy(
+    path: str | Path | None,
+) -> tuple[float, float, int | None]:
     if path is None:
-        return 100.0, 0.20
+        return 100.0, 0.20, None
     payload = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     try:
         policy = payload["providers"]["toss_candles"]["automation"][
             "raw_cross_validation"
         ]
-        return (
-            float(policy["maximum_close_error_bps"]),
-            float(policy["volume_difference_warning_ratio"]),
+        maximum_close_error_bps = float(policy["maximum_close_error_bps"])
+        volume_difference_warning_ratio = float(
+            policy["volume_difference_warning_ratio"]
+        )
+        comparison_lookback_calendar_days = int(
+            policy["comparison_lookback_calendar_days"]
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("data-source policy lacks raw cross-validation limits") from exc
+    if (
+        maximum_close_error_bps < 0
+        or volume_difference_warning_ratio < 0
+        or comparison_lookback_calendar_days <= 0
+    ):
+        raise ValueError("data-source raw cross-validation limits are invalid")
+    return (
+        maximum_close_error_bps,
+        volume_difference_warning_ratio,
+        comparison_lookback_calendar_days,
+    )
 
 
 def validate_parquet(
@@ -55,6 +72,7 @@ def validate_parquet(
     cross_provider_sources: Iterable[str] = (),
     max_cross_provider_close_error_bps: float = 100.0,
     volume_warning_ratio: float = 0.20,
+    cross_provider_lookback_calendar_days: int | None = None,
 ) -> dict:
     try:
         import duckdb
@@ -68,6 +86,11 @@ def validate_parquet(
         raise ValueError("cross-provider validation requires exactly two sources")
     if max_cross_provider_close_error_bps < 0 or volume_warning_ratio < 0:
         raise ValueError("cross-provider tolerances must be nonnegative")
+    if (
+        cross_provider_lookback_calendar_days is not None
+        and cross_provider_lookback_calendar_days <= 0
+    ):
+        raise ValueError("cross-provider lookback must be positive")
 
     connection = duckdb.connect()
     try:
@@ -210,44 +233,69 @@ def validate_parquet(
         provider_cross_check = None
         if provider_pair:
             source_a, source_b = provider_pair
-            cross_rows = connection.execute(
+            recent_overlap_clause = ""
+            cross_parameters: list[float | int | str] = []
+            if cross_provider_lookback_calendar_days is not None:
+                recent_overlap_clause = """
+                WHERE exchange_local_date >= (
+                  SELECT MAX(exchange_local_date) FROM overlap
+                ) - ?
                 """
-                SELECT
-                  a.symbol,
-                  COUNT(*) AS overlap_rows,
-                  MAX(ABS(a.close / b.close - 1.0) * 10000.0) AS max_close_error_bps,
-                  AVG(ABS(a.close / b.close - 1.0) * 10000.0) AS mean_close_error_bps,
-                  SUM(CASE WHEN ABS(a.close / b.close - 1.0) * 10000.0 > ? THEN 1 ELSE 0 END)
-                    AS close_outlier_rows,
-                  SUM(
-                    CASE
-                      WHEN GREATEST(a.volume, b.volume) > 0
-                       AND ABS(a.volume - b.volume) / GREATEST(a.volume, b.volume) > ?
-                      THEN 1 ELSE 0
-                    END
-                  ) AS volume_warning_rows
-                FROM bars a
-                JOIN bars b
-                  ON b.symbol = a.symbol
-                 AND b.exchange_local_date = a.exchange_local_date
-                 AND b.interval = a.interval
-                 AND b.adjustment = 'raw'
-                 AND b.source = ?
-                WHERE a.adjustment = 'raw'
-                  AND a.source = ?
-                GROUP BY a.symbol
-                ORDER BY a.symbol
-                """,
+                cross_parameters.append(cross_provider_lookback_calendar_days)
+            cross_parameters.extend(
                 [
                     max_cross_provider_close_error_bps,
                     volume_warning_ratio,
-                    source_b,
-                    source_a,
-                ],
+                ]
+            )
+            cross_rows = connection.execute(
+                f"""
+                WITH overlap AS (
+                  SELECT
+                    a.symbol,
+                    a.exchange_local_date,
+                    a.close AS close_a,
+                    b.close AS close_b,
+                    a.volume AS volume_a,
+                    b.volume AS volume_b
+                  FROM bars a
+                  JOIN bars b
+                    ON b.symbol = a.symbol
+                   AND b.exchange_local_date = a.exchange_local_date
+                   AND b.interval = a.interval
+                   AND b.adjustment = 'raw'
+                   AND b.source = ?
+                  WHERE a.adjustment = 'raw'
+                    AND a.source = ?
+                ), comparison_window AS (
+                  SELECT * FROM overlap
+                  {recent_overlap_clause}
+                )
+                SELECT
+                  symbol,
+                  COUNT(*) AS overlap_rows,
+                  MIN(exchange_local_date)::VARCHAR AS first_date,
+                  MAX(exchange_local_date)::VARCHAR AS last_date,
+                  MAX(ABS(close_a / close_b - 1.0) * 10000.0) AS max_close_error_bps,
+                  AVG(ABS(close_a / close_b - 1.0) * 10000.0) AS mean_close_error_bps,
+                  SUM(CASE WHEN ABS(close_a / close_b - 1.0) * 10000.0 > ? THEN 1 ELSE 0 END)
+                    AS close_outlier_rows,
+                  SUM(
+                    CASE
+                      WHEN GREATEST(volume_a, volume_b) > 0
+                       AND ABS(volume_a - volume_b) / GREATEST(volume_a, volume_b) > ?
+                      THEN 1 ELSE 0
+                    END
+                  ) AS volume_warning_rows
+                FROM comparison_window
+                GROUP BY symbol
+                ORDER BY symbol
+                """,
+                [source_b, source_a, *cross_parameters],
             ).fetchall()
             overlap_rows = sum(int(row[1]) for row in cross_rows)
-            close_outlier_rows = sum(int(row[4]) for row in cross_rows)
-            volume_warning_rows = sum(int(row[5]) for row in cross_rows)
+            close_outlier_rows = sum(int(row[6]) for row in cross_rows)
+            volume_warning_rows = sum(int(row[7]) for row in cross_rows)
             provider_cross_check = {
                 "sources": [source_a, source_b],
                 "state": (
@@ -261,6 +309,15 @@ def validate_parquet(
                 ),
                 "overlap_rows": overlap_rows,
                 "overlap_symbols": len(cross_rows),
+                "comparison_lookback_calendar_days": (
+                    cross_provider_lookback_calendar_days
+                ),
+                "comparison_first_date": (
+                    min(row[2] for row in cross_rows) if cross_rows else None
+                ),
+                "comparison_last_date": (
+                    max(row[3] for row in cross_rows) if cross_rows else None
+                ),
                 "close_outlier_rows": close_outlier_rows,
                 "volume_warning_rows": volume_warning_rows,
                 "max_close_error_bps_allowed": max_cross_provider_close_error_bps,
@@ -269,10 +326,12 @@ def validate_parquet(
                     {
                         "symbol": row[0],
                         "overlap_rows": int(row[1]),
-                        "max_close_error_bps": float(row[2]),
-                        "mean_close_error_bps": float(row[3]),
-                        "close_outlier_rows": int(row[4]),
-                        "volume_warning_rows": int(row[5]),
+                        "first_date": row[2],
+                        "last_date": row[3],
+                        "max_close_error_bps": float(row[4]),
+                        "mean_close_error_bps": float(row[5]),
+                        "close_outlier_rows": int(row[6]),
+                        "volume_warning_rows": int(row[7]),
                     }
                     for row in cross_rows
                 ],
@@ -359,8 +418,10 @@ def validate_parquet(
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    policy_close_bps, policy_volume_ratio = _cross_provider_policy(
+    policy_close_bps, policy_volume_ratio, policy_lookback_days = (
+        load_cross_provider_policy(
         args.data_source_policy
+        )
     )
     result = validate_parquet(
         args.parquet,
@@ -376,6 +437,11 @@ def main(argv: list[str] | None = None) -> int:
             args.volume_warning_ratio
             if args.volume_warning_ratio is not None
             else policy_volume_ratio
+        ),
+        cross_provider_lookback_calendar_days=(
+            args.cross_provider_lookback_calendar_days
+            if args.cross_provider_lookback_calendar_days is not None
+            else policy_lookback_days
         ),
     )
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))

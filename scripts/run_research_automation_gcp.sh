@@ -412,6 +412,7 @@ VERIFY_ARGS=(
   --run-dir "${RUN_DIR}"
   --mode "${RUN_MODE}"
   --code-revision "${CODE_REVISION}"
+  --data-source-policy "${ROOT_DIR}/config/data_sources.yaml"
 )
 for provider_state in "${PROVIDER_STATES[@]}"; do
   VERIFY_ARGS+=(--provider-state "${provider_state}")
