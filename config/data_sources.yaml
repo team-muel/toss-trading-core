@@ -79,6 +79,7 @@ providers:
       upload_requires_quality_pass: true
       raw_cross_validation:
         comparison_provider: tiingo_eod
+        comparison_lookback_calendar_days: 45
         maximum_close_error_bps: 100
         volume_difference_warning_ratio: 0.20
     symbol_identity:

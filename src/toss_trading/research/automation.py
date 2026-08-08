@@ -9,7 +9,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from toss_trading.cli.research_validate_bars import validate_parquet
+from toss_trading.cli.research_validate_bars import (
+    load_cross_provider_policy,
+    validate_parquet,
+)
 from toss_trading.research.reporting import (
     build_research_summary,
     render_visual_report,
@@ -274,6 +277,7 @@ def verify_research_run(
     strategy_experiment: str | Path | None = None,
     hypothesis_plan: str | Path | None = None,
     hypothesis_evaluation: str | Path | None = None,
+    data_source_policy: str | Path | None = None,
 ) -> dict:
     root = Path(run_dir)
     if not root.is_dir():
@@ -322,6 +326,9 @@ def verify_research_run(
         root,
         code_revision=code_revision,
     )
+    cross_close_bps, cross_volume_ratio, cross_lookback_days = (
+        load_cross_provider_policy(data_source_policy)
+    )
     recomputed_qa = validate_parquet(
         [str(path) for path in parquet_files],
         required_adjustments=required_adjustments,
@@ -330,6 +337,9 @@ def verify_research_run(
             if provider_states.get("tiingo") == "collected"
             else ()
         ),
+        max_cross_provider_close_error_bps=cross_close_bps,
+        volume_warning_ratio=cross_volume_ratio,
+        cross_provider_lookback_calendar_days=cross_lookback_days,
     )
     if recomputed_qa.get("ok") is not True:
         raise ValueError("recomputed market-bar QA did not pass")
