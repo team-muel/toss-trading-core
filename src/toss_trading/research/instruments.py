@@ -205,19 +205,46 @@ def resolve_provider_symbol(
     return selected[0].provider_symbol
 
 
+def build_instrument_lifetime_index(
+    mappings: Iterable[InstrumentMapping],
+) -> dict[str, tuple[date, date | None]]:
+    lifetimes: dict[str, tuple[date, date | None]] = {}
+    for mapping in mappings:
+        symbol = mapping.ticker.strip().upper()
+        if symbol in lifetimes:
+            raise ValueError(f"duplicate instrument lifetime: {symbol}")
+        lifetimes[symbol] = (
+            date.fromisoformat(mapping.listed_from or mapping.effective_from),
+            date.fromisoformat(mapping.delisted_on) if mapping.delisted_on else None,
+        )
+    return lifetimes
+
+
+def observation_within_instrument_lifetime(
+    lifetimes: dict[str, tuple[date, date | None]],
+    symbol: str,
+    value: str,
+) -> bool:
+    canonical_symbol = symbol.strip().upper()
+    lifetime = lifetimes.get(canonical_symbol)
+    if lifetime is None:
+        raise ValueError(f"observation has no instrument identity: {symbol}")
+    observed = date.fromisoformat(value)
+    listed, delisted = lifetime
+    return observed >= listed and (delisted is None or observed <= delisted)
+
+
 def validate_point_in_time_dates(
     mappings: Iterable[InstrumentMapping],
     observations: Iterable[tuple[str, str]],
 ) -> None:
-    by_symbol = {item.ticker: item for item in mappings}
+    lifetimes = build_instrument_lifetime_index(mappings)
     for symbol, value in observations:
-        mapping = by_symbol.get(symbol.strip().upper())
-        if mapping is None:
-            raise ValueError(f"observation has no instrument identity: {symbol}")
-        observed = date.fromisoformat(value)
-        listed = date.fromisoformat(mapping.listed_from or mapping.effective_from)
-        delisted = date.fromisoformat(mapping.delisted_on) if mapping.delisted_on else None
-        if observed < listed or (delisted is not None and observed > delisted):
+        if not observation_within_instrument_lifetime(
+            lifetimes,
+            symbol,
+            value,
+        ):
             raise ValueError(
                 f"observation falls outside instrument lifetime: {symbol}/{value}"
             )

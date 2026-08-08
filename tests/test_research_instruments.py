@@ -6,8 +6,10 @@ from pathlib import Path
 
 from toss_trading.data.universe import load_instrument_mappings, load_universe
 from toss_trading.research.instruments import (
+    build_instrument_lifetime_index,
     load_corporate_actions,
     load_instrument_history,
+    observation_within_instrument_lifetime,
     resolve_provider_symbol,
     validate_instrument_history,
     validate_point_in_time_dates,
@@ -51,6 +53,23 @@ class ResearchInstrumentTests(unittest.TestCase):
     def test_observation_before_listing_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "outside instrument lifetime"):
             validate_point_in_time_dates(self.mappings, [("SGOV", "2020-05-25")])
+
+    def test_predecessor_history_is_excluded_from_current_fund_lifetime(self) -> None:
+        lifetimes = build_instrument_lifetime_index(self.mappings)
+        self.assertFalse(
+            observation_within_instrument_lifetime(
+                lifetimes,
+                "SMH",
+                "2004-01-02",
+            )
+        )
+        self.assertTrue(
+            observation_within_instrument_lifetime(
+                lifetimes,
+                "SMH",
+                "2011-12-20",
+            )
+        )
 
     def test_registry_contains_every_enabled_universe_member(self) -> None:
         enabled = {item.symbol for item in load_universe("data/universe.csv") if item.enabled}

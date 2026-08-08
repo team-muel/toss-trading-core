@@ -16,7 +16,11 @@ from toss_trading.research.candidate_evaluation import (
 )
 from toss_trading.research.hypotheses import HypothesisLedger, load_research_policy
 from toss_trading.data.universe import load_instrument_mappings
-from toss_trading.research.instruments import validate_point_in_time_dates
+from toss_trading.research.instruments import (
+    build_instrument_lifetime_index,
+    observation_within_instrument_lifetime,
+    validate_point_in_time_dates,
+)
 
 
 def _candidate_summary(
@@ -257,9 +261,23 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     points, used_parquet_files = _load_points(args.parquet)
+    excluded_lifetime_points: list[PricePoint] = []
     if args.instrument_master:
+        mappings = load_instrument_mappings(args.instrument_master)
+        lifetimes = build_instrument_lifetime_index(mappings)
+        eligible_points = []
+        for point in points:
+            if observation_within_instrument_lifetime(
+                lifetimes,
+                point.symbol,
+                point.date,
+            ):
+                eligible_points.append(point)
+            else:
+                excluded_lifetime_points.append(point)
+        points = eligible_points
         validate_point_in_time_dates(
-            load_instrument_mappings(args.instrument_master),
+            mappings,
             ((point.symbol, point.date) for point in points),
         )
     manifest_ids = _total_return_manifest_ids(
@@ -278,6 +296,12 @@ def main(argv: list[str] | None = None) -> int:
             args.cost_calibration,
             portfolio_notional_usd=args.portfolio_notional_usd,
         ),
+    )
+    result["excluded_outside_instrument_lifetime_rows"] = len(
+        excluded_lifetime_points
+    )
+    result["excluded_outside_instrument_lifetime_symbols"] = sorted(
+        {point.symbol for point in excluded_lifetime_points}
     )
     destination = Path(args.result)
     destination.parent.mkdir(parents=True, exist_ok=True)

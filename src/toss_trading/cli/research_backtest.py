@@ -16,7 +16,11 @@ from toss_trading.research.costs import (
     load_execution_cost_model,
 )
 from toss_trading.data.universe import load_instrument_mappings
-from toss_trading.research.instruments import validate_point_in_time_dates
+from toss_trading.research.instruments import (
+    build_instrument_lifetime_index,
+    observation_within_instrument_lifetime,
+    validate_point_in_time_dates,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -163,6 +167,25 @@ def main(argv: list[str] | None = None) -> int:
         ).fetchall()
     finally:
         connection.close()
+    excluded_lifetime_rows: list[tuple] = []
+    if args.instrument_master:
+        mappings = load_instrument_mappings(args.instrument_master)
+        lifetimes = build_instrument_lifetime_index(mappings)
+        eligible_rows = []
+        for row in rows:
+            if observation_within_instrument_lifetime(
+                lifetimes,
+                str(row[1]),
+                str(row[0]),
+            ):
+                eligible_rows.append(row)
+            else:
+                excluded_lifetime_rows.append(row)
+        rows = eligible_rows
+        validate_point_in_time_dates(
+            mappings,
+            ((str(row[1]), str(row[0])) for row in rows),
+        )
     points = [
         PricePoint(
             date=str(row[0]),
@@ -172,11 +195,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         for row in rows
     ]
-    if args.instrument_master:
-        validate_point_in_time_dates(
-            load_instrument_mappings(args.instrument_master),
-            ((point.symbol, point.date) for point in points),
-        )
     used_parquet_files = {str(row[4]) for row in rows}
     candidate_symbols = tuple(
         dict.fromkeys(symbol.strip().upper() for symbol in args.candidate)
@@ -250,6 +268,12 @@ def main(argv: list[str] | None = None) -> int:
                     else None
                 ),
                 "rebalances": len(result.rebalances),
+                "excluded_outside_instrument_lifetime_rows": len(
+                    excluded_lifetime_rows
+                ),
+                "excluded_outside_instrument_lifetime_symbols": sorted(
+                    {str(row[1]) for row in excluded_lifetime_rows}
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,
