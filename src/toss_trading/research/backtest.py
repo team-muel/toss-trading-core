@@ -52,6 +52,73 @@ class DualMomentumConfig:
             raise ValueError("walk-forward train and test windows must be positive")
 
 
+QUANT_FACTOR_NAMES = (
+    "momentum",
+    "risk_adjusted_momentum",
+    "short_term_reversal",
+    "low_volatility",
+    "trend_acceleration",
+)
+
+
+@dataclass(frozen=True)
+class QuantFactorConfig:
+    """Bounded, code-free DSL for cross-sectional ETF factor research."""
+
+    candidate_symbols: tuple[str, ...]
+    cash_symbol: str
+    factor_weights: tuple[tuple[str, float], ...]
+    long_lookback_trading_days: int
+    short_lookback_trading_days: int
+    volatility_window_trading_days: int
+    skip_recent_trading_days: int
+    top_k: int
+    weighting: str
+    rebalance_frequency: str
+    regime_filter: str
+    minimum_composite_score: float
+    walk_forward_train_days: int
+    walk_forward_test_days: int
+
+    @property
+    def factors(self) -> dict[str, float]:
+        return dict(self.factor_weights)
+
+    def validate(self) -> None:
+        if len(self.candidate_symbols) < 2:
+            raise ValueError("candidate_symbols needs at least two symbols")
+        if self.cash_symbol in self.candidate_symbols:
+            raise ValueError("cash_symbol must not be a factor candidate")
+        weights = self.factors
+        if set(weights) != set(QUANT_FACTOR_NAMES):
+            raise ValueError("factor_weights differs from the bounded factor set")
+        if any(value < 0 or value > 1 for value in weights.values()):
+            raise ValueError("factor weights must be between zero and one")
+        if not any(value > 0 for value in weights.values()):
+            raise ValueError("at least one factor must be active")
+        if self.long_lookback_trading_days <= self.short_lookback_trading_days:
+            raise ValueError("long lookback must exceed short lookback")
+        if min(
+            self.short_lookback_trading_days,
+            self.volatility_window_trading_days,
+        ) < 2:
+            raise ValueError("factor windows are too short")
+        if self.skip_recent_trading_days < 0:
+            raise ValueError("skip_recent_trading_days must be nonnegative")
+        if not 1 <= self.top_k <= len(self.candidate_symbols):
+            raise ValueError("top_k is outside the candidate universe")
+        if self.weighting not in {"equal", "inverse_volatility"}:
+            raise ValueError("unsupported factor portfolio weighting")
+        if self.rebalance_frequency not in {"weekly", "monthly"}:
+            raise ValueError("unsupported factor rebalance frequency")
+        if self.regime_filter not in {"none", "spy_absolute_momentum"}:
+            raise ValueError("unsupported market regime filter")
+        if not -1 <= self.minimum_composite_score <= 1:
+            raise ValueError("minimum_composite_score must be between -1 and one")
+        if min(self.walk_forward_train_days, self.walk_forward_test_days) <= 0:
+            raise ValueError("walk-forward train and test windows must be positive")
+
+
 @dataclass(frozen=True)
 class Rebalance:
     signal_date: str
@@ -67,7 +134,7 @@ class Rebalance:
 
 @dataclass(frozen=True)
 class BacktestResult:
-    config: DualMomentumConfig
+    config: DualMomentumConfig | QuantFactorConfig
     equity_curve: tuple[tuple[str, float], ...]
     daily_returns: tuple[tuple[str, float], ...]
     rebalances: tuple[Rebalance, ...]
@@ -443,6 +510,254 @@ def run_dual_momentum_backtest(
         benchmark_daily_returns=benchmark_daily_returns,
         walk_forward_folds=folds,
         execution_cost_model=cost_model,
+    )
+
+
+def _is_week_end(dates: list[str], index: int) -> bool:
+    if index == len(dates) - 1:
+        return True
+    return date.fromisoformat(dates[index]).isocalendar()[:2] != date.fromisoformat(
+        dates[index + 1]
+    ).isocalendar()[:2]
+
+
+def _rank_factor(values: dict[str, float]) -> dict[str, float]:
+    """Map a cross-section to deterministic scores in [-1, 1]."""
+
+    ordered = sorted(values, key=lambda symbol: (values[symbol], symbol))
+    if len(ordered) == 1:
+        return {ordered[0]: 0.0}
+    return {
+        symbol: -1.0 + 2.0 * index / (len(ordered) - 1)
+        for index, symbol in enumerate(ordered)
+    }
+
+
+def run_quant_factor_backtest(
+    points: Iterable[PricePoint],
+    config: QuantFactorConfig,
+    *,
+    execution_cost_model: ExecutionCostModel,
+) -> BacktestResult:
+    """Evaluate bounded factor combinations with delayed, costed execution.
+
+    The model may choose a pre-approved combination of factors and portfolio
+    rules, but it cannot provide executable code or arbitrary expressions.
+    Every signal uses point-in-time total-return observations and is applied on
+    the following trading day.
+    """
+
+    config.validate()
+    execution_cost_model.validate()
+    panel: dict[str, dict[str, float]] = {}
+    availability: dict[tuple[str, str], str] = {}
+    for point in points:
+        key = (point.date, point.symbol)
+        if key in availability:
+            raise ValueError(f"duplicate price point: {key}")
+        panel.setdefault(point.date, {})[point.symbol] = _number(
+            point.total_return_index
+        )
+        availability[key] = point.available_at
+    dates = sorted(panel)
+    required = set(config.candidate_symbols) | {config.cash_symbol, "SPY"}
+    warmup = config.skip_recent_trading_days + max(
+        config.long_lookback_trading_days,
+        config.volatility_window_trading_days,
+    )
+    if len(dates) <= warmup + 1:
+        raise ValueError("insufficient history for configured factor windows")
+    for item_date in dates:
+        missing = required - set(panel[item_date])
+        if missing:
+            raise ValueError(f"missing symbols on {item_date}: {sorted(missing)}")
+
+    weights = {config.cash_symbol: 1.0}
+    pending: tuple[str, dict[str, float], dict[str, float]] | None = None
+    equity = 1.0
+    equity_curve: list[tuple[str, float]] = [(dates[0], equity)]
+    daily_returns: list[tuple[str, float]] = []
+    rebalances: list[Rebalance] = []
+    total_turnover = 0.0
+    factor_weights = config.factors
+
+    for index in range(1, len(dates)):
+        current_date = dates[index]
+        previous_date = dates[index - 1]
+        gross_return = sum(
+            weight
+            * (panel[current_date][symbol] / panel[previous_date][symbol] - 1.0)
+            for symbol, weight in weights.items()
+        )
+        transaction_cost = 0.0
+        if pending is not None:
+            signal_date, scores, target = pending
+            turnover = _turnover(weights, target)
+            estimate = execution_cost_model.estimate_rebalance(
+                weights,
+                target,
+                equity_multiple=equity,
+            )
+            transaction_cost = estimate["total_fraction"]
+            total_turnover += turnover
+            weights = target
+            rebalances.append(
+                Rebalance(
+                    signal_date=signal_date,
+                    effective_date=current_date,
+                    scores=scores,
+                    target_weights=target,
+                    turnover=turnover,
+                    cost_fraction=transaction_cost,
+                    gross_order_notional_usd=estimate["gross_order_notional_usd"],
+                    commission_cost_fraction=estimate["commission_fraction"],
+                    slippage_cost_fraction=estimate["slippage_fraction"],
+                )
+            )
+            pending = None
+        net_return = gross_return - transaction_cost
+        equity *= 1.0 + net_return
+        if equity <= 0:
+            raise ValueError("strategy equity became nonpositive")
+        daily_returns.append((current_date, net_return))
+        equity_curve.append((current_date, equity))
+
+        is_rebalance = (
+            _is_month_end(dates, index)
+            if config.rebalance_frequency == "monthly"
+            else _is_week_end(dates, index)
+        )
+        if not is_rebalance or index < warmup or index + 1 >= len(dates):
+            continue
+
+        recent_index = index - config.skip_recent_trading_days
+        long_index = recent_index - config.long_lookback_trading_days
+        short_index = recent_index - config.short_lookback_trading_days
+        volatility_index = recent_index - config.volatility_window_trading_days
+        checked_dates = {
+            dates[recent_index],
+            dates[long_index],
+            dates[short_index],
+            dates[volatility_index],
+        }
+        for symbol in required:
+            if not all(
+                _available_on_or_before(availability[(item_date, symbol)], current_date)
+                for item_date in checked_dates
+            ):
+                raise ValueError(
+                    f"point-in-time violation for {symbol} on {current_date}"
+                )
+
+        raw: dict[str, dict[str, float]] = {
+            factor: {} for factor in QUANT_FACTOR_NAMES
+        }
+        volatilities: dict[str, float] = {}
+        for symbol in config.candidate_symbols:
+            long_return = (
+                panel[dates[recent_index]][symbol]
+                / panel[dates[long_index]][symbol]
+                - 1.0
+            )
+            short_return = (
+                panel[dates[recent_index]][symbol]
+                / panel[dates[short_index]][symbol]
+                - 1.0
+            )
+            window_returns = [
+                panel[dates[position]][symbol]
+                / panel[dates[position - 1]][symbol]
+                - 1.0
+                for position in range(volatility_index + 1, recent_index + 1)
+            ]
+            volatility = (
+                statistics.stdev(window_returns) * math.sqrt(252.0)
+                if len(window_returns) > 1
+                else 0.0
+            )
+            volatilities[symbol] = volatility
+            raw["momentum"][symbol] = long_return
+            raw["risk_adjusted_momentum"][symbol] = (
+                long_return / volatility if volatility > 0 else 0.0
+            )
+            raw["short_term_reversal"][symbol] = -short_return
+            raw["low_volatility"][symbol] = -volatility
+            raw["trend_acceleration"][symbol] = (
+                short_return / config.short_lookback_trading_days
+                - long_return / config.long_lookback_trading_days
+            )
+
+        ranked = {factor: _rank_factor(values) for factor, values in raw.items()}
+        normalization = sum(factor_weights.values())
+        scores = {
+            symbol: sum(
+                factor_weights[factor] * ranked[factor][symbol]
+                for factor in QUANT_FACTOR_NAMES
+            )
+            / normalization
+            for symbol in config.candidate_symbols
+        }
+        regime_passed = True
+        if config.regime_filter == "spy_absolute_momentum":
+            regime_passed = (
+                panel[dates[recent_index]]["SPY"]
+                / panel[dates[long_index]]["SPY"]
+                - 1.0
+            ) > 0.0
+        selected = (
+            [
+                symbol
+                for symbol in sorted(
+                    config.candidate_symbols,
+                    key=lambda item: (-scores[item], item),
+                )
+                if scores[symbol] >= config.minimum_composite_score
+            ][: config.top_k]
+            if regime_passed
+            else []
+        )
+        if not selected:
+            target = {config.cash_symbol: 1.0}
+        elif config.weighting == "equal":
+            target = {symbol: 1.0 / len(selected) for symbol in selected}
+        else:
+            inverse = {
+                symbol: 1.0 / max(volatilities[symbol], 1e-8)
+                for symbol in selected
+            }
+            denominator = sum(inverse.values())
+            target = {
+                symbol: inverse[symbol] / denominator for symbol in selected
+            }
+        pending = (current_date, scores, target)
+
+    benchmark_daily_returns = _benchmark_daily_returns(panel, dates, config)
+    primary_benchmark = "SPY buy-and-hold"
+    folds = _walk_forward_folds(
+        daily_returns,
+        rebalances,
+        benchmark_daily_returns[primary_benchmark],
+        benchmark_name=primary_benchmark,
+        train_days=config.walk_forward_train_days,
+        test_days=config.walk_forward_test_days,
+    )
+    return BacktestResult(
+        config=config,
+        equity_curve=tuple(equity_curve),
+        daily_returns=tuple(daily_returns),
+        rebalances=tuple(rebalances),
+        metrics=_metrics(
+            [value for _, value in daily_returns],
+            [value for _, value in equity_curve],
+            total_turnover,
+        ),
+        benchmark_metrics={
+            name: _metrics_from_daily_returns(values)
+            for name, values in benchmark_daily_returns.items()
+        },
+        benchmark_daily_returns=benchmark_daily_returns,
+        walk_forward_folds=folds,
+        execution_cost_model=execution_cost_model,
     )
 
 

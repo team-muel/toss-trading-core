@@ -171,3 +171,6 @@ GCS로 올립니다. 기존 6시간 Foundation timer와 경보 6개는 그대로
 sudo systemctl start toss-research-automation@daily.service
 sudo systemctl status toss-research-automation@daily.service --no-pager
 ```
+
+다방향 자율 퀀트 연구의 계열, 참신성 검사, 공통 검증 기준은
+[`docs/30_multi_direction_quant_research.md`](docs/30_multi_direction_quant_research.md)에 정리되어 있습니다.

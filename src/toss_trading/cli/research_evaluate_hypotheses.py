@@ -48,6 +48,7 @@ def _candidate_summary(
     )
     return {
         "hypothesis_id": str(hypothesis["hypothesis_id"]),
+        "strategy_family": str(hypothesis.get("strategy_family", "unknown")),
         "activity": activity,
         "thesis": str(hypothesis.get("thesis", "")),
         "state": result.get("state"),
@@ -61,15 +62,7 @@ def _candidate_summary(
             "annualized_mean_excess"
         ),
         "prospective_state": prospective.get("state"),
-        "config": {
-            "candidate_symbols": config.get("candidate_symbols"),
-            "lookback_trading_days": config.get("lookback_trading_days"),
-            "skip_recent_trading_days": config.get("skip_recent_trading_days"),
-            "top_k": config.get("top_k"),
-            "minimum_absolute_momentum": config.get(
-                "minimum_absolute_momentum"
-            ),
-        },
+        "config": config,
     }
 
 

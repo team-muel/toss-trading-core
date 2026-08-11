@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import shutil
+import statistics
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -11,8 +12,16 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-POLICY_SCHEMA = "autonomous-research-policy-v1"
-HYPOTHESIS_SCHEMA = "strategy-hypothesis-v1"
+POLICY_SCHEMA = "autonomous-research-policy-v2"
+HYPOTHESIS_SCHEMA = "strategy-hypothesis-v2"
+LEGACY_STRATEGY_FAMILY = "dual_momentum"
+FACTOR_NAMES = (
+    "momentum",
+    "risk_adjusted_momentum",
+    "short_term_reversal",
+    "low_volatility",
+    "trend_acceleration",
+)
 VERTEX_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 _MODEL_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 
@@ -38,6 +47,7 @@ def load_research_policy(path: str | Path) -> dict[str, Any]:
         "minimum_prospective_rebalances": (6, 60),
         "bootstrap_samples": (200, 10000),
         "bootstrap_block_days": (5, 126),
+        "proposal_pool_multiplier": (1, 5),
     }
     for field, (minimum, maximum) in integer_bounds.items():
         value = payload.get(field)
@@ -74,6 +84,35 @@ def load_research_policy(path: str | Path) -> dict[str, Any]:
     ):
         if payload.get(field) is not True:
             raise ValueError(f"research policy {field} must remain enabled")
+    families = payload.get("strategy_families")
+    rotation = payload.get("family_rotation")
+    if (
+        not isinstance(families, list)
+        or len(families) < 3
+        or len(families) != len(set(families))
+        or any(not isinstance(item, str) or not item for item in families)
+    ):
+        raise ValueError("research policy strategy_families is invalid")
+    if not isinstance(rotation, list) or set(rotation) != set(families):
+        raise ValueError("research policy family_rotation must cover every family")
+    novelty = payload.get("minimum_structural_novelty")
+    if isinstance(novelty, bool) or not isinstance(novelty, (int, float)):
+        raise ValueError("research policy minimum_structural_novelty must be numeric")
+    if not 0.05 <= float(novelty) <= 0.75:
+        raise ValueError("research policy minimum_structural_novelty is outside safe bounds")
+    allowed_weights = payload.get("allowed_factor_weights")
+    if (
+        not isinstance(allowed_weights, list)
+        or 0.0 not in allowed_weights
+        or 1.0 not in allowed_weights
+        or any(
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not 0 <= float(item) <= 1
+            for item in allowed_weights
+        )
+    ):
+        raise ValueError("research policy allowed_factor_weights is invalid")
     return payload
 
 
@@ -102,6 +141,173 @@ def _bounded_text(value: Any, *, field: str, maximum: int = 800) -> str:
     return normalized
 
 
+def _validate_common_config(
+    config: dict[str, Any], *, policy: dict[str, Any]
+) -> list[str]:
+    candidates = config.get("candidate_symbols")
+    allowed_candidates = set(policy["allowed_candidate_symbols"])
+    if (
+        not isinstance(candidates, list)
+        or len(candidates) < 2
+        or len(candidates) != len(set(candidates))
+        or any(not isinstance(item, str) for item in candidates)
+        or not set(candidates).issubset(allowed_candidates)
+    ):
+        raise ValueError("hypothesis candidate symbols are outside policy")
+    for field, expected in {
+        "cash_symbol": policy["cash_symbol"],
+        "walk_forward_train_days": policy["walk_forward_train_days"],
+        "walk_forward_test_days": policy["walk_forward_test_days"],
+    }.items():
+        if config.get(field) != expected:
+            raise ValueError(f"hypothesis {field} differs from locked policy")
+    if config.get("top_k") not in policy["allowed_top_k"]:
+        raise ValueError("hypothesis top_k is outside policy")
+    if int(config["top_k"]) > len(candidates):
+        raise ValueError("hypothesis top_k exceeds its candidate universe")
+    return sorted(candidates)
+
+
+def _normalize_legacy_config(
+    config: dict[str, Any], *, policy: dict[str, Any]
+) -> dict[str, Any]:
+    fields = {
+        "candidate_symbols",
+        "cash_symbol",
+        "lookback_trading_days",
+        "skip_recent_trading_days",
+        "top_k",
+        "minimum_absolute_momentum",
+        "walk_forward_train_days",
+        "walk_forward_test_days",
+    }
+    if set(config) != fields:
+        raise ValueError("hypothesis config fields differ from the bounded strategy DSL")
+    candidates = _validate_common_config(config, policy=policy)
+    for field, allowed in {
+        "lookback_trading_days": policy["allowed_lookback_trading_days"],
+        "skip_recent_trading_days": policy["allowed_skip_recent_trading_days"],
+        "minimum_absolute_momentum": policy["allowed_minimum_absolute_momentum"],
+    }.items():
+        if config[field] not in allowed:
+            raise ValueError(f"hypothesis {field} is outside policy")
+    return {**config, "candidate_symbols": candidates}
+
+
+def _normalize_factor_config(
+    config: dict[str, Any], *, policy: dict[str, Any], strategy_family: str
+) -> dict[str, Any]:
+    fields = {
+        "candidate_symbols",
+        "cash_symbol",
+        "factor_weights",
+        "long_lookback_trading_days",
+        "short_lookback_trading_days",
+        "volatility_window_trading_days",
+        "skip_recent_trading_days",
+        "top_k",
+        "weighting",
+        "rebalance_frequency",
+        "regime_filter",
+        "minimum_composite_score",
+        "walk_forward_train_days",
+        "walk_forward_test_days",
+    }
+    if set(config) != fields:
+        raise ValueError("hypothesis config fields differ from the bounded factor DSL")
+    candidates = _validate_common_config(config, policy=policy)
+    for field, allowed in {
+        "long_lookback_trading_days": policy["allowed_long_lookback_trading_days"],
+        "short_lookback_trading_days": policy["allowed_short_lookback_trading_days"],
+        "volatility_window_trading_days": policy[
+            "allowed_volatility_window_trading_days"
+        ],
+        "skip_recent_trading_days": policy["allowed_skip_recent_trading_days"],
+        "weighting": policy["allowed_weighting"],
+        "rebalance_frequency": policy["allowed_rebalance_frequency"],
+        "regime_filter": policy["allowed_regime_filter"],
+        "minimum_composite_score": policy["allowed_minimum_composite_score"],
+    }.items():
+        if config[field] not in allowed:
+            raise ValueError(f"hypothesis {field} is outside policy")
+    if int(config["long_lookback_trading_days"]) <= int(
+        config["short_lookback_trading_days"]
+    ):
+        raise ValueError("hypothesis long lookback must exceed short lookback")
+    weights = config.get("factor_weights")
+    if not isinstance(weights, dict) or set(weights) != set(FACTOR_NAMES):
+        raise ValueError("hypothesis factor_weights differs from the bounded factors")
+    allowed_weights = policy["allowed_factor_weights"]
+    if any(value not in allowed_weights for value in weights.values()):
+        raise ValueError("hypothesis factor weight is outside policy")
+    active = {name for name, value in weights.items() if float(value) > 0}
+    required_single = {
+        "cross_sectional_momentum": "momentum",
+        "risk_adjusted_momentum": "risk_adjusted_momentum",
+        "short_term_reversal": "short_term_reversal",
+        "low_volatility": "low_volatility",
+        "trend_acceleration": "trend_acceleration",
+    }
+    if strategy_family in required_single and active != {required_single[strategy_family]}:
+        raise ValueError("hypothesis factor weights do not match its strategy family")
+    if strategy_family == "multi_factor_composite" and not 2 <= len(active) <= 3:
+        raise ValueError("multi-factor hypothesis must activate two or three factors")
+    normalized_weights = {
+        name: float(weights[name]) for name in sorted(FACTOR_NAMES)
+    }
+    return {
+        **config,
+        "candidate_symbols": candidates,
+        "factor_weights": normalized_weights,
+    }
+
+
+def structural_novelty(
+    proposal: StrategyHypothesis, registered: list[dict[str, Any]]
+) -> tuple[float, str | None]:
+    """Return minimum normalized config distance within the same family."""
+
+    comparable = [
+        item
+        for item in registered
+        if item.get("strategy_family") == proposal.strategy_family
+        and isinstance(item.get("config"), dict)
+    ]
+    if not comparable:
+        return 1.0, None
+    current = proposal.config
+    dimensions = sorted(set(current) - {"candidate_symbols", "factor_weights"})
+    scores: list[tuple[float, str]] = []
+    current_symbols = set(current.get("candidate_symbols", []))
+    current_weights = current.get("factor_weights", {})
+    for item in comparable:
+        other = item["config"]
+        other_symbols = set(other.get("candidate_symbols", []))
+        union = current_symbols | other_symbols
+        symbol_distance = (
+            1.0 - len(current_symbols & other_symbols) / len(union) if union else 0.0
+        )
+        scalar_distances = [
+            0.0 if current.get(field) == other.get(field) else 1.0
+            for field in dimensions
+        ]
+        other_weights = other.get("factor_weights", {})
+        weight_distance = (
+            sum(
+                abs(float(current_weights.get(name, 0.0)) - float(other_weights.get(name, 0.0)))
+                for name in FACTOR_NAMES
+            )
+            / len(FACTOR_NAMES)
+            if isinstance(current_weights, dict) and isinstance(other_weights, dict)
+            else 0.0
+        )
+        distance = statistics.fmean(
+            [symbol_distance, weight_distance, *scalar_distances]
+        )
+        scores.append((distance, str(item.get("hypothesis_id"))))
+    return min(scores, key=lambda item: item[0])
+
+
 def hypothesis_from_proposal(
     proposal: dict[str, Any],
     *,
@@ -126,57 +332,18 @@ def hypothesis_from_proposal(
     config = proposal.get("config")
     if not isinstance(config, dict):
         raise ValueError("hypothesis config must be an object")
-    allowed_fields = {
-        "candidate_symbols",
-        "cash_symbol",
-        "lookback_trading_days",
-        "skip_recent_trading_days",
-        "top_k",
-        "minimum_absolute_momentum",
-        "walk_forward_train_days",
-        "walk_forward_test_days",
-    }
-    if set(config) != allowed_fields:
-        raise ValueError("hypothesis config fields differ from the bounded strategy DSL")
-    candidates = config["candidate_symbols"]
-    allowed_candidates = set(policy["allowed_candidate_symbols"])
-    if (
-        not isinstance(candidates, list)
-        or len(candidates) < 2
-        or len(candidates) != len(set(candidates))
-        or not set(candidates).issubset(allowed_candidates)
-    ):
-        raise ValueError("hypothesis candidate symbols are outside policy")
-    exact_values = {
-        "cash_symbol": policy["cash_symbol"],
-        "walk_forward_train_days": policy["walk_forward_train_days"],
-        "walk_forward_test_days": policy["walk_forward_test_days"],
-    }
-    for field, expected in exact_values.items():
-        if config[field] != expected:
-            raise ValueError(f"hypothesis {field} differs from locked policy")
-    allowed_values = {
-        "lookback_trading_days": policy["allowed_lookback_trading_days"],
-        "skip_recent_trading_days": policy["allowed_skip_recent_trading_days"],
-        "top_k": policy["allowed_top_k"],
-        "minimum_absolute_momentum": policy[
-            "allowed_minimum_absolute_momentum"
-        ],
-    }
-    for field, allowed in allowed_values.items():
-        if config[field] not in allowed:
-            raise ValueError(f"hypothesis {field} is outside policy")
-    if config["top_k"] > len(candidates):
-        raise ValueError("hypothesis top_k exceeds its candidate universe")
-
-    normalized_config = {
-        **config,
-        "candidate_symbols": sorted(candidates),
-    }
-    identity = {
-        "strategy_family": policy["strategy_family"],
-        "config": normalized_config,
-    }
+    strategy_family = str(proposal.get("strategy_family") or LEGACY_STRATEGY_FAMILY)
+    if strategy_family == LEGACY_STRATEGY_FAMILY:
+        normalized_config = _normalize_legacy_config(config, policy=policy)
+    else:
+        if strategy_family not in policy["strategy_families"]:
+            raise ValueError("hypothesis strategy_family is outside policy")
+        normalized_config = _normalize_factor_config(
+            config,
+            policy=policy,
+            strategy_family=strategy_family,
+        )
+    identity = {"strategy_family": strategy_family, "config": normalized_config}
     hypothesis_id = str(
         uuid.uuid5(
             uuid.NAMESPACE_URL,
@@ -188,7 +355,7 @@ def hypothesis_from_proposal(
         hypothesis_id=hypothesis_id,
         registered_at=registered_at or datetime.now(timezone.utc).isoformat(),
         created_by_model=_bounded_text(model, field="created_by_model", maximum=120),
-        strategy_family=str(policy["strategy_family"]),
+        strategy_family=strategy_family,
         thesis=thesis,
         falsification_criteria=normalized_criteria,
         config=normalized_config,
@@ -368,10 +535,32 @@ class VertexHypothesisPlanner:
         available_symbols: list[str],
     ) -> list[dict[str, Any]]:
         count = int(policy["max_new_hypotheses_per_week"])
+        pool_count = min(15, count * int(policy.get("proposal_pool_multiplier", 1)))
+        target_families = policy.get("target_strategy_families")
+        if not isinstance(target_families, list) or not target_families:
+            target_families = list(policy["strategy_families"])
         context = {
-            "policy": policy,
+            "target_strategy_families": target_families,
+            "bounded_parameter_policy": {
+                key: value
+                for key, value in policy.items()
+                if key.startswith("allowed_")
+                or key
+                in {
+                    "cash_symbol",
+                    "walk_forward_train_days",
+                    "walk_forward_test_days",
+                }
+            },
             "available_symbols": sorted(set(available_symbols)),
-            "already_registered_configs": [item["config"] for item in registered],
+            "already_registered": [
+                {
+                    "strategy_family": item.get("strategy_family"),
+                    "thesis": item.get("thesis"),
+                    "config": item.get("config"),
+                }
+                for item in registered
+            ],
         }
         prompt = (
             "다음은 코드 실행 권한이 없는 제한된 정량 연구 제안 환경이다. "
@@ -381,15 +570,30 @@ class VertexHypothesisPlanner:
             "반복하지 말라. JSON 컨텍스트:\n"
             + json.dumps(context, ensure_ascii=False, sort_keys=True)
         )
+        prompt = (
+            "코드 실행 권한이 없는 제한된 퀀트 연구 제안 환경이다. "
+            "지정된 연구 계열과 허용값만 사용하여 경제적 논리가 서로 다른 ETF 전략 가설을 "
+            f"최대 {pool_count}개 제안하라. 기존 가설과 거의 같은 우주·주기·요인 조합은 피하고, "
+            "수익을 보장하거나 미래를 예측한다고 표현하지 마라. 각 가설은 왜 시장 이상현상이 "
+            "지속될 수 있는지와 어떤 증거가 나오면 폐기할지를 한국어로 명시해야 한다. "
+            "multi_factor_composite는 정확히 2~3개 요인만 활성화하라. JSON 컨텍스트:\n"
+            + json.dumps(context, ensure_ascii=False, sort_keys=True)
+        )
         config_schema = {
             "type": "OBJECT",
             "required": [
                 "candidate_symbols",
                 "cash_symbol",
-                "lookback_trading_days",
+                "factor_weights",
+                "long_lookback_trading_days",
+                "short_lookback_trading_days",
+                "volatility_window_trading_days",
                 "skip_recent_trading_days",
                 "top_k",
-                "minimum_absolute_momentum",
+                "weighting",
+                "rebalance_frequency",
+                "regime_filter",
+                "minimum_composite_score",
                 "walk_forward_train_days",
                 "walk_forward_test_days",
             ],
@@ -406,12 +610,61 @@ class VertexHypothesisPlanner:
                     "type": "STRING",
                     "enum": [policy["cash_symbol"]],
                 },
-                "lookback_trading_days": {"type": "INTEGER"},
-                "skip_recent_trading_days": {"type": "INTEGER"},
-                "top_k": {"type": "INTEGER"},
-                "minimum_absolute_momentum": {"type": "NUMBER"},
-                "walk_forward_train_days": {"type": "INTEGER"},
-                "walk_forward_test_days": {"type": "INTEGER"},
+                "factor_weights": {
+                    "type": "OBJECT",
+                    "required": list(FACTOR_NAMES),
+                    "properties": {
+                        name: {
+                            "type": "NUMBER",
+                            "enum": policy["allowed_factor_weights"],
+                        }
+                        for name in FACTOR_NAMES
+                    },
+                },
+                "long_lookback_trading_days": {
+                    "type": "INTEGER",
+                    "enum": policy["allowed_long_lookback_trading_days"],
+                },
+                "short_lookback_trading_days": {
+                    "type": "INTEGER",
+                    "enum": policy["allowed_short_lookback_trading_days"],
+                },
+                "volatility_window_trading_days": {
+                    "type": "INTEGER",
+                    "enum": policy["allowed_volatility_window_trading_days"],
+                },
+                "skip_recent_trading_days": {
+                    "type": "INTEGER",
+                    "enum": policy["allowed_skip_recent_trading_days"],
+                },
+                "top_k": {
+                    "type": "INTEGER",
+                    "enum": policy["allowed_top_k"],
+                },
+                "weighting": {
+                    "type": "STRING",
+                    "enum": policy["allowed_weighting"],
+                },
+                "rebalance_frequency": {
+                    "type": "STRING",
+                    "enum": policy["allowed_rebalance_frequency"],
+                },
+                "regime_filter": {
+                    "type": "STRING",
+                    "enum": policy["allowed_regime_filter"],
+                },
+                "minimum_composite_score": {
+                    "type": "NUMBER",
+                    "enum": policy["allowed_minimum_composite_score"],
+                },
+                "walk_forward_train_days": {
+                    "type": "INTEGER",
+                    "enum": [policy["walk_forward_train_days"]],
+                },
+                "walk_forward_test_days": {
+                    "type": "INTEGER",
+                    "enum": [policy["walk_forward_test_days"]],
+                },
             },
         }
         response = self.session_factory().post(
@@ -429,8 +682,8 @@ class VertexHypothesisPlanner:
                 },
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "temperature": 0.3,
-                    "maxOutputTokens": 3000,
+                    "temperature": 0.55,
+                    "maxOutputTokens": 6000,
                     "responseMimeType": "application/json",
                     "responseSchema": {
                         "type": "OBJECT",
@@ -438,15 +691,20 @@ class VertexHypothesisPlanner:
                         "properties": {
                             "hypotheses": {
                                 "type": "ARRAY",
-                                "maxItems": count,
+                                "maxItems": pool_count,
                                 "items": {
                                     "type": "OBJECT",
                                     "required": [
+                                        "strategy_family",
                                         "thesis",
                                         "falsification_criteria",
                                         "config",
                                     ],
                                     "properties": {
+                                        "strategy_family": {
+                                            "type": "STRING",
+                                            "enum": target_families,
+                                        },
                                         "thesis": {"type": "STRING"},
                                         "falsification_criteria": {
                                             "type": "ARRAY",
@@ -473,6 +731,6 @@ class VertexHypothesisPlanner:
         )
         decoded = json.loads(text)
         hypotheses = decoded.get("hypotheses")
-        if not isinstance(hypotheses, list) or len(hypotheses) > count:
+        if not isinstance(hypotheses, list) or len(hypotheses) > pool_count:
             raise ValueError("Vertex AI hypothesis count exceeds policy")
         return hypotheses

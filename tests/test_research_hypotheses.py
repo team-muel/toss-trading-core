@@ -10,6 +10,7 @@ from toss_trading.research.hypotheses import (
     VertexHypothesisPlanner,
     hypothesis_from_proposal,
     load_research_policy,
+    structural_novelty,
 )
 
 
@@ -65,6 +66,38 @@ def proposal() -> dict:
             "skip_recent_trading_days": 21,
             "top_k": 1,
             "minimum_absolute_momentum": 0.0,
+            "walk_forward_train_days": 504,
+            "walk_forward_test_days": 126,
+        },
+    }
+
+
+def factor_proposal() -> dict:
+    return {
+        "strategy_family": "short_term_reversal",
+        "thesis": "단기 유동성 충격 뒤 과도한 가격 움직임이 일부 되돌려지는지 검증한다.",
+        "falsification_criteria": [
+            "비용 스트레스 후 SPY 대비 초과수익이 없으면 폐기한다."
+        ],
+        "config": {
+            "candidate_symbols": ["SPY", "QQQ", "TLT", "GLD"],
+            "cash_symbol": "SGOV",
+            "factor_weights": {
+                "momentum": 0.0,
+                "risk_adjusted_momentum": 0.0,
+                "short_term_reversal": 1.0,
+                "low_volatility": 0.0,
+                "trend_acceleration": 0.0,
+            },
+            "long_lookback_trading_days": 126,
+            "short_lookback_trading_days": 21,
+            "volatility_window_trading_days": 63,
+            "skip_recent_trading_days": 0,
+            "top_k": 2,
+            "weighting": "inverse_volatility",
+            "rebalance_frequency": "monthly",
+            "regime_filter": "none",
+            "minimum_composite_score": 0.0,
             "walk_forward_train_days": 504,
             "walk_forward_test_days": 126,
         },
@@ -130,7 +163,7 @@ class ResearchHypothesisTests(unittest.TestCase):
             hypothesis_from_proposal(unsafe, policy=self.policy, model="gemini-test")
 
     def test_vertex_schema_enumerates_the_bounded_config(self) -> None:
-        session = _Session(proposal())
+        session = _Session(factor_proposal())
         planner = VertexHypothesisPlanner(
             project_id="project",
             model="gemini-test",
@@ -143,7 +176,7 @@ class ResearchHypothesisTests(unittest.TestCase):
             available_symbols=self.policy["allowed_candidate_symbols"],
         )
 
-        self.assertEqual(proposals, [proposal()])
+        self.assertEqual(proposals, [factor_proposal()])
         request = session.calls[0][1]["json"]
         config_schema = request["generationConfig"]["responseSchema"]["properties"][
             "hypotheses"
@@ -153,8 +186,51 @@ class ResearchHypothesisTests(unittest.TestCase):
             sorted(self.policy["allowed_candidate_symbols"]),
         )
         self.assertEqual(
-            set(config_schema["required"]), set(proposal()["config"])
+            set(config_schema["required"]), set(factor_proposal()["config"])
         )
+
+    def test_factor_family_is_bounded_and_content_addressed(self) -> None:
+        first = hypothesis_from_proposal(
+            factor_proposal(),
+            policy=self.policy,
+            model="gemini-test",
+            registered_at="now",
+        )
+        self.assertEqual(first.strategy_family, "short_term_reversal")
+        self.assertEqual(
+            first.config["factor_weights"]["short_term_reversal"], 1.0
+        )
+        unsafe = factor_proposal()
+        unsafe["config"]["factor_weights"]["momentum"] = 1.0
+        with self.assertRaisesRegex(ValueError, "do not match"):
+            hypothesis_from_proposal(
+                unsafe,
+                policy=self.policy,
+                model="gemini-test",
+            )
+
+    def test_structural_novelty_rejects_near_duplicates_but_not_new_families(self) -> None:
+        first = hypothesis_from_proposal(
+            factor_proposal(), policy=self.policy, model="gemini-test"
+        )
+        duplicate_score, nearest = structural_novelty(
+            first, [first.to_dict()]
+        )
+        self.assertEqual(duplicate_score, 0.0)
+        self.assertEqual(nearest, first.hypothesis_id)
+
+        different = factor_proposal()
+        different["strategy_family"] = "low_volatility"
+        different["config"]["factor_weights"]["short_term_reversal"] = 0.0
+        different["config"]["factor_weights"]["low_volatility"] = 1.0
+        second = hypothesis_from_proposal(
+            different, policy=self.policy, model="gemini-test"
+        )
+        new_family_score, nearest = structural_novelty(
+            second, [first.to_dict()]
+        )
+        self.assertEqual(new_family_score, 1.0)
+        self.assertIsNone(nearest)
 
 
 if __name__ == "__main__":

@@ -13,6 +13,7 @@ from toss_trading.research.hypotheses import (
     VertexHypothesisPlanner,
     hypothesis_from_proposal,
     load_research_policy,
+    structural_novelty,
 )
 
 
@@ -105,6 +106,18 @@ def plan_hypotheses(
         **policy,
         "max_new_hypotheses_per_week": weekly_remaining,
     }
+    rotation = list(policy["family_rotation"])
+    family_counts = {
+        family: sum(
+            1 for item in registered if item.get("strategy_family") == family
+        )
+        for family in policy["strategy_families"]
+    }
+    target_families = sorted(
+        policy["strategy_families"],
+        key=lambda family: (family_counts[family], rotation.index(family)),
+    )[: max(1, min(weekly_remaining, len(rotation)))]
+    planning_policy["target_strategy_families"] = target_families
     proposals = planner.propose(
         policy=planning_policy,
         registered=registered,
@@ -113,22 +126,58 @@ def plan_hypotheses(
     known = {str(item["hypothesis_id"]): item for item in registered}
     created: list[str] = []
     reused: list[str] = []
+    rejected_near_duplicates: list[dict[str, Any]] = []
+    rejected_invalid: list[dict[str, str]] = []
+    created_families: dict[str, str] = {}
     registered_at = current_time.isoformat()
     for proposal in proposals:
-        hypothesis = hypothesis_from_proposal(
-            proposal,
-            policy=policy,
-            model=model,
-            registered_at=registered_at,
-        )
+        try:
+            hypothesis = hypothesis_from_proposal(
+                proposal,
+                policy=policy,
+                model=model,
+                registered_at=registered_at,
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            rejected_invalid.append(
+                {
+                    "strategy_family": str(
+                        proposal.get("strategy_family", "unknown")
+                        if isinstance(proposal, dict)
+                        else "unknown"
+                    ),
+                    "reason_type": type(exc).__name__,
+                }
+            )
+            continue
         if hypothesis.hypothesis_id in known:
             if hypothesis.hypothesis_id not in reused:
                 reused.append(hypothesis.hypothesis_id)
+            continue
+        if (
+            hypothesis.strategy_family != str(policy.get("strategy_family"))
+            and hypothesis.strategy_family not in target_families
+        ):
+            continue
+        novelty, nearest_id = structural_novelty(
+            hypothesis,
+            list(known.values()),
+        )
+        if novelty < float(policy["minimum_structural_novelty"]):
+            rejected_near_duplicates.append(
+                {
+                    "hypothesis_id": hypothesis.hypothesis_id,
+                    "strategy_family": hypothesis.strategy_family,
+                    "nearest_hypothesis_id": nearest_id,
+                    "structural_novelty": novelty,
+                }
+            )
             continue
         if len(known) + len(created) >= limit:
             break
         ledger.register(hypothesis, output_dir=output_dir)
         created.append(hypothesis.hypothesis_id)
+        created_families[hypothesis.hypothesis_id] = hypothesis.strategy_family
         known[hypothesis.hypothesis_id] = hypothesis.to_dict()
     return {
         "state": "completed",
@@ -137,6 +186,11 @@ def plan_hypotheses(
         "registered_count": len(registered) + len(created),
         "registered_this_week": registered_this_week + len(created),
         "model": model,
+        "target_strategy_families": target_families,
+        "family_counts_before": family_counts,
+        "created_families": created_families,
+        "rejected_near_duplicates": rejected_near_duplicates,
+        "rejected_invalid": rejected_invalid,
     }
 
 

@@ -382,6 +382,16 @@ def autonomous_research_snapshot(
             "registered_count": registered_count,
             "model": payload.get("model"),
             "failure_reason_type": payload.get("failure_reason_type"),
+            "target_strategy_families": payload.get(
+                "target_strategy_families", []
+            ),
+            "created_families": payload.get("created_families", {}),
+            "near_duplicate_rejection_count": len(
+                payload.get("rejected_near_duplicates", [])
+            ),
+            "invalid_proposal_rejection_count": len(
+                payload.get("rejected_invalid", [])
+            ),
         }
     snapshot.update(
         {
@@ -444,6 +454,19 @@ def autonomous_research_snapshot(
             "candidate_results": sorted(
                 normalized_candidates, key=lambda item: item["hypothesis_id"]
             ),
+            "family_counts": {
+                family: sum(
+                    1
+                    for item in normalized_candidates
+                    if item.get("strategy_family") == family
+                )
+                for family in sorted(
+                    {
+                        str(item.get("strategy_family", "unknown"))
+                        for item in normalized_candidates
+                    }
+                )
+            },
         }
     )
     return snapshot

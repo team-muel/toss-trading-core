@@ -166,6 +166,29 @@ def _verified_fact_lines(summary: dict[str, Any]) -> list[str]:
         facts.append(
             "AI 후보 권한: 과거자료 평가만으로 승격 또는 주문 실행을 승인하지 않음"
         )
+        family_counts = autonomous.get("family_counts", {})
+        if isinstance(family_counts, dict) and family_counts:
+            facts.append(
+                "연구 계열 분포: "
+                + ", ".join(
+                    f"{family} {count}개"
+                    for family, count in sorted(family_counts.items())
+                )
+            )
+        duplicate_count = int(
+            autonomous.get("near_duplicate_rejection_count", 0) or 0
+        )
+        if duplicate_count:
+            facts.append(
+                f"참신성 검사: 기존 후보와 구조적으로 유사한 {duplicate_count}개 제안은 등록하지 않음"
+            )
+        invalid_count = int(
+            autonomous.get("invalid_proposal_rejection_count", 0) or 0
+        )
+        if invalid_count:
+            facts.append(
+                f"정책 검사: 허용된 퀀트 DSL을 벗어난 {invalid_count}개 AI 제안은 등록하지 않음"
+            )
         gate_labels = {
             "minimum_walk_forward_folds": "워크포워드 표본",
             "benchmark_outperformance_ratio": "워크포워드 벤치마크 초과",
@@ -193,6 +216,7 @@ def _verified_fact_lines(summary: dict[str, Any]) -> list[str]:
             )
             facts.append(
                 f"AI 후보 {str(candidate.get('hypothesis_id', 'unknown'))[:8]}: "
+                f"계열 {candidate.get('strategy_family', 'unknown')}, "
                 f"{candidate.get('state', 'unknown')}, SPY 대비 연율 평균 초과수익 "
                 f"{excess_text}, 다중검정 보정 p={p_text}, 실패 관문={failed_text}"
             )

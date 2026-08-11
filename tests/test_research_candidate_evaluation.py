@@ -36,6 +36,36 @@ def _proposal() -> dict:
     }
 
 
+def _factor_proposal() -> dict:
+    return {
+        "strategy_family": "risk_adjusted_momentum",
+        "thesis": "변동성 대비 추세가 강한 자산의 상대적 지속성을 검증한다.",
+        "falsification_criteria": ["비용 후 SPY 초과 성과가 없으면 폐기한다."],
+        "config": {
+            "candidate_symbols": ["SPY", "QQQ", "TLT"],
+            "cash_symbol": "SGOV",
+            "factor_weights": {
+                "momentum": 0.0,
+                "risk_adjusted_momentum": 1.0,
+                "short_term_reversal": 0.0,
+                "low_volatility": 0.0,
+                "trend_acceleration": 0.0,
+            },
+            "long_lookback_trading_days": 126,
+            "short_lookback_trading_days": 21,
+            "volatility_window_trading_days": 63,
+            "skip_recent_trading_days": 0,
+            "top_k": 1,
+            "weighting": "inverse_volatility",
+            "rebalance_frequency": "monthly",
+            "regime_filter": "none",
+            "minimum_composite_score": 0.0,
+            "walk_forward_train_days": 504,
+            "walk_forward_test_days": 126,
+        },
+    }
+
+
 def _points(days: int = 1150) -> list[PricePoint]:
     points: list[PricePoint] = []
     current = date(2018, 1, 1)
@@ -253,6 +283,42 @@ class CandidateEvaluationTests(unittest.TestCase):
             self.assertFalse(
                 (root / "ledger" / "evaluations" / hypothesis.hypothesis_id / "daily-new.json").exists()
             )
+
+    def test_factor_family_uses_same_historical_safety_gates(self) -> None:
+        policy = load_research_policy("config/autonomous_research_policy.json")
+        hypothesis = hypothesis_from_proposal(
+            _factor_proposal(), policy=policy, model="test", registered_at="now"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = HypothesisLedger(root / "ledger")
+            ledger.register(hypothesis)
+            result = evaluate_registered_hypotheses(
+                policy_path="config/autonomous_research_policy.json",
+                ledger_dir=root / "ledger",
+                output_dir=root / "artifacts",
+                run_id="factor-1",
+                code_revision="revision-factor",
+                data_manifest_ids=["manifest-factor"],
+                points=_points(),
+                execution_cost_model=_cost_model(),
+            )
+
+            self.assertEqual(result["evaluated"], [hypothesis.hypothesis_id])
+            candidate = result["candidate_results"][0]
+            self.assertEqual(candidate["strategy_family"], "risk_adjusted_momentum")
+            self.assertFalse(result["promotion_authorized"])
+            evaluation = json.loads(
+                (
+                    root
+                    / "ledger"
+                    / "evaluations"
+                    / hypothesis.hypothesis_id
+                    / "factor-1.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertIn("multiple_testing_adjusted_benchmark", evaluation["gates"])
+            self.assertIn("double_cost_stress_excess_positive", evaluation["gates"])
 
 
 if __name__ == "__main__":
