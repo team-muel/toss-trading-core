@@ -77,3 +77,9 @@ hypothesis-ledger/
 - CLI: `src/toss_trading/cli/research_plan_hypotheses.py`,
   `src/toss_trading/cli/research_evaluate_hypotheses.py`
 - GCP 실행: `scripts/run_research_automation_gcp.sh`
+
+## 2026-08-11 다계열 확장
+
+이 문서의 초기 `dual_momentum` 단일 DSL 설명은 기존 원장 후보와의 호환성을 위한
+기록이다. 신규 후보는 `docs/30_multi_direction_quant_research.md`의 6개 계열, 계열 순환,
+구조적 참신성 검사를 적용한다. 승격 및 실행 차단 규칙은 그대로 유지된다.

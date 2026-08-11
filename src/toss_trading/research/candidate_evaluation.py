@@ -13,7 +13,9 @@ from .backtest import (
     BacktestResult,
     DualMomentumConfig,
     PricePoint,
+    QuantFactorConfig,
     run_dual_momentum_backtest,
+    run_quant_factor_backtest,
     _metrics_from_daily_returns,
 )
 from .costs import ExecutionCostModel
@@ -23,19 +25,62 @@ EVALUATION_SCHEMA = "historical-candidate-evaluation-v1"
 PRIMARY_BENCHMARK = "SPY buy-and-hold"
 
 
-def _config(payload: dict[str, Any]) -> DualMomentumConfig:
+def _config(payload: dict[str, Any]) -> DualMomentumConfig | QuantFactorConfig:
     config = payload.get("config")
     if not isinstance(config, dict):
         raise ValueError("hypothesis config is missing")
-    return DualMomentumConfig(
+    if payload.get("strategy_family") == "dual_momentum":
+        return DualMomentumConfig(
+            candidate_symbols=tuple(config["candidate_symbols"]),
+            cash_symbol=str(config["cash_symbol"]),
+            lookback_trading_days=int(config["lookback_trading_days"]),
+            skip_recent_trading_days=int(config["skip_recent_trading_days"]),
+            top_k=int(config["top_k"]),
+            minimum_absolute_momentum=float(config["minimum_absolute_momentum"]),
+            walk_forward_train_days=int(config["walk_forward_train_days"]),
+            walk_forward_test_days=int(config["walk_forward_test_days"]),
+        )
+    weights = config.get("factor_weights")
+    if not isinstance(weights, dict):
+        raise ValueError("factor hypothesis config is missing factor_weights")
+    return QuantFactorConfig(
         candidate_symbols=tuple(config["candidate_symbols"]),
         cash_symbol=str(config["cash_symbol"]),
-        lookback_trading_days=int(config["lookback_trading_days"]),
+        factor_weights=tuple(
+            (str(name), float(value)) for name, value in sorted(weights.items())
+        ),
+        long_lookback_trading_days=int(config["long_lookback_trading_days"]),
+        short_lookback_trading_days=int(config["short_lookback_trading_days"]),
+        volatility_window_trading_days=int(
+            config["volatility_window_trading_days"]
+        ),
         skip_recent_trading_days=int(config["skip_recent_trading_days"]),
         top_k=int(config["top_k"]),
-        minimum_absolute_momentum=float(config["minimum_absolute_momentum"]),
+        weighting=str(config["weighting"]),
+        rebalance_frequency=str(config["rebalance_frequency"]),
+        regime_filter=str(config["regime_filter"]),
+        minimum_composite_score=float(config["minimum_composite_score"]),
         walk_forward_train_days=int(config["walk_forward_train_days"]),
         walk_forward_test_days=int(config["walk_forward_test_days"]),
+    )
+
+
+def _run_candidate(
+    points: Iterable[PricePoint],
+    config: DualMomentumConfig | QuantFactorConfig,
+    *,
+    execution_cost_model: ExecutionCostModel,
+) -> BacktestResult:
+    if isinstance(config, DualMomentumConfig):
+        return run_dual_momentum_backtest(
+            points,
+            config,
+            execution_cost_model=execution_cost_model,
+        )
+    return run_quant_factor_backtest(
+        points,
+        config,
+        execution_cost_model=execution_cost_model,
     )
 
 
@@ -174,7 +219,7 @@ def evaluate_hypothesis(
     config = _config(hypothesis)
     required = set(config.candidate_symbols) | {config.cash_symbol, "SPY"}
     aligned = _common_history(points, required_symbols=required)
-    result = run_dual_momentum_backtest(
+    result = _run_candidate(
         aligned,
         config,
         execution_cost_model=execution_cost_model,
@@ -188,7 +233,7 @@ def evaluate_hypothesis(
         seed_material=f"{hypothesis['hypothesis_id']}:{run_id}",
     )
     stress_multiplier = float(policy["cost_stress_multiplier"])
-    stressed = run_dual_momentum_backtest(
+    stressed = _run_candidate(
         aligned,
         config,
         execution_cost_model=result.execution_cost_model.stressed(stress_multiplier),
@@ -279,7 +324,7 @@ def evaluate_prospective_hypothesis(
     cutoff = str(protocol["historical_cutoff"])
     required = set(config.candidate_symbols) | {config.cash_symbol, "SPY"}
     aligned = _common_history(points, required_symbols=required)
-    result = run_dual_momentum_backtest(
+    result = _run_candidate(
         aligned,
         config,
         execution_cost_model=execution_cost_model,
@@ -353,7 +398,7 @@ def evaluate_prospective_hypothesis(
         seed_material=f"prospective:{hypothesis['hypothesis_id']}:{cutoff}",
     )
     stress_multiplier = float(policy["cost_stress_multiplier"])
-    stressed = run_dual_momentum_backtest(
+    stressed = _run_candidate(
         aligned,
         config,
         execution_cost_model=result.execution_cost_model.stressed(stress_multiplier),

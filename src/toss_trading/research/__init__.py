@@ -2,7 +2,9 @@ from .backtest import (
     BacktestResult,
     DualMomentumConfig,
     PricePoint,
+    QuantFactorConfig,
     run_dual_momentum_backtest,
+    run_quant_factor_backtest,
 )
 from .data_lake import DataLake, DatasetManifest, MarketBar, validate_market_bars
 from .providers import (
@@ -36,6 +38,7 @@ __all__ = [
     "ExecutionCostModel",
     "MarketBar",
     "PricePoint",
+    "QuantFactorConfig",
     "SlippageTier",
     "SEC_LICENSE_TAG",
     "SecEdgarClient",
@@ -52,5 +55,6 @@ __all__ = [
     "load_collection_observations",
     "load_execution_cost_model",
     "run_dual_momentum_backtest",
+    "run_quant_factor_backtest",
     "validate_market_bars",
 ]

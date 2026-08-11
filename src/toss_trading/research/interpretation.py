@@ -179,6 +179,18 @@ def _summary_facts(prefix: str, summary: dict[str, Any]) -> dict[str, str]:
         f"{prefix}.autonomous_research.historically_qualified": _fact_value(
             autonomous.get("historically_qualified_count", 0)
         ),
+        f"{prefix}.autonomous_research.family_counts": _fact_value(
+            autonomous.get("family_counts", {})
+        ),
+        f"{prefix}.autonomous_research.target_strategy_families": _fact_value(
+            autonomous.get("target_strategy_families", [])
+        ),
+        f"{prefix}.autonomous_research.near_duplicate_rejections": _fact_value(
+            autonomous.get("near_duplicate_rejection_count", 0)
+        ),
+        f"{prefix}.autonomous_research.invalid_proposal_rejections": _fact_value(
+            autonomous.get("invalid_proposal_rejection_count", 0)
+        ),
         f"{prefix}.autonomous_research.promotion_authorized": _fact_value(
             autonomous.get("promotion_authorized", False)
         ),
@@ -209,6 +221,7 @@ def _summary_facts(prefix: str, summary: dict[str, Any]) -> dict[str, str]:
         candidate_prefix = f"{prefix}.autonomous_research.candidate.{index}"
         for field in (
             "hypothesis_id",
+            "strategy_family",
             "activity",
             "thesis",
             "state",
