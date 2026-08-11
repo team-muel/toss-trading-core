@@ -15,6 +15,7 @@ from toss_trading.research.reporting import (
     autonomous_research_snapshot,
     build_monitoring_event,
     build_research_summary,
+    data_progress_snapshot,
     render_visual_report,
     summary_to_bigquery_row,
 )
@@ -81,6 +82,29 @@ def sample_summary(
 
 
 class ResearchReportingTest(unittest.TestCase):
+    def test_tiingo_progress_exposes_decision_useful_data_volume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "tiingo.json"
+            report.write_text(
+                json.dumps(
+                    {
+                        "symbols": ["SPY", "QQQ"],
+                        "rows": 4000,
+                        "total_return_rows": 2000,
+                        "history_start_date": "2004-01-01",
+                        "requested_through_date": "2026-08-10",
+                        "complete_through_date": "2026-08-10",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            progress = data_progress_snapshot(report)
+
+        self.assertEqual(progress["symbol_count"], 2)
+        self.assertEqual(progress["total_return_rows_collected"], 2000)
+        self.assertEqual(progress["complete_through_date"], "2026-08-10")
+
     def test_autonomous_evaluation_never_grants_promotion(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -105,6 +129,7 @@ class ResearchReportingTest(unittest.TestCase):
                         "state": "completed",
                         "evaluated": ["one"],
                         "reused": [],
+                        "carried_forward": [],
                         "historically_qualified": ["one"],
                         "evaluation_failed": [],
                         "candidate_results": [

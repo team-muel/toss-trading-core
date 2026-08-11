@@ -204,6 +204,13 @@ json_log "research_provider_ok" "toss" "collected" ""
 flock -u 8
 
 TIINGO_STATE="skipped_license_or_secret_gate"
+TIINGO_START_DATE="${START_DATE}"
+if [[ "${RUN_MODE}" == "daily" ]]; then
+  # Daily research needs the same verified long history as the weekly audit.
+  # Only Toss/FRED remain incremental; 15 Tiingo requests still cover the
+  # bounded universe, while the response range makes daily backtests possible.
+  TIINGO_START_DATE="2004-01-01"
+fi
 if [[ "${RESEARCH_TIINGO_LICENSE_ACCEPTED:-0}" == "1" ]] \
   && load_optional_secret \
     "TIINGO_API_TOKEN" \
@@ -211,7 +218,7 @@ if [[ "${RESEARCH_TIINGO_LICENSE_ACCEPTED:-0}" == "1" ]] \
   "${PYTHON_BIN}" -m toss_trading.cli.research_collect_tiingo \
     --universe "data/universe.csv" \
     --instrument-master "data/instrument_master.csv" \
-    --start-date "${START_DATE}" \
+    --start-date "${TIINGO_START_DATE}" \
     --end-date "${THROUGH_DATE}" \
     --output-root "${LAKE_DIR}" \
     --observation-ledger "${PROSPECTIVE_OBSERVATION_LEDGER}" \
@@ -228,6 +235,34 @@ else
     "license_acceptance_and_secret_required"
 fi
 PROVIDER_STATES+=("tiingo=${TIINGO_STATE}")
+
+MARKET_DATA_ADVANCED="0"
+CURRENT_MARKET_DATE=""
+PREVIOUS_MARKET_DATE=""
+if [[ "${TIINGO_STATE}" == "collected" ]]; then
+  CURRENT_MARKET_DATE="$(
+    "${PYTHON_BIN}" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["complete_through_date"])' \
+      "${REPORT_DIR}/tiingo-collection.json"
+  )"
+  PREVIOUS_TIINGO_REPORT="${RUNTIME_ROOT}/latest-daily/reports/tiingo-collection.json"
+  if [[ -f "${PREVIOUS_TIINGO_REPORT}" ]]; then
+    PREVIOUS_MARKET_DATE="$(
+      "${PYTHON_BIN}" -c \
+        'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["complete_through_date"])' \
+        "${PREVIOUS_TIINGO_REPORT}"
+    )"
+  fi
+  if [[ -z "${PREVIOUS_MARKET_DATE}" \
+    || "${CURRENT_MARKET_DATE}" > "${PREVIOUS_MARKET_DATE}" ]]; then
+    MARKET_DATA_ADVANCED="1"
+  fi
+  json_log \
+    "research_market_data_checkpoint" \
+    "tiingo" \
+    "$([[ "${MARKET_DATA_ADVANCED}" == "1" ]] && echo advanced || echo unchanged)" \
+    "${PREVIOUS_MARKET_DATE:-none}_to_${CURRENT_MARKET_DATE}"
+fi
 
 SEC_STATE="skipped_schedule_or_contact_gate"
 if [[ "${RUN_MODE}" == "weekly" && "${RESEARCH_SEC_CONTACT_APPROVED:-0}" == "1" ]] \
@@ -296,10 +331,14 @@ fi
 
 HYPOTHESIS_PLAN_RESULT=""
 HYPOTHESIS_EVALUATION_RESULT=""
-if [[ "${RUN_MODE}" == "weekly" \
-  && "${TIINGO_STATE}" == "collected" \
+if [[ "${TIINGO_STATE}" == "collected" \
   && "${RESEARCH_AUTONOMOUS_PLANNING_ENABLED:-1}" == "1" ]]; then
   HYPOTHESIS_PLAN_RESULT="${REPORT_DIR}/hypothesis-plan.json"
+  PLAN_LIMIT="0"
+  if [[ "${RUN_MODE}" == "daily" \
+    && "${MARKET_DATA_ADVANCED}" == "1" ]]; then
+    PLAN_LIMIT="1"
+  fi
   if "${PYTHON_BIN}" -m toss_trading.cli.research_plan_hypotheses \
     --policy "${ROOT_DIR}/config/autonomous_research_policy.json" \
     --universe "${ROOT_DIR}/data/universe.csv" \
@@ -308,6 +347,7 @@ if [[ "${RUN_MODE}" == "weekly" \
     --project-id "${GCP_PROJECT_ID}" \
     --location "${RESEARCH_INTERPRETATION_LOCATION:-global}" \
     --model "${RESEARCH_HYPOTHESIS_MODEL:-gemini-3.1-flash-lite}" \
+    --max-new "${PLAN_LIMIT}" \
     --result "${HYPOTHESIS_PLAN_RESULT}" \
     > "${RUNTIME_ROOT}/last-hypothesis-plan.json"; then
     json_log "research_hypothesis_planning_ok" "vertex-ai" "completed" ""
@@ -320,7 +360,8 @@ if [[ "${RUN_MODE}" == "weekly" \
   fi
 fi
 
-if [[ "${RUN_MODE}" == "weekly" \
+if [[ ( "${RUN_MODE}" == "weekly" \
+    || "${MARKET_DATA_ADVANCED}" == "1" ) \
   && "${TIINGO_STATE}" == "collected" \
   && "${RESEARCH_AUTONOMOUS_PLANNING_ENABLED:-1}" == "1" ]]; then
   if [[ ! -f "${EXECUTION_COST_CALIBRATION}" ]]; then
@@ -337,6 +378,7 @@ if [[ "${RUN_MODE}" == "weekly" \
     --ledger-dir "${RUNTIME_ROOT}/hypothesis-ledger" \
     --output-dir "${LAKE_DIR}/gold/hypothesis_evaluations" \
     --run-id "${RUN_ID}" \
+    --cadence "${RUN_MODE}" \
     --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet" \
     --manifest-root "${LAKE_DIR}/catalog/manifests" \
     --code-revision "${CODE_REVISION}" \
@@ -357,7 +399,8 @@ if [[ "${RUN_MODE}" == "weekly" \
 fi
 
 if [[ -z "${STRATEGY_EXPERIMENT}" \
-  && "${RUN_MODE}" == "weekly" \
+  && ( "${RUN_MODE}" == "weekly" \
+    || "${MARKET_DATA_ADVANCED}" == "1" ) \
   && "${TIINGO_STATE}" == "collected" ]]; then
   "${PYTHON_BIN}" -m toss_trading.cli.research_backtest \
     --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet" \
@@ -405,7 +448,7 @@ elif [[ -z "${STRATEGY_EXPERIMENT}" ]]; then
     "research_strategy_artifact_skipped" \
     "broad_etf_dual_momentum_v1" \
     "skipped" \
-    "weekly_total_return_run_required"
+    "new_total_return_market_date_required"
 fi
 
 VERIFY_ARGS=(
@@ -414,6 +457,9 @@ VERIFY_ARGS=(
   --code-revision "${CODE_REVISION}"
   --data-source-policy "${ROOT_DIR}/config/data_sources.yaml"
 )
+if [[ -f "${REPORT_DIR}/tiingo-collection.json" ]]; then
+  VERIFY_ARGS+=(--tiingo-collection "${REPORT_DIR}/tiingo-collection.json")
+fi
 for provider_state in "${PROVIDER_STATES[@]}"; do
   VERIFY_ARGS+=(--provider-state "${provider_state}")
 done
@@ -505,7 +551,14 @@ json_log \
   "inserted" \
   "${BIGQUERY_DATASET}.${BIGQUERY_TABLE}"
 
-if [[ "${RESEARCH_EMAIL_ENABLED:-0}" == "1" ]]; then
+SEND_RESEARCH_EMAIL="1"
+if [[ "${RUN_MODE}" == "daily" \
+  && "${MARKET_DATA_ADVANCED}" != "1" \
+  && "${RESEARCH_EMAIL_FORCE:-0}" != "1" ]]; then
+  SEND_RESEARCH_EMAIL="0"
+fi
+if [[ "${RESEARCH_EMAIL_ENABLED:-0}" == "1" \
+  && "${SEND_RESEARCH_EMAIL}" == "1" ]]; then
   if ! load_optional_secret \
       "GMAIL_OAUTH_CLIENT_ID" \
       "${GMAIL_OAUTH_CLIENT_ID_SECRET:-toss-research-gmail-oauth-client-id}" \
@@ -579,6 +632,12 @@ if [[ "${RESEARCH_EMAIL_ENABLED:-0}" == "1" ]]; then
     exit 68
   fi
   json_log "research_email_ok" "gmail" "sent_or_already_sent" ""
+elif [[ "${RESEARCH_EMAIL_ENABLED:-0}" == "1" ]]; then
+  json_log \
+    "research_email_skipped" \
+    "gmail" \
+    "no_material_change" \
+    "market_data_complete_through_${CURRENT_MARKET_DATE:-unknown}"
 else
   json_log "research_email_skipped" "gmail" "disabled" "oauth_not_configured"
 fi

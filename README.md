@@ -53,6 +53,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/24_gmail_research_digest.md` | Vertex AI 근거 기반 연구 해석 메일, Gmail OAuth와 안전 대체 경로 |
 | `docs/27_p0_identity_and_holdout_remediation.md` | P0 전향 표본 봉인·복구 증거와 research 전용 identity 전환 게이트 |
 | `docs/28_p1_research_data_completion.md` | P1 8개 작업의 구현·운영 증거·배포 경계 점검 |
+| `docs/29_daily_autonomous_research_operation.md` | 일일 자율 연구, 데이터 전진 조건, 중복 메일 억제 운영 규칙 |
 
 ## Current Operating Snapshot — 2026-08-08
 

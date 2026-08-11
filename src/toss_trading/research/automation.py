@@ -277,6 +277,7 @@ def verify_research_run(
     strategy_experiment: str | Path | None = None,
     hypothesis_plan: str | Path | None = None,
     hypothesis_evaluation: str | Path | None = None,
+    tiingo_collection: str | Path | None = None,
     data_source_policy: str | Path | None = None,
 ) -> dict:
     root = Path(run_dir)
@@ -411,6 +412,7 @@ def verify_research_run(
         strategy_experiment=strategy_path,
         hypothesis_plan=hypothesis_plan,
         hypothesis_evaluation=hypothesis_evaluation,
+        tiingo_collection=tiingo_collection,
         available_manifest_ids={
             manifest_id
             for manifest_id, manifest in manifests.items()

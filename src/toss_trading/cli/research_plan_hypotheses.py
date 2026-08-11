@@ -42,6 +42,7 @@ def plan_hypotheses(
     model: str,
     planner: VertexHypothesisPlanner | None = None,
     now: datetime | None = None,
+    max_new: int | None = None,
 ) -> dict[str, Any]:
     policy = load_research_policy(policy_path)
     if policy.get("enabled") is not True:
@@ -65,6 +66,19 @@ def plan_hypotheses(
         0,
         int(policy["max_new_hypotheses_per_week"]) - registered_this_week,
     )
+    if max_new is not None:
+        if max_new < 0:
+            raise ValueError("max_new cannot be negative")
+        weekly_remaining = min(weekly_remaining, max_new)
+    if max_new == 0:
+        return {
+            "state": "cadence_audit",
+            "created": [],
+            "reused": [],
+            "registered_count": len(registered),
+            "registered_this_week": registered_this_week,
+            "model": model,
+        }
     if weekly_remaining == 0:
         return {
             "state": "weekly_limit_reached",
@@ -137,6 +151,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-id", default=os.environ.get("GCP_PROJECT_ID"))
     parser.add_argument("--location", default="global")
     parser.add_argument("--model", default="gemini-3.1-flash-lite")
+    parser.add_argument(
+        "--max-new",
+        type=int,
+        help="Limit new registrations in this run; zero performs a ledger audit only.",
+    )
     parser.add_argument("--result", required=True)
     return parser
 
@@ -155,6 +174,7 @@ def main() -> int:
             project_id=args.project_id,
             location=args.location,
             model=args.model,
+            max_new=args.max_new,
         )
     except Exception as exc:
         result = {
