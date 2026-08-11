@@ -616,30 +616,24 @@ class VertexHypothesisPlanner:
                     "properties": {
                         name: {
                             "type": "NUMBER",
-                            "enum": policy["allowed_factor_weights"],
                         }
                         for name in FACTOR_NAMES
                     },
                 },
                 "long_lookback_trading_days": {
                     "type": "INTEGER",
-                    "enum": policy["allowed_long_lookback_trading_days"],
                 },
                 "short_lookback_trading_days": {
                     "type": "INTEGER",
-                    "enum": policy["allowed_short_lookback_trading_days"],
                 },
                 "volatility_window_trading_days": {
                     "type": "INTEGER",
-                    "enum": policy["allowed_volatility_window_trading_days"],
                 },
                 "skip_recent_trading_days": {
                     "type": "INTEGER",
-                    "enum": policy["allowed_skip_recent_trading_days"],
                 },
                 "top_k": {
                     "type": "INTEGER",
-                    "enum": policy["allowed_top_k"],
                 },
                 "weighting": {
                     "type": "STRING",
@@ -655,15 +649,12 @@ class VertexHypothesisPlanner:
                 },
                 "minimum_composite_score": {
                     "type": "NUMBER",
-                    "enum": policy["allowed_minimum_composite_score"],
                 },
                 "walk_forward_train_days": {
                     "type": "INTEGER",
-                    "enum": [policy["walk_forward_train_days"]],
                 },
                 "walk_forward_test_days": {
                     "type": "INTEGER",
-                    "enum": [policy["walk_forward_test_days"]],
                 },
             },
         }

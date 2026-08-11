@@ -188,6 +188,15 @@ class ResearchHypothesisTests(unittest.TestCase):
         self.assertEqual(
             set(config_schema["required"]), set(factor_proposal()["config"])
         )
+        self.assertNotIn(
+            "enum",
+            config_schema["properties"]["factor_weights"]["properties"][
+                "momentum"
+            ],
+        )
+        self.assertNotIn(
+            "enum", config_schema["properties"]["long_lookback_trading_days"]
+        )
 
     def test_factor_family_is_bounded_and_content_addressed(self) -> None:
         first = hypothesis_from_proposal(
@@ -205,6 +214,14 @@ class ResearchHypothesisTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "do not match"):
             hypothesis_from_proposal(
                 unsafe,
+                policy=self.policy,
+                model="gemini-test",
+            )
+        outside = factor_proposal()
+        outside["config"]["long_lookback_trading_days"] = 125
+        with self.assertRaisesRegex(ValueError, "outside policy"):
+            hypothesis_from_proposal(
+                outside,
                 policy=self.policy,
                 model="gemini-test",
             )
