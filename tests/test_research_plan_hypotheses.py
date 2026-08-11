@@ -48,6 +48,31 @@ def _factor_proposal(family: str) -> dict:
         "low_volatility": 0.0,
         "trend_acceleration": 0.0,
     }
+
+
+def _macro_proposal() -> dict:
+    return {
+        "strategy_family": "macro_regime",
+        "thesis": "당시 공개된 거시 빈티지로 위험 선호 국면을 구분한다.",
+        "falsification_criteria": ["비용 후 SPY 초과 성과가 없으면 폐기한다."],
+        "config": {
+            "risk_on_symbols": ["SPY", "QQQ"],
+            "defensive_symbols": ["SGOV", "TLT"],
+            "cash_symbol": "SGOV",
+            "macro_signal_weights": {
+                "yield_curve": 0.25,
+                "inflation_trend": 0.25,
+                "unemployment_trend": 0.25,
+                "policy_rate_trend": 0.25,
+            },
+            "signal_lookback_months": 6,
+            "minimum_regime_score": 0.0,
+            "rebalance_frequency": "monthly",
+            "publication_lag_days": 1,
+            "walk_forward_train_days": 504,
+            "walk_forward_test_days": 126,
+        },
+    }
     weights[active] = 1.0
     return {
         "strategy_family": family,
@@ -212,7 +237,7 @@ class ResearchPlanHypothesesTests(unittest.TestCase):
             universe.write_text(
                 "symbol\nSPY\nQQQ\nTLT\nGLD\nSGOV\n", encoding="utf-8"
             )
-            planner = _Planner([_factor_proposal("short_term_reversal")])
+            planner = _Planner([_macro_proposal()])
             result = plan_hypotheses(
                 policy_path="config/autonomous_research_policy.json",
                 universe_path=universe,
@@ -226,12 +251,12 @@ class ResearchPlanHypothesesTests(unittest.TestCase):
             )
 
             self.assertEqual(
-                result["target_strategy_families"], ["short_term_reversal"]
+                result["target_strategy_families"], ["macro_regime"]
             )
             self.assertEqual(len(result["created"]), 1)
             created_id = result["created"][0]
             self.assertEqual(
-                result["created_families"][created_id], "short_term_reversal"
+                result["created_families"][created_id], "macro_regime"
             )
 
 

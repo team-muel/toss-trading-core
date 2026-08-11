@@ -16,13 +16,13 @@
     "macro_regime"
   ],
   "family_rotation": [
+    "macro_regime",
     "short_term_reversal",
     "low_volatility",
     "risk_adjusted_momentum",
     "trend_acceleration",
     "cross_sectional_momentum",
-    "multi_factor_composite",
-    "macro_regime"
+    "multi_factor_composite"
   ],
   "allowed_candidate_symbols": [
     "SPY",
