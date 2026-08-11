@@ -28,6 +28,13 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the pre-registered broad-ETF dual-momentum baseline."
     )
     parser.add_argument("--parquet", action="append", required=True)
+    parser.add_argument(
+        "--as-of-date",
+        help=(
+            "Exclude later rows. Prospective automation uses the latest date from "
+            "a previously completed run, avoiding circular use of the current run."
+        ),
+    )
     parser.add_argument("--candidate", action="append", required=True)
     parser.add_argument("--cash-symbol", default="SGOV")
     parser.add_argument("--lookback-days", type=int, default=252)
@@ -161,9 +168,10 @@ def main(argv: list[str] | None = None) -> int:
               filename
             FROM read_parquet(?, union_by_name = true, filename = true)
             WHERE adjustment = 'total_return'
+              AND (? IS NULL OR exchange_local_date <= CAST(? AS DATE))
             ORDER BY exchange_local_date, symbol
             """,
-            [args.parquet],
+            [args.parquet, args.as_of_date, args.as_of_date],
         ).fetchall()
     finally:
         connection.close()
@@ -261,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
                 "benchmark_metrics": result.benchmark_metrics,
                 "common_history_start": result.equity_curve[0][0],
                 "common_history_end": result.equity_curve[-1][0],
+                "input_cutoff_date": args.as_of_date,
                 "walk_forward_folds": len(result.walk_forward_folds),
                 "validation_protocol": (
                     validation_protocol.get("schema_version")
