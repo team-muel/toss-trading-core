@@ -231,6 +231,7 @@ def _summary_facts(prefix: str, summary: dict[str, Any]) -> dict[str, str]:
             "adjusted_p_value",
             "cost_stress_annualized_mean_excess",
             "prospective_state",
+            "config",
         ):
             if field in candidate:
                 facts[f"{candidate_prefix}.{field}"] = _fact_value(

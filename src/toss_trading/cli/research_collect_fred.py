@@ -5,6 +5,7 @@ import csv
 import json
 import os
 import socket
+import tempfile
 import time
 import urllib.parse
 import urllib.error
@@ -148,6 +149,90 @@ def _realtime_windows(
     return windows
 
 
+def _atomic_cache_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+        mode="w",
+        encoding="utf-8",
+    )
+    temporary = Path(handle.name)
+    try:
+        with handle:
+            json.dump(
+                payload,
+                handle,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _cache_is_complete(
+    cache_dir: Path,
+    *,
+    series_ids: list[str],
+    observation_start: str,
+    incremental_start: str,
+) -> bool:
+    marker = cache_dir / "complete.json"
+    if not marker.is_file():
+        return False
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+        through = date.fromisoformat(str(payload["realtime_end"]))
+        expected_start = date.fromisoformat(str(payload["realtime_start"]))
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError):
+        return False
+    requested = date.fromisoformat(incremental_start)
+    return (
+        expected_start <= date.fromisoformat(observation_start)
+        and set(payload.get("series", [])) == set(series_ids)
+        and requested <= through + timedelta(days=1)
+        and all(
+            (cache_dir / f"series={item}").is_dir()
+            and any((cache_dir / f"series={item}").glob("history-*.json"))
+            for item in series_ids
+        )
+    )
+
+
+def _cache_envelopes(cache_dir: Path, series_id: str) -> list[dict[str, Any]]:
+    directory = cache_dir / f"series={series_id}"
+    envelopes = []
+    for path in sorted(directory.glob("history-*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("response"), dict):
+            raise ValueError(f"invalid FRED vintage cache envelope: {path}")
+        envelopes.append(payload)
+    return envelopes
+
+
+def _write_history_cache(
+    cache_dir: Path,
+    series_id: str,
+    envelopes: list[dict[str, Any]],
+) -> None:
+    directory = cache_dir / f"series={series_id}"
+    directory.mkdir(parents=True, exist_ok=True)
+    expected: set[Path] = set()
+    for index, envelope in enumerate(envelopes):
+        destination = directory / f"history-{index:03d}.json"
+        _atomic_cache_json(destination, envelope)
+        expected.add(destination)
+    for path in directory.glob("history-*.json"):
+        if path not in expected:
+            path.unlink()
+
+
 def build_parser() -> argparse.ArgumentParser:
     today = date.today()
     parser = argparse.ArgumentParser(
@@ -164,6 +249,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--realtime-end", default=today.isoformat())
     parser.add_argument("--observation-start", default="2004-01-01")
     parser.add_argument("--output-root", default="research_data")
+    parser.add_argument(
+        "--cache-dir",
+        help=(
+            "Persistent full-vintage cache. Missing or discontinuous caches are "
+            "bootstrapped from observation-start; daily runs then fetch revisions only."
+        ),
+    )
     parser.add_argument("--license-tag", default=FRED_LICENSE_TAG)
     parser.add_argument(
         "--code-revision",
@@ -186,9 +278,26 @@ def main(argv: list[str] | None = None) -> int:
     client = FredObservationsClient(api_key)
     lake = DataLake(args.output_root)
     manifests = []
-    windows = _realtime_windows(args.realtime_start, args.realtime_end)
+    series_ids = [item["series_id"].strip().upper() for item in series]
+    cache_dir = Path(args.cache_dir) if args.cache_dir else None
+    full_refresh = (
+        cache_dir is not None
+        and (
+            args.realtime_start <= args.observation_start
+            or not _cache_is_complete(
+                cache_dir,
+                series_ids=series_ids,
+                observation_start=args.observation_start,
+                incremental_start=args.realtime_start,
+            )
+        )
+    )
+    effective_start = args.observation_start if full_refresh else args.realtime_start
+    windows = _realtime_windows(effective_start, args.realtime_end)
+    fetched_by_series: dict[str, list[dict[str, Any]]] = {}
     for item in series:
         series_id = item["series_id"].strip().upper()
+        fetched: list[dict[str, Any]] = []
         for realtime_start, realtime_end in windows:
             body = client.fetch_revisions(
                 series_id,
@@ -202,22 +311,53 @@ def main(argv: list[str] | None = None) -> int:
                     f"FRED response for {series_id} has no observations"
                 )
             retrieved = utc_now()
+            request_metadata = {
+                "endpoint": FRED_OBSERVATIONS_URL,
+                "series_id": series_id,
+                "output_type": 3,
+                "realtime_start": realtime_start,
+                "realtime_end": realtime_end,
+                "observation_start": args.observation_start,
+            }
+            fetched.append(
+                {
+                    "retrieved_at": retrieved,
+                    "request": request_metadata,
+                    "response": payload,
+                }
+            )
+        fetched_by_series[series_id] = fetched
+
+    if cache_dir is not None and full_refresh:
+        for series_id, envelopes in fetched_by_series.items():
+            _write_history_cache(cache_dir, series_id, envelopes)
+        _atomic_cache_json(
+            cache_dir / "complete.json",
+            {
+                "schema_version": "fred-alfred-vintage-cache-v1",
+                "realtime_start": args.observation_start,
+                "realtime_end": args.realtime_end,
+                "series": series_ids,
+                "updated_at": utc_now(),
+            },
+        )
+
+    for series_id in series_ids:
+        materialized = fetched_by_series[series_id]
+        if cache_dir is not None and not full_refresh:
+            materialized = _cache_envelopes(cache_dir, series_id) + materialized
+        for envelope in materialized:
+            request_metadata = envelope["request"]
+            retrieved = str(envelope["retrieved_at"])
             manifests.append(
                 lake.store_raw(
                     source="fred-alfred",
                     dataset="series-observation-revisions",
-                    body=body,
+                    body=envelope["response"],
                     media_type="application/json",
                     schema_version="fred-observations-output-type-3-v1",
                     available_at=retrieved,
-                    request={
-                        "endpoint": FRED_OBSERVATIONS_URL,
-                        "series_id": series_id,
-                        "output_type": 3,
-                        "realtime_start": realtime_start,
-                        "realtime_end": realtime_end,
-                        "observation_start": args.observation_start,
-                    },
+                    request=request_metadata,
                     license_tag=args.license_tag,
                     code_revision=args.code_revision,
                     retrieved_at=retrieved,
@@ -229,7 +369,16 @@ def main(argv: list[str] | None = None) -> int:
                 "manifest_ids": [manifest.manifest_id for manifest in manifests],
                 "objects": len(manifests),
                 "series": [item["series_id"] for item in series],
-                "realtime_windows": len(windows),
+                "fetched_realtime_windows": len(windows),
+                "full_history_cache_refreshed": full_refresh,
+                "history_complete": cache_dir is None or bool(
+                    _cache_is_complete(
+                        cache_dir,
+                        series_ids=series_ids,
+                        observation_start=args.observation_start,
+                        incremental_start=args.realtime_start,
+                    )
+                ),
             },
             ensure_ascii=False,
             sort_keys=True,

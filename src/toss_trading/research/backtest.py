@@ -13,6 +13,11 @@ from typing import Iterable
 
 from toss_trading.research.prospective import assess_collection_continuity
 from toss_trading.research.costs import ExecutionCostModel
+from toss_trading.research.macro import (
+    MACRO_SIGNAL_NAMES,
+    MacroVintageObservation,
+    PointInTimeMacroStore,
+)
 
 
 STRATEGY_IMPLEMENTATION_VERSION = 3
@@ -120,6 +125,61 @@ class QuantFactorConfig:
 
 
 @dataclass(frozen=True)
+class MacroRegimeConfig:
+    """Bounded allocation rules driven only by point-in-time macro vintages."""
+
+    risk_on_symbols: tuple[str, ...]
+    defensive_symbols: tuple[str, ...]
+    cash_symbol: str
+    macro_signal_weights: tuple[tuple[str, float], ...]
+    signal_lookback_months: int
+    minimum_regime_score: float
+    rebalance_frequency: str
+    publication_lag_days: int
+    walk_forward_train_days: int
+    walk_forward_test_days: int
+
+    @property
+    def candidate_symbols(self) -> tuple[str, ...]:
+        return self.risk_on_symbols
+
+    @property
+    def signals(self) -> dict[str, float]:
+        return dict(self.macro_signal_weights)
+
+    def validate(self) -> None:
+        if len(self.risk_on_symbols) < 2 or len(set(self.risk_on_symbols)) != len(
+            self.risk_on_symbols
+        ):
+            raise ValueError("macro risk-on universe must contain unique symbols")
+        if not self.defensive_symbols or len(set(self.defensive_symbols)) != len(
+            self.defensive_symbols
+        ):
+            raise ValueError("macro defensive universe must contain unique symbols")
+        if set(self.risk_on_symbols) & set(self.defensive_symbols):
+            raise ValueError("macro risk-on and defensive universes must not overlap")
+        if self.cash_symbol not in self.defensive_symbols:
+            raise ValueError("macro defensive universe must include cash_symbol")
+        signals = self.signals
+        if set(signals) != set(MACRO_SIGNAL_NAMES):
+            raise ValueError("macro signal weights differ from the bounded signal set")
+        if any(value < 0 or value > 1 for value in signals.values()):
+            raise ValueError("macro signal weights must be between zero and one")
+        if not any(value > 0 for value in signals.values()):
+            raise ValueError("at least one macro signal must be active")
+        if self.signal_lookback_months not in {3, 6, 12}:
+            raise ValueError("unsupported macro signal lookback")
+        if not -1 <= self.minimum_regime_score <= 1:
+            raise ValueError("macro regime threshold must be between minus and plus one")
+        if self.rebalance_frequency != "monthly":
+            raise ValueError("macro regime research must rebalance monthly")
+        if not 1 <= self.publication_lag_days <= 7:
+            raise ValueError("macro publication lag must be between one and seven days")
+        if min(self.walk_forward_train_days, self.walk_forward_test_days) <= 0:
+            raise ValueError("walk-forward train and test windows must be positive")
+
+
+@dataclass(frozen=True)
 class Rebalance:
     signal_date: str
     effective_date: str
@@ -134,7 +194,7 @@ class Rebalance:
 
 @dataclass(frozen=True)
 class BacktestResult:
-    config: DualMomentumConfig | QuantFactorConfig
+    config: DualMomentumConfig | QuantFactorConfig | MacroRegimeConfig
     equity_curve: tuple[tuple[str, float], ...]
     daily_returns: tuple[tuple[str, float], ...]
     rebalances: tuple[Rebalance, ...]
@@ -731,6 +791,155 @@ def run_quant_factor_backtest(
             }
         pending = (current_date, scores, target)
 
+    benchmark_daily_returns = _benchmark_daily_returns(panel, dates, config)
+    primary_benchmark = "SPY buy-and-hold"
+    folds = _walk_forward_folds(
+        daily_returns,
+        rebalances,
+        benchmark_daily_returns[primary_benchmark],
+        benchmark_name=primary_benchmark,
+        train_days=config.walk_forward_train_days,
+        test_days=config.walk_forward_test_days,
+    )
+    return BacktestResult(
+        config=config,
+        equity_curve=tuple(equity_curve),
+        daily_returns=tuple(daily_returns),
+        rebalances=tuple(rebalances),
+        metrics=_metrics(
+            [value for _, value in daily_returns],
+            [value for _, value in equity_curve],
+            total_turnover,
+        ),
+        benchmark_metrics={
+            name: _metrics_from_daily_returns(values)
+            for name, values in benchmark_daily_returns.items()
+        },
+        benchmark_daily_returns=benchmark_daily_returns,
+        walk_forward_folds=folds,
+        execution_cost_model=execution_cost_model,
+    )
+
+
+def run_macro_regime_backtest(
+    points: Iterable[PricePoint],
+    macro_observations: Iterable[MacroVintageObservation],
+    config: MacroRegimeConfig,
+    *,
+    execution_cost_model: ExecutionCostModel,
+) -> BacktestResult:
+    """Allocate with ALFRED vintages known at each historical decision date."""
+
+    config.validate()
+    execution_cost_model.validate()
+    macro = PointInTimeMacroStore(
+        macro_observations,
+        publication_lag_days=config.publication_lag_days,
+    )
+    panel: dict[str, dict[str, float]] = {}
+    availability: dict[tuple[str, str], str] = {}
+    for point in points:
+        key = (point.date, point.symbol)
+        if key in availability:
+            raise ValueError(f"duplicate price point: {key}")
+        panel.setdefault(point.date, {})[point.symbol] = _number(
+            point.total_return_index
+        )
+        availability[key] = point.available_at
+    dates = sorted(panel)
+    required = (
+        set(config.risk_on_symbols)
+        | set(config.defensive_symbols)
+        | {"SPY"}
+    )
+    if len(dates) <= config.walk_forward_train_days + 1:
+        raise ValueError("insufficient price history for macro regime research")
+    for item_date in dates:
+        missing = required - set(panel[item_date])
+        if missing:
+            raise ValueError(f"missing symbols on {item_date}: {sorted(missing)}")
+
+    weights = {config.cash_symbol: 1.0}
+    pending: tuple[str, dict[str, float], dict[str, float]] | None = None
+    equity = 1.0
+    equity_curve: list[tuple[str, float]] = [(dates[0], equity)]
+    daily_returns: list[tuple[str, float]] = []
+    rebalances: list[Rebalance] = []
+    total_turnover = 0.0
+    signal_weights = config.signals
+    normalization = sum(signal_weights.values())
+
+    for index in range(1, len(dates)):
+        current_date = dates[index]
+        previous_date = dates[index - 1]
+        gross_return = sum(
+            weight
+            * (panel[current_date][symbol] / panel[previous_date][symbol] - 1.0)
+            for symbol, weight in weights.items()
+        )
+        transaction_cost = 0.0
+        if pending is not None:
+            signal_date, scores, target = pending
+            turnover = _turnover(weights, target)
+            estimate = execution_cost_model.estimate_rebalance(
+                weights,
+                target,
+                equity_multiple=equity,
+            )
+            transaction_cost = estimate["total_fraction"]
+            total_turnover += turnover
+            weights = target
+            rebalances.append(
+                Rebalance(
+                    signal_date=signal_date,
+                    effective_date=current_date,
+                    scores=scores,
+                    target_weights=target,
+                    turnover=turnover,
+                    cost_fraction=transaction_cost,
+                    gross_order_notional_usd=estimate["gross_order_notional_usd"],
+                    commission_cost_fraction=estimate["commission_fraction"],
+                    slippage_cost_fraction=estimate["slippage_fraction"],
+                )
+            )
+            pending = None
+        net_return = gross_return - transaction_cost
+        equity *= 1.0 + net_return
+        if equity <= 0:
+            raise ValueError("strategy equity became nonpositive")
+        daily_returns.append((current_date, net_return))
+        equity_curve.append((current_date, equity))
+
+        if not _is_month_end(dates, index) or index + 1 >= len(dates):
+            continue
+        if not all(
+            _available_on_or_before(availability[(current_date, symbol)], current_date)
+            for symbol in required
+        ):
+            raise ValueError(f"point-in-time price violation on {current_date}")
+        signals = macro.regime_signals(
+            current_date,
+            lookback_months=config.signal_lookback_months,
+        )
+        if signals is None:
+            continue
+        regime_score = sum(
+            signal_weights[name] * signals[name] for name in MACRO_SIGNAL_NAMES
+        ) / normalization
+        selected = (
+            config.risk_on_symbols
+            if regime_score >= config.minimum_regime_score
+            else config.defensive_symbols
+        )
+        target = {symbol: 1.0 / len(selected) for symbol in selected}
+        pending = (
+            current_date,
+            {**signals, "macro_regime_score": regime_score},
+            target,
+        )
+
+    if not rebalances:
+        raise ValueError("macro regime research produced no eligible rebalances")
     benchmark_daily_returns = _benchmark_daily_returns(panel, dates, config)
     primary_benchmark = "SPY buy-and-hold"
     folds = _walk_forward_folds(

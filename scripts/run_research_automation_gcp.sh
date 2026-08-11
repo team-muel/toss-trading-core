@@ -295,6 +295,7 @@ if [[ "${RESEARCH_FRED_SERIES_RIGHTS_APPROVED:-0}" == "1" ]] \
     --series-registry "config/fred_series.csv" \
     --realtime-start "${REALTIME_START}" \
     --realtime-end "${REALTIME_END}" \
+    --cache-dir "${RUNTIME_ROOT}/fred-vintage-cache" \
     --output-root "${LAKE_DIR}" \
     --code-revision "${CODE_REVISION}" \
     > "${REPORT_DIR}/fred-collection.json"

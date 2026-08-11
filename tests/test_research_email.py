@@ -180,6 +180,44 @@ class ResearchEmailTest(unittest.TestCase):
         self.assertIn("SPY 대비 연율 평균 초과수익 -10.00%", digest.text_body)
         self.assertIn("다중검정 보정 p=1.000", digest.text_body)
 
+    def test_macro_candidate_email_explains_actual_regime_configuration(self):
+        current = summary()
+        current["autonomous_research"] = {
+            "state": "completed",
+            "created_count": 1,
+            "registered_count": 1,
+            "evaluated_count": 1,
+            "historically_qualified_count": 0,
+            "promotion_authorized": False,
+            "candidate_results": [
+                {
+                    "hypothesis_id": "macro-one",
+                    "strategy_family": "macro_regime",
+                    "state": "historical_not_qualified",
+                    "annualized_mean_excess": -0.01,
+                    "adjusted_p_value": 1.0,
+                    "failed_gates": ["multiple_testing_adjusted_benchmark"],
+                    "config": {
+                        "risk_on_symbols": ["SPY", "QQQ"],
+                        "defensive_symbols": ["SGOV", "TLT"],
+                        "macro_signal_weights": {
+                            "yield_curve": 0.5,
+                            "inflation_trend": 0.5,
+                        },
+                        "signal_lookback_months": 6,
+                        "minimum_regime_score": 0.0,
+                        "publication_lag_days": 1,
+                    },
+                }
+            ],
+        }
+
+        digest = render_research_digest(current)
+
+        self.assertIn("거시 후보 설정", digest.text_body)
+        self.assertIn("위험선호=SPY,QQQ", digest.text_body)
+        self.assertIn("ALFRED 공개지연=1일", digest.text_body)
+
     def test_message_is_utf8_multipart_and_rejects_header_injection(self):
         digest = render_research_digest(summary())
         raw = build_gmail_message(

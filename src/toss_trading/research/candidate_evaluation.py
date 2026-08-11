@@ -12,20 +12,25 @@ from typing import Any, Iterable
 from .backtest import (
     BacktestResult,
     DualMomentumConfig,
+    MacroRegimeConfig,
     PricePoint,
     QuantFactorConfig,
     run_dual_momentum_backtest,
+    run_macro_regime_backtest,
     run_quant_factor_backtest,
     _metrics_from_daily_returns,
 )
 from .costs import ExecutionCostModel
+from .macro import MacroVintageObservation
 
 
 EVALUATION_SCHEMA = "historical-candidate-evaluation-v1"
 PRIMARY_BENCHMARK = "SPY buy-and-hold"
 
 
-def _config(payload: dict[str, Any]) -> DualMomentumConfig | QuantFactorConfig:
+def _config(
+    payload: dict[str, Any],
+) -> DualMomentumConfig | QuantFactorConfig | MacroRegimeConfig:
     config = payload.get("config")
     if not isinstance(config, dict):
         raise ValueError("hypothesis config is missing")
@@ -37,6 +42,25 @@ def _config(payload: dict[str, Any]) -> DualMomentumConfig | QuantFactorConfig:
             skip_recent_trading_days=int(config["skip_recent_trading_days"]),
             top_k=int(config["top_k"]),
             minimum_absolute_momentum=float(config["minimum_absolute_momentum"]),
+            walk_forward_train_days=int(config["walk_forward_train_days"]),
+            walk_forward_test_days=int(config["walk_forward_test_days"]),
+        )
+    if payload.get("strategy_family") == "macro_regime":
+        weights = config.get("macro_signal_weights")
+        if not isinstance(weights, dict):
+            raise ValueError("macro hypothesis config is missing signal weights")
+        return MacroRegimeConfig(
+            risk_on_symbols=tuple(config["risk_on_symbols"]),
+            defensive_symbols=tuple(config["defensive_symbols"]),
+            cash_symbol=str(config["cash_symbol"]),
+            macro_signal_weights=tuple(
+                (str(name), float(value))
+                for name, value in sorted(weights.items())
+            ),
+            signal_lookback_months=int(config["signal_lookback_months"]),
+            minimum_regime_score=float(config["minimum_regime_score"]),
+            rebalance_frequency=str(config["rebalance_frequency"]),
+            publication_lag_days=int(config["publication_lag_days"]),
             walk_forward_train_days=int(config["walk_forward_train_days"]),
             walk_forward_test_days=int(config["walk_forward_test_days"]),
         )
@@ -67,13 +91,21 @@ def _config(payload: dict[str, Any]) -> DualMomentumConfig | QuantFactorConfig:
 
 def _run_candidate(
     points: Iterable[PricePoint],
-    config: DualMomentumConfig | QuantFactorConfig,
+    config: DualMomentumConfig | QuantFactorConfig | MacroRegimeConfig,
     *,
     execution_cost_model: ExecutionCostModel,
+    macro_observations: Iterable[MacroVintageObservation] = (),
 ) -> BacktestResult:
     if isinstance(config, DualMomentumConfig):
         return run_dual_momentum_backtest(
             points,
+            config,
+            execution_cost_model=execution_cost_model,
+        )
+    if isinstance(config, MacroRegimeConfig):
+        return run_macro_regime_backtest(
+            points,
+            macro_observations,
             config,
             execution_cost_model=execution_cost_model,
         )
@@ -213,16 +245,20 @@ def evaluate_hypothesis(
     run_id: str,
     evaluated_at: str | None = None,
     execution_cost_model: ExecutionCostModel,
+    macro_observations: Iterable[MacroVintageObservation] = (),
 ) -> dict[str, Any]:
     """Evaluate one registered hypothesis without granting promotion authority."""
 
     config = _config(hypothesis)
     required = set(config.candidate_symbols) | {config.cash_symbol, "SPY"}
+    if isinstance(config, MacroRegimeConfig):
+        required.update(config.defensive_symbols)
     aligned = _common_history(points, required_symbols=required)
     result = _run_candidate(
         aligned,
         config,
         execution_cost_model=execution_cost_model,
+        macro_observations=macro_observations,
     )
     statistical_test = block_bootstrap_test(
         _paired_excess_returns(result),
@@ -237,6 +273,7 @@ def evaluate_hypothesis(
         aligned,
         config,
         execution_cost_model=result.execution_cost_model.stressed(stress_multiplier),
+        macro_observations=macro_observations,
     )
     stressed_excess = statistics.fmean(_paired_excess_returns(stressed)) * 252.0
     fold_count = len(result.walk_forward_folds)
@@ -307,6 +344,7 @@ def evaluate_prospective_hypothesis(
     run_id: str,
     evaluated_at: str | None = None,
     execution_cost_model: ExecutionCostModel,
+    macro_observations: Iterable[MacroVintageObservation] = (),
 ) -> dict[str, Any]:
     """Observe a sealed future window and hide metrics until it is complete."""
 
@@ -323,11 +361,14 @@ def evaluate_prospective_hypothesis(
         raise ValueError("prospective protocol config does not match hypothesis")
     cutoff = str(protocol["historical_cutoff"])
     required = set(config.candidate_symbols) | {config.cash_symbol, "SPY"}
+    if isinstance(config, MacroRegimeConfig):
+        required.update(config.defensive_symbols)
     aligned = _common_history(points, required_symbols=required)
     result = _run_candidate(
         aligned,
         config,
         execution_cost_model=execution_cost_model,
+        macro_observations=macro_observations,
     )
     prospective_returns = [item for item in result.daily_returns if item[0] > cutoff]
     prospective_rebalances = [
@@ -402,6 +443,7 @@ def evaluate_prospective_hypothesis(
         aligned,
         config,
         execution_cost_model=result.execution_cost_model.stressed(stress_multiplier),
+        macro_observations=macro_observations,
     )
     stressed_by_date = dict(stressed.daily_returns)
     stress_excess = statistics.fmean(

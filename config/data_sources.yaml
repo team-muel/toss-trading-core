@@ -100,6 +100,7 @@ providers:
       observations: true
       vintage_dates: true
       release_calendar: true
+      point_in_time_macro_regime: true
     credential_env: FRED_API_KEY
     official_api: https://fred.stlouisfed.org/docs/api/fred/
     official_terms: https://fred.stlouisfed.org/docs/api/terms_of_use.html
@@ -107,6 +108,11 @@ providers:
       series_registry: config/fred_series.csv
       series_rights_review_required: true
       secret_required: true
+    point_in_time_policy:
+      publication_lag_calendar_days: 1
+      weekly_full_vintage_refresh: true
+      daily_revision_window_days: 90
+      missing_or_discontinuous_cache_forces_full_refresh: true
 
   sec_edgar:
     decision: selected
