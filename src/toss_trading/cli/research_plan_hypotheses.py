@@ -179,6 +179,8 @@ def plan_hypotheses(
         created.append(hypothesis.hypothesis_id)
         created_families[hypothesis.hypothesis_id] = hypothesis.strategy_family
         known[hypothesis.hypothesis_id] = hypothesis.to_dict()
+        if len(created) >= weekly_remaining:
+            break
     return {
         "state": "completed",
         "created": created,
