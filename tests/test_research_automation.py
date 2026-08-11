@@ -344,6 +344,9 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertNotIn("TOSS_ACCOUNT_SEQ_SECRET", runner)
         self.assertIn("RESEARCH_TIINGO_LICENSE_ACCEPTED", runner)
         self.assertIn("RESEARCH_FRED_SERIES_RIGHTS_APPROVED", runner)
+        self.assertIn(
+            '--cache-dir "${RUNTIME_ROOT}/fred-vintage-cache"', runner
+        )
         self.assertIn("RESEARCH_SEC_CONTACT_APPROVED", runner)
         self.assertIn(
             "optional_secret_rejected env=${env_name} "

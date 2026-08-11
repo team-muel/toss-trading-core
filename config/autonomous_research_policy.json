@@ -12,7 +12,8 @@
     "short_term_reversal",
     "low_volatility",
     "trend_acceleration",
-    "multi_factor_composite"
+    "multi_factor_composite",
+    "macro_regime"
   ],
   "family_rotation": [
     "short_term_reversal",
@@ -20,7 +21,8 @@
     "risk_adjusted_momentum",
     "trend_acceleration",
     "cross_sectional_momentum",
-    "multi_factor_composite"
+    "multi_factor_composite",
+    "macro_regime"
   ],
   "allowed_candidate_symbols": [
     "SPY",
@@ -46,6 +48,11 @@
   "allowed_rebalance_frequency": ["weekly", "monthly"],
   "allowed_regime_filter": ["none", "spy_absolute_momentum"],
   "allowed_minimum_composite_score": [-0.25, 0.0, 0.25],
+  "allowed_macro_defensive_symbols": ["SGOV", "TLT", "GLD"],
+  "allowed_macro_signal_weights": [0.0, 0.25, 0.5, 0.75, 1.0],
+  "allowed_macro_signal_lookback_months": [3, 6, 12],
+  "allowed_macro_regime_score": [-0.25, 0.0, 0.25],
+  "macro_publication_lag_days": 1,
   "walk_forward_train_days": 504,
   "walk_forward_test_days": 126,
   "minimum_walk_forward_folds": 4,

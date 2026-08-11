@@ -220,6 +220,30 @@ def _verified_fact_lines(summary: dict[str, Any]) -> list[str]:
                 f"{candidate.get('state', 'unknown')}, SPY 대비 연율 평균 초과수익 "
                 f"{excess_text}, 다중검정 보정 p={p_text}, 실패 관문={failed_text}"
             )
+            config = candidate.get("config")
+            if (
+                candidate.get("strategy_family") == "macro_regime"
+                and isinstance(config, dict)
+            ):
+                weights = config.get("macro_signal_weights", {})
+                active = (
+                    ", ".join(
+                        f"{name}={float(value):.2f}"
+                        for name, value in sorted(weights.items())
+                        if isinstance(value, (int, float)) and float(value) > 0
+                    )
+                    if isinstance(weights, dict)
+                    else "미확인"
+                )
+                facts.append(
+                    "거시 후보 설정: 위험선호="
+                    f"{','.join(config.get('risk_on_symbols', []))}, 방어="
+                    f"{','.join(config.get('defensive_symbols', []))}, 활성신호="
+                    f"{active or '없음'}, 변화기간="
+                    f"{config.get('signal_lookback_months', '미확인')}개월, 기준="
+                    f"{config.get('minimum_regime_score', '미확인')}, ALFRED 공개지연="
+                    f"{config.get('publication_lag_days', '미확인')}일"
+                )
     return facts
 
 

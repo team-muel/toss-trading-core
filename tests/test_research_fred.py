@@ -2,15 +2,55 @@ import io
 import urllib.error
 import unittest
 from datetime import date
+import tempfile
+from pathlib import Path
 
 from toss_trading.cli.research_collect_fred import (
     MAX_REALTIME_WINDOW_DAYS,
     FredObservationsClient,
+    _atomic_cache_json,
+    _cache_is_complete,
     _realtime_windows,
+    _write_history_cache,
 )
 
 
 class ResearchFredTest(unittest.TestCase):
+    def test_vintage_cache_requires_contiguous_full_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = Path(tmp)
+            envelope = {
+                "retrieved_at": "2026-08-09T00:00:00+00:00",
+                "request": {"series_id": "UNRATE"},
+                "response": {"observations": []},
+            }
+            _write_history_cache(cache, "UNRATE", [envelope])
+            _atomic_cache_json(
+                cache / "complete.json",
+                {
+                    "realtime_start": "2004-01-01",
+                    "realtime_end": "2026-08-09",
+                    "series": ["UNRATE"],
+                },
+            )
+
+            self.assertTrue(
+                _cache_is_complete(
+                    cache,
+                    series_ids=["UNRATE"],
+                    observation_start="2004-01-01",
+                    incremental_start="2026-05-12",
+                )
+            )
+            self.assertFalse(
+                _cache_is_complete(
+                    cache,
+                    series_ids=["UNRATE", "CPIAUCSL"],
+                    observation_start="2004-01-01",
+                    incremental_start="2026-05-12",
+                )
+            )
+
     def test_long_realtime_range_is_split_without_gaps(self):
         windows = _realtime_windows("2004-01-01", "2010-01-01")
 

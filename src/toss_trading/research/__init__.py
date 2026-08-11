@@ -1,10 +1,20 @@
 from .backtest import (
     BacktestResult,
     DualMomentumConfig,
+    MacroRegimeConfig,
     PricePoint,
     QuantFactorConfig,
     run_dual_momentum_backtest,
+    run_macro_regime_backtest,
     run_quant_factor_backtest,
+)
+from .macro import (
+    MACRO_SIGNAL_NAMES,
+    REQUIRED_MACRO_SERIES,
+    MacroVintageObservation,
+    PointInTimeMacroStore,
+    load_alfred_from_manifests,
+    parse_alfred_payload,
 )
 from .data_lake import DataLake, DatasetManifest, MarketBar, validate_market_bars
 from .providers import (
@@ -37,8 +47,13 @@ __all__ = [
     "DualMomentumConfig",
     "ExecutionCostModel",
     "MarketBar",
+    "MacroRegimeConfig",
+    "MacroVintageObservation",
+    "MACRO_SIGNAL_NAMES",
     "PricePoint",
     "QuantFactorConfig",
+    "PointInTimeMacroStore",
+    "REQUIRED_MACRO_SERIES",
     "SlippageTier",
     "SEC_LICENSE_TAG",
     "SecEdgarClient",
@@ -54,7 +69,10 @@ __all__ = [
     "ingest_toss_candle_bundle",
     "load_collection_observations",
     "load_execution_cost_model",
+    "load_alfred_from_manifests",
+    "parse_alfred_payload",
     "run_dual_momentum_backtest",
+    "run_macro_regime_backtest",
     "run_quant_factor_backtest",
     "validate_market_bars",
 ]

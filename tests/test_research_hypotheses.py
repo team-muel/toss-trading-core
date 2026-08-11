@@ -104,6 +104,33 @@ def factor_proposal() -> dict:
     }
 
 
+def macro_proposal() -> dict:
+    return {
+        "strategy_family": "macro_regime",
+        "thesis": "수익률 곡선과 물가·고용·정책금리 방향으로 위험 선호 국면을 구분한다.",
+        "falsification_criteria": [
+            "ALFRED 빈티지와 비용을 적용한 SPY 대비 성과가 없으면 기각한다."
+        ],
+        "config": {
+            "risk_on_symbols": ["SPY", "QQQ"],
+            "defensive_symbols": ["SGOV", "TLT"],
+            "cash_symbol": "SGOV",
+            "macro_signal_weights": {
+                "yield_curve": 0.25,
+                "inflation_trend": 0.25,
+                "unemployment_trend": 0.25,
+                "policy_rate_trend": 0.25,
+            },
+            "signal_lookback_months": 6,
+            "minimum_regime_score": 0.0,
+            "rebalance_frequency": "monthly",
+            "publication_lag_days": 1,
+            "walk_forward_train_days": 504,
+            "walk_forward_test_days": 126,
+        },
+    }
+
+
 class ResearchHypothesisTests(unittest.TestCase):
     def setUp(self) -> None:
         self.policy = load_research_policy("config/autonomous_research_policy.json")
@@ -225,6 +252,43 @@ class ResearchHypothesisTests(unittest.TestCase):
                 policy=self.policy,
                 model="gemini-test",
             )
+
+    def test_macro_family_is_point_in_time_bounded(self) -> None:
+        hypothesis = hypothesis_from_proposal(
+            macro_proposal(), policy=self.policy, model="gemini-test"
+        )
+        self.assertEqual(hypothesis.strategy_family, "macro_regime")
+        self.assertEqual(hypothesis.config["publication_lag_days"], 1)
+
+        unsafe = macro_proposal()
+        unsafe["config"]["publication_lag_days"] = 0
+        with self.assertRaisesRegex(ValueError, "locked policy"):
+            hypothesis_from_proposal(
+                unsafe, policy=self.policy, model="gemini-test"
+            )
+
+    def test_vertex_uses_macro_schema_for_macro_rotation(self) -> None:
+        session = _Session(macro_proposal())
+        planner = VertexHypothesisPlanner(
+            project_id="project",
+            model="gemini-test",
+            session_factory=lambda: session,
+        )
+        macro_policy = {**self.policy, "target_strategy_families": ["macro_regime"]}
+
+        proposals = planner.propose(
+            policy=macro_policy,
+            registered=[],
+            available_symbols=self.policy["allowed_candidate_symbols"],
+        )
+
+        self.assertEqual(proposals, [macro_proposal()])
+        request = session.calls[0][1]["json"]
+        schema = request["generationConfig"]["responseSchema"]["properties"][
+            "hypotheses"
+        ]["items"]["properties"]["config"]
+        self.assertEqual(set(schema["required"]), set(macro_proposal()["config"]))
+        self.assertIn("macro_signal_weights", schema["properties"])
 
     def test_structural_novelty_rejects_near_duplicates_but_not_new_families(self) -> None:
         first = hypothesis_from_proposal(

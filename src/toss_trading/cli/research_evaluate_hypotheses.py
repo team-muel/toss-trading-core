@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from toss_trading.cli.research_backtest import _total_return_manifest_ids
-from toss_trading.research import PricePoint
+from toss_trading.research import (
+    MacroVintageObservation,
+    PricePoint,
+    load_alfred_from_manifests,
+)
 from toss_trading.research.costs import ExecutionCostModel, load_execution_cost_model
 from toss_trading.research.candidate_evaluation import (
     evaluate_hypothesis,
@@ -115,6 +119,7 @@ def evaluate_registered_hypotheses(
     data_manifest_ids: list[str],
     points: list[PricePoint],
     execution_cost_model: ExecutionCostModel,
+    macro_observations: list[MacroVintageObservation] | None = None,
     evaluation_cadence: str = "weekly",
     prospective_cutoff: str | None = None,
 ) -> dict[str, Any]:
@@ -181,6 +186,7 @@ def evaluate_registered_hypotheses(
                     run_id=run_id,
                     evaluated_at=evaluated_at,
                     execution_cost_model=execution_cost_model,
+                    macro_observations=macro_observations or [],
                 )
                 if result.get("historical_screen_passed") is True:
                     ledger.register_prospective_protocol(
@@ -225,6 +231,7 @@ def evaluate_registered_hypotheses(
                     run_id=run_id,
                     evaluated_at=evaluated_at,
                     execution_cost_model=execution_cost_model,
+                    macro_observations=macro_observations or [],
                 )
         except Exception as exc:
             result = {
@@ -331,6 +338,10 @@ def main(argv: list[str] | None = None) -> int:
         args.manifest_root,
         used_parquet_files=used_parquet_files,
     )
+    macro_observations, macro_manifest_ids = load_alfred_from_manifests(
+        args.manifest_root
+    )
+    manifest_ids = sorted(set(manifest_ids) | set(macro_manifest_ids))
     result = evaluate_registered_hypotheses(
         policy_path=args.policy,
         ledger_dir=args.ledger_dir,
@@ -343,6 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             args.cost_calibration,
             portfolio_notional_usd=args.portfolio_notional_usd,
         ),
+        macro_observations=macro_observations,
         evaluation_cadence=args.cadence,
         prospective_cutoff=args.prospective_cutoff,
     )

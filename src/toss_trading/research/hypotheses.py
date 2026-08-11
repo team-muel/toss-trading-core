@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from toss_trading.research.macro import MACRO_SIGNAL_NAMES
+
 
 POLICY_SCHEMA = "autonomous-research-policy-v2"
 HYPOTHESIS_SCHEMA = "strategy-hypothesis-v2"
@@ -113,6 +115,25 @@ def load_research_policy(path: str | Path) -> dict[str, Any]:
         )
     ):
         raise ValueError("research policy allowed_factor_weights is invalid")
+    if "macro_regime" in families:
+        macro_weights = payload.get("allowed_macro_signal_weights")
+        if (
+            not isinstance(macro_weights, list)
+            or 0.0 not in macro_weights
+            or 1.0 not in macro_weights
+            or any(
+                isinstance(item, bool)
+                or not isinstance(item, (int, float))
+                or not 0 <= float(item) <= 1
+                for item in macro_weights
+            )
+        ):
+            raise ValueError(
+                "research policy allowed_macro_signal_weights is invalid"
+            )
+        lag = payload.get("macro_publication_lag_days")
+        if isinstance(lag, bool) or not isinstance(lag, int) or lag not in range(1, 8):
+            raise ValueError("research policy macro_publication_lag_days is invalid")
     return payload
 
 
@@ -262,6 +283,78 @@ def _normalize_factor_config(
     }
 
 
+def _normalize_macro_config(
+    config: dict[str, Any], *, policy: dict[str, Any]
+) -> dict[str, Any]:
+    fields = {
+        "risk_on_symbols",
+        "defensive_symbols",
+        "cash_symbol",
+        "macro_signal_weights",
+        "signal_lookback_months",
+        "minimum_regime_score",
+        "rebalance_frequency",
+        "publication_lag_days",
+        "walk_forward_train_days",
+        "walk_forward_test_days",
+    }
+    if set(config) != fields:
+        raise ValueError("hypothesis config fields differ from the bounded macro DSL")
+    risk_on = config.get("risk_on_symbols")
+    defensive = config.get("defensive_symbols")
+    allowed_risk = set(policy["allowed_candidate_symbols"])
+    allowed_defensive = set(policy["allowed_macro_defensive_symbols"])
+    if (
+        not isinstance(risk_on, list)
+        or len(risk_on) < 2
+        or len(risk_on) != len(set(risk_on))
+        or not set(risk_on).issubset(allowed_risk)
+    ):
+        raise ValueError("macro risk-on symbols are outside policy")
+    if (
+        not isinstance(defensive, list)
+        or not defensive
+        or len(defensive) != len(set(defensive))
+        or not set(defensive).issubset(allowed_defensive)
+        or policy["cash_symbol"] not in defensive
+        or set(risk_on) & set(defensive)
+    ):
+        raise ValueError("macro defensive symbols are outside policy")
+    for field, expected in {
+        "cash_symbol": policy["cash_symbol"],
+        "rebalance_frequency": "monthly",
+        "publication_lag_days": policy["macro_publication_lag_days"],
+        "walk_forward_train_days": policy["walk_forward_train_days"],
+        "walk_forward_test_days": policy["walk_forward_test_days"],
+    }.items():
+        if config.get(field) != expected:
+            raise ValueError(f"macro hypothesis {field} differs from locked policy")
+    if config.get("signal_lookback_months") not in policy[
+        "allowed_macro_signal_lookback_months"
+    ]:
+        raise ValueError("macro signal lookback is outside policy")
+    if config.get("minimum_regime_score") not in policy[
+        "allowed_macro_regime_score"
+    ]:
+        raise ValueError("macro regime threshold is outside policy")
+    weights = config.get("macro_signal_weights")
+    if not isinstance(weights, dict) or set(weights) != set(MACRO_SIGNAL_NAMES):
+        raise ValueError("macro signal weights differ from the bounded signals")
+    allowed_weights = policy["allowed_macro_signal_weights"]
+    if any(value not in allowed_weights for value in weights.values()):
+        raise ValueError("macro signal weight is outside policy")
+    if not 1 <= sum(float(value) > 0 for value in weights.values()) <= 4:
+        raise ValueError("macro hypothesis must activate one to four signals")
+    return {
+        **config,
+        "risk_on_symbols": sorted(risk_on),
+        "defensive_symbols": sorted(defensive),
+        "macro_signal_weights": {
+            name: float(weights[name]) for name in sorted(MACRO_SIGNAL_NAMES)
+        },
+    }
+
+
 def structural_novelty(
     proposal: StrategyHypothesis, registered: list[dict[str, Any]]
 ) -> tuple[float, str | None]:
@@ -276,13 +369,26 @@ def structural_novelty(
     if not comparable:
         return 1.0, None
     current = proposal.config
-    dimensions = sorted(set(current) - {"candidate_symbols", "factor_weights"})
+    symbol_fields = ("candidate_symbols", "risk_on_symbols", "defensive_symbols")
+    weight_fields = ("factor_weights", "macro_signal_weights")
+    dimensions = sorted(set(current) - set(symbol_fields) - set(weight_fields))
     scores: list[tuple[float, str]] = []
-    current_symbols = set(current.get("candidate_symbols", []))
-    current_weights = current.get("factor_weights", {})
+    current_symbols = set().union(
+        *(set(current.get(field, [])) for field in symbol_fields)
+    )
+    current_weights = next(
+        (
+            current.get(field)
+            for field in weight_fields
+            if isinstance(current.get(field), dict)
+        ),
+        {},
+    )
     for item in comparable:
         other = item["config"]
-        other_symbols = set(other.get("candidate_symbols", []))
+        other_symbols = set().union(
+            *(set(other.get(field, [])) for field in symbol_fields)
+        )
         union = current_symbols | other_symbols
         symbol_distance = (
             1.0 - len(current_symbols & other_symbols) / len(union) if union else 0.0
@@ -291,14 +397,22 @@ def structural_novelty(
             0.0 if current.get(field) == other.get(field) else 1.0
             for field in dimensions
         ]
-        other_weights = other.get("factor_weights", {})
+        other_weights = next(
+            (
+                other.get(field)
+                for field in weight_fields
+                if isinstance(other.get(field), dict)
+            ),
+            {},
+        )
+        weight_names = sorted(set(current_weights) | set(other_weights))
         weight_distance = (
             sum(
                 abs(float(current_weights.get(name, 0.0)) - float(other_weights.get(name, 0.0)))
-                for name in FACTOR_NAMES
+                for name in weight_names
             )
-            / len(FACTOR_NAMES)
-            if isinstance(current_weights, dict) and isinstance(other_weights, dict)
+            / len(weight_names)
+            if weight_names
             else 0.0
         )
         distance = statistics.fmean(
@@ -338,10 +452,14 @@ def hypothesis_from_proposal(
     else:
         if strategy_family not in policy["strategy_families"]:
             raise ValueError("hypothesis strategy_family is outside policy")
-        normalized_config = _normalize_factor_config(
-            config,
-            policy=policy,
-            strategy_family=strategy_family,
+        normalized_config = (
+            _normalize_macro_config(config, policy=policy)
+            if strategy_family == "macro_regime"
+            else _normalize_factor_config(
+                config,
+                policy=policy,
+                strategy_family=strategy_family,
+            )
         )
     identity = {"strategy_family": strategy_family, "config": normalized_config}
     hypothesis_id = str(
@@ -507,6 +625,56 @@ def _default_authorized_session() -> Any:
     return AuthorizedSession(credentials)
 
 
+def _macro_vertex_config_schema(policy: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "type": "OBJECT",
+        "required": [
+            "risk_on_symbols",
+            "defensive_symbols",
+            "cash_symbol",
+            "macro_signal_weights",
+            "signal_lookback_months",
+            "minimum_regime_score",
+            "rebalance_frequency",
+            "publication_lag_days",
+            "walk_forward_train_days",
+            "walk_forward_test_days",
+        ],
+        "properties": {
+            "risk_on_symbols": {
+                "type": "ARRAY",
+                "minItems": 2,
+                "items": {
+                    "type": "STRING",
+                    "enum": sorted(policy["allowed_candidate_symbols"]),
+                },
+            },
+            "defensive_symbols": {
+                "type": "ARRAY",
+                "minItems": 1,
+                "items": {
+                    "type": "STRING",
+                    "enum": sorted(policy["allowed_macro_defensive_symbols"]),
+                },
+            },
+            "cash_symbol": {"type": "STRING", "enum": [policy["cash_symbol"]]},
+            "macro_signal_weights": {
+                "type": "OBJECT",
+                "required": list(MACRO_SIGNAL_NAMES),
+                "properties": {
+                    name: {"type": "NUMBER"} for name in MACRO_SIGNAL_NAMES
+                },
+            },
+            "signal_lookback_months": {"type": "INTEGER"},
+            "minimum_regime_score": {"type": "NUMBER"},
+            "rebalance_frequency": {"type": "STRING", "enum": ["monthly"]},
+            "publication_lag_days": {"type": "INTEGER"},
+            "walk_forward_train_days": {"type": "INTEGER"},
+            "walk_forward_test_days": {"type": "INTEGER"},
+        },
+    }
+
+
 @dataclass
 class VertexHypothesisPlanner:
     project_id: str
@@ -548,6 +716,7 @@ class VertexHypothesisPlanner:
                 or key
                 in {
                     "cash_symbol",
+                    "macro_publication_lag_days",
                     "walk_forward_train_days",
                     "walk_forward_test_days",
                 }
@@ -658,6 +827,18 @@ class VertexHypothesisPlanner:
                 },
             },
         }
+        if target_families == ["macro_regime"]:
+            config_schema = _macro_vertex_config_schema(policy)
+        prompt = (
+            "코드를 실행할 수 없는 제한된 정량 연구 제안 환경이다. "
+            f"지정된 연구 계열 {target_families}과 정책의 허용값만 사용하여 "
+            f"서로 구조적으로 다른 ETF 전략 가설을 최대 {pool_count}개 제안하라. "
+            "수익을 보장하거나 미래를 예측한다고 표현하지 말고, 각 가설에는 "
+            "경제적 논리와 명확한 반증 조건을 한국어로 작성하라. "
+            "거시경제 가설은 ALFRED 빈티지로 당시 공개된 값만 사용하며, "
+            "미래 수정치나 임의의 발표 지연을 만들지 않는다. JSON 컨텍스트:\n"
+            + json.dumps(context, ensure_ascii=False, sort_keys=True)
+        )
         response = self.session_factory().post(
             self._endpoint(),
             json={
