@@ -461,6 +461,27 @@ def hypothesis_from_proposal(
                 strategy_family=strategy_family,
             )
         )
+    configured_assets = set(
+        normalized_config.get("candidate_symbols", [])
+        or normalized_config.get("risk_on_symbols", [])
+    )
+    configured_assets.update(normalized_config.get("defensive_symbols", []))
+    configured_assets.update({str(normalized_config.get("cash_symbol", "")), "SPY"})
+    allowed_assets = set(policy["allowed_candidate_symbols"]) | {
+        str(policy["cash_symbol"])
+    }
+    referenced_assets = set(
+        re.findall(
+            r"\b[A-Z][A-Z0-9]{1,9}\b",
+            " ".join((thesis, *normalized_criteria)),
+        )
+    ) & allowed_assets
+    outside_references = sorted(referenced_assets - configured_assets)
+    if outside_references:
+        raise ValueError(
+            "hypothesis explanation references unconfigured assets: "
+            + ", ".join(outside_references)
+        )
     identity = {"strategy_family": strategy_family, "config": normalized_config}
     hypothesis_id = str(
         uuid.uuid5(
@@ -836,7 +857,10 @@ class VertexHypothesisPlanner:
             "수익을 보장하거나 미래를 예측한다고 표현하지 말고, 각 가설에는 "
             "경제적 논리와 명확한 반증 조건을 한국어로 작성하라. "
             "거시경제 가설은 ALFRED 빈티지로 당시 공개된 값만 사용하며, "
-            "미래 수정치나 임의의 발표 지연을 만들지 않는다. JSON 컨텍스트:\n"
+            "미래 수정치나 임의의 발표 지연을 만들지 않는다. 설명과 반증 조건에는 "
+            "config에 선택한 자산과 활성 신호만 언급하고, 반증은 SPY 벤치마크, "
+            "워크포워드, 다중검정, 비용 스트레스처럼 현재 엔진이 실제 측정하는 "
+            "증거로 작성하라. JSON 컨텍스트:\n"
             + json.dumps(context, ensure_ascii=False, sort_keys=True)
         )
         response = self.session_factory().post(

@@ -267,6 +267,15 @@ class ResearchHypothesisTests(unittest.TestCase):
                 unsafe, policy=self.policy, model="gemini-test"
             )
 
+        misleading = macro_proposal()
+        misleading["falsification_criteria"] = [
+            "선택하지 않은 VTV 대비 성과가 낮으면 기각한다."
+        ]
+        with self.assertRaisesRegex(ValueError, "unconfigured assets"):
+            hypothesis_from_proposal(
+                misleading, policy=self.policy, model="gemini-test"
+            )
+
     def test_vertex_uses_macro_schema_for_macro_rotation(self) -> None:
         session = _Session(macro_proposal())
         planner = VertexHypothesisPlanner(
