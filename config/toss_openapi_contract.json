@@ -1,8 +1,8 @@
 {
   "schema_version": "toss-openapi-contract-review-v1",
-  "approved_at": "2026-08-08",
+  "approved_at": "2026-08-11",
   "approved_version": "1.2.13",
-  "approved_sha256": "af93bc7d0d31eda3e24131f0acaa83d6b9c304a801161fbc06ba9a9824f8b92f",
+  "approved_sha256": "3b2fe5b364a9847880795cc7c81b71ae65691ba144e0315598182972f4626f88",
   "source": "https://openapi.tossinvest.com/openapi-docs/latest/openapi.json",
   "required_operations": {
     "/api/v1/accounts": ["get"],
@@ -20,6 +20,7 @@
     "/api/v1/conditional-orders/{conditionalOrderId}/modify": ["post"]
   },
   "review_notes": [
+    "The 2026-08-11 canonical-document hash rotation retained version 1.2.13 and all reviewed paths and methods.",
     "Conditional SINGLE, OCO, and OTO order contracts are present in 1.2.13.",
     "No conditional-order write operation is enabled by this approval.",
     "The live adapter remains read-only and live_trading_enabled remains false."
