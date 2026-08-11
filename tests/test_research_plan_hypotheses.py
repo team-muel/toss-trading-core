@@ -237,7 +237,9 @@ class ResearchPlanHypothesesTests(unittest.TestCase):
             universe.write_text(
                 "symbol\nSPY\nQQQ\nTLT\nGLD\nSGOV\n", encoding="utf-8"
             )
-            planner = _Planner([_macro_proposal()])
+            second = _macro_proposal()
+            second["config"]["minimum_regime_score"] = 0.25
+            planner = _Planner([_macro_proposal(), second])
             result = plan_hypotheses(
                 policy_path="config/autonomous_research_policy.json",
                 universe_path=universe,
@@ -254,6 +256,7 @@ class ResearchPlanHypothesesTests(unittest.TestCase):
                 result["target_strategy_families"], ["macro_regime"]
             )
             self.assertEqual(len(result["created"]), 1)
+            self.assertEqual(result["registered_count"], 1)
             created_id = result["created"][0]
             self.assertEqual(
                 result["created_families"][created_id], "macro_regime"
