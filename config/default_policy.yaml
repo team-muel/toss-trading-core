@@ -5,7 +5,7 @@ runtime:
   live_trading_enabled: false
   broker_base_url: https://openapi.tossinvest.com
   toss_openapi_schema_version: 1.2.13
-  toss_openapi_schema_hash: af93bc7d0d31eda3e24131f0acaa83d6b9c304a801161fbc06ba9a9824f8b92f
+  toss_openapi_schema_hash: 3b2fe5b364a9847880795cc7c81b71ae65691ba144e0315598182972f4626f88
   toss_openapi_schema_hash_source: https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
   toss_openapi_contract_review: config/toss_openapi_contract.json
   # OpenAPI 1.2.13 explicitly documents paginated CLOSED order history.
