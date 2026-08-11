@@ -215,6 +215,45 @@ class CandidateEvaluationTests(unittest.TestCase):
                     result={"state": "failed"},
                 )
 
+    def test_daily_cadence_carries_rejected_candidate_without_retesting(self) -> None:
+        policy = load_research_policy("config/autonomous_research_policy.json")
+        hypothesis = hypothesis_from_proposal(
+            _proposal(), policy=policy, model="test", registered_at="2026-01-01T00:00:00Z"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ledger = HypothesisLedger(root / "ledger")
+            ledger.register(hypothesis)
+            ledger.record_evaluation(
+                hypothesis_id=hypothesis.hypothesis_id,
+                run_id="weekly-prior",
+                result={
+                    "state": "historical_not_qualified",
+                    "historical_screen_passed": False,
+                    "promotion_authorized": False,
+                    "execution_authorized": False,
+                    "gates": {"multiple_testing_adjusted_benchmark": False},
+                },
+            )
+
+            result = evaluate_registered_hypotheses(
+                policy_path="config/autonomous_research_policy.json",
+                ledger_dir=root / "ledger",
+                output_dir=root / "artifacts",
+                run_id="daily-new",
+                code_revision="revision-new",
+                data_manifest_ids=["manifest-new"],
+                points=[],
+                execution_cost_model=_cost_model(),
+                evaluation_cadence="daily",
+            )
+
+            self.assertEqual(result["evaluated"], [])
+            self.assertEqual(result["carried_forward"], [hypothesis.hypothesis_id])
+            self.assertFalse(
+                (root / "ledger" / "evaluations" / hypothesis.hypothesis_id / "daily-new.json").exists()
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

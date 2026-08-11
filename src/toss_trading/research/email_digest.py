@@ -105,6 +105,7 @@ def _verified_fact_lines(summary: dict[str, Any]) -> list[str]:
         f"{name}={_plain_provider_state(str(state))}"
         for name, state in sorted(summary["provider_states"].items())
     )
+    data_progress = summary.get("data_progress", {})
     facts = [
         "연구 실행 상태: 데이터·산출물 무결성 검증 통과",
         f"데이터 공급자: {providers}",
@@ -126,6 +127,14 @@ def _verified_fact_lines(summary: dict[str, Any]) -> list[str]:
             f"승격 {strategy.get('promotion_state', 'blocked')}"
         ),
     ]
+    if data_progress.get("state") == "collected":
+        facts.append(
+            "검증 데이터: "
+            f"{data_progress.get('symbol_count', 0)}개 종목, "
+            f"총수익률 {data_progress.get('total_return_rows_collected', 0):,}행, "
+            f"요청 범위 {data_progress.get('history_start_date')}~"
+            f"{data_progress.get('complete_through_date')}"
+        )
     if strategy.get("prospective_state") in {"collecting", "invalid_data_gap"}:
         facts.append(
             "성과 공개: 전향 표본이 완성되지 않아 전략·벤치마크 성과를 공개하지 않음"
@@ -151,6 +160,7 @@ def _verified_fact_lines(summary: dict[str, Any]) -> list[str]:
             f"신규 {autonomous.get('created_count', 0)}개, "
             f"누적 {autonomous.get('registered_count', '확인 불가')}개, "
             f"과거자료 평가 {autonomous.get('evaluated_count', 0)}개, "
+            f"기존 결론 이월 {autonomous.get('carried_forward_count', 0)}개, "
             f"전향관찰 후보 {autonomous.get('historically_qualified_count', 0)}개"
         )
         facts.append(
@@ -164,6 +174,8 @@ def _verified_fact_lines(summary: dict[str, Any]) -> list[str]:
         }
         for candidate in autonomous.get("candidate_results", []):
             if not isinstance(candidate, dict):
+                continue
+            if candidate.get("activity") == "carried_forward":
                 continue
             excess = candidate.get("annualized_mean_excess")
             adjusted_p = candidate.get("adjusted_p_value")
@@ -212,7 +224,15 @@ def render_research_digest(
 
     status_label, verdict = _strategy_verdict(summary)
     source_label = "AI해석포함" if interpretation.source == "vertex_ai" else "자동설명"
-    subject = f"[Toss Research][{mode}][{status_label}][{source_label}]"
+    data_progress = summary.get("data_progress", {})
+    data_date = data_progress.get("complete_through_date") or "데이터 없음"
+    autonomous = summary.get("autonomous_research", {})
+    created = int(autonomous.get("created_count", 0) or 0)
+    evaluated = int(autonomous.get("evaluated_count", 0) or 0)
+    subject = (
+        f"[Toss Research][{mode}][{status_label}][{source_label}]"
+        f"[데이터 {data_date}][신규 {created}·검증 {evaluated}]"
+    )
     verified_facts = _verified_fact_lines(summary)
 
     sections = (

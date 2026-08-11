@@ -155,8 +155,11 @@ def main(argv: list[str] | None = None) -> int:
                 "normalized_manifest_ids": normalized_manifest_ids,
                 "raw_manifest_ids": raw_manifest_ids,
                 "rows": row_count,
+                "total_return_rows": row_count // 2,
                 "symbols": canonical_symbols,
                 "provider_symbols": provider_symbols,
+                "history_start_date": args.start_date,
+                "requested_through_date": args.end_date,
                 "complete_through_date": min(latest_dates_by_symbol.values()),
                 "observation_id": (
                     observation.get("observation_id") if observation else None

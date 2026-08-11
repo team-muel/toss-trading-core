@@ -1,7 +1,7 @@
 {
   "schema_version": "autonomous-research-policy-v1",
   "enabled": true,
-  "max_new_hypotheses_per_week": 3,
+  "max_new_hypotheses_per_week": 5,
   "max_registered_hypotheses": 50,
   "strategy_family": "dual_momentum",
   "allowed_candidate_symbols": ["SPY", "QQQ", "VTV", "XLP", "XLU", "TLT", "GLD"],

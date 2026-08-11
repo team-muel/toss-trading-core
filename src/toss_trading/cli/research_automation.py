@@ -32,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--strategy-experiment")
     verify.add_argument("--hypothesis-plan")
     verify.add_argument("--hypothesis-evaluation")
+    verify.add_argument("--tiingo-collection")
     verify.add_argument("--data-source-policy")
     return parser
 
@@ -59,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         strategy_experiment=args.strategy_experiment,
         hypothesis_plan=args.hypothesis_plan,
         hypothesis_evaluation=args.hypothesis_evaluation,
+        tiingo_collection=args.tiingo_collection,
         data_source_policy=args.data_source_policy,
     )
     print(json.dumps(status, ensure_ascii=False, sort_keys=True))

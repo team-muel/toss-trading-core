@@ -86,6 +86,7 @@ def _summary_facts(prefix: str, summary: dict[str, Any]) -> dict[str, str]:
     artifacts = summary["artifacts"]
     strategy = summary["strategy"]
     autonomous = summary.get("autonomous_research", {})
+    data_progress = summary.get("data_progress", {})
     facts = {
         f"{prefix}.run_id": _fact_value(summary["run_id"]),
         f"{prefix}.verified_at": _fact_value(summary["verified_at"]),
@@ -172,11 +173,32 @@ def _summary_facts(prefix: str, summary: dict[str, Any]) -> dict[str, str]:
         f"{prefix}.autonomous_research.hypotheses_evaluated": _fact_value(
             autonomous.get("evaluated_count", 0)
         ),
+        f"{prefix}.autonomous_research.hypotheses_carried_forward": _fact_value(
+            autonomous.get("carried_forward_count", 0)
+        ),
         f"{prefix}.autonomous_research.historically_qualified": _fact_value(
             autonomous.get("historically_qualified_count", 0)
         ),
         f"{prefix}.autonomous_research.promotion_authorized": _fact_value(
             autonomous.get("promotion_authorized", False)
+        ),
+        f"{prefix}.data.state": _fact_value(
+            data_progress.get("state", "not_available")
+        ),
+        f"{prefix}.data.history_start_date": _fact_value(
+            data_progress.get("history_start_date")
+        ),
+        f"{prefix}.data.requested_through_date": _fact_value(
+            data_progress.get("requested_through_date")
+        ),
+        f"{prefix}.data.complete_through_date": _fact_value(
+            data_progress.get("complete_through_date")
+        ),
+        f"{prefix}.data.total_return_rows_collected": _fact_value(
+            data_progress.get("total_return_rows_collected", 0)
+        ),
+        f"{prefix}.data.symbol_count": _fact_value(
+            data_progress.get("symbol_count", 0)
         ),
     }
     for name, state in sorted(summary["provider_states"].items()):
@@ -187,6 +209,7 @@ def _summary_facts(prefix: str, summary: dict[str, Any]) -> dict[str, str]:
         candidate_prefix = f"{prefix}.autonomous_research.candidate.{index}"
         for field in (
             "hypothesis_id",
+            "activity",
             "thesis",
             "state",
             "historical_screen_passed",
@@ -270,6 +293,12 @@ def build_research_evidence(
         )
         facts["delta.strategy_state_changed"] = _fact_value(
             current["strategy"]["state"] != previous["strategy"]["state"]
+        )
+        current_data = current.get("data_progress", {})
+        previous_data = previous.get("data_progress", {})
+        facts["delta.data_complete_through_changed"] = _fact_value(
+            current_data.get("complete_through_date")
+            != previous_data.get("complete_through_date")
         )
     else:
         facts["comparison.previous_run"] = "not_available"

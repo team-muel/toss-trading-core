@@ -24,7 +24,10 @@ from toss_trading.research.instruments import (
 
 
 def _candidate_summary(
-    hypothesis: dict[str, Any], result: dict[str, Any]
+    hypothesis: dict[str, Any],
+    result: dict[str, Any],
+    *,
+    activity: str = "evaluated",
 ) -> dict[str, Any]:
     gates = result.get("gates") if isinstance(result.get("gates"), dict) else {}
     statistical = (
@@ -45,6 +48,7 @@ def _candidate_summary(
     )
     return {
         "hypothesis_id": str(hypothesis["hypothesis_id"]),
+        "activity": activity,
         "thesis": str(hypothesis.get("thesis", "")),
         "state": result.get("state"),
         "historical_screen_passed": result.get("historical_screen_passed") is True,
@@ -118,15 +122,19 @@ def evaluate_registered_hypotheses(
     data_manifest_ids: list[str],
     points: list[PricePoint],
     execution_cost_model: ExecutionCostModel,
+    evaluation_cadence: str = "weekly",
 ) -> dict[str, Any]:
     if not code_revision.strip() or code_revision.lower() == "unknown":
         raise ValueError("an immutable code revision is required")
     policy = load_research_policy(policy_path)
+    if evaluation_cadence not in {"daily", "weekly"}:
+        raise ValueError("evaluation_cadence must be daily or weekly")
     ledger = HypothesisLedger(ledger_dir)
     registered = ledger.registered()
     family_size = max(1, len(registered))
     evaluated: list[str] = []
     reused: list[str] = []
+    carried_forward: list[str] = []
     qualified: list[str] = []
     failed: list[str] = []
     candidate_results: list[dict[str, Any]] = []
@@ -137,12 +145,32 @@ def evaluate_registered_hypotheses(
         if destination.is_file():
             reused.append(hypothesis_id)
             existing = json.loads(destination.read_text(encoding="utf-8"))
-            candidate_results.append(_candidate_summary(hypothesis, existing))
+            candidate_results.append(
+                _candidate_summary(hypothesis, existing, activity="reused")
+            )
             if existing.get("historical_screen_passed") is True:
                 qualified.append(hypothesis_id)
             continue
+        protocol = ledger.prospective_protocol(hypothesis_id)
+        if evaluation_cadence == "daily" and protocol is None:
+            prior_paths = sorted(
+                ledger.evaluations.joinpath(hypothesis_id).glob("*.json"),
+                key=lambda path: path.name,
+                reverse=True,
+            )
+            if prior_paths:
+                prior = json.loads(prior_paths[0].read_text(encoding="utf-8"))
+                if prior.get("historical_screen_passed") is not True:
+                    carried_forward.append(hypothesis_id)
+                    candidate_results.append(
+                        _candidate_summary(
+                            hypothesis,
+                            prior,
+                            activity="carried_forward",
+                        )
+                    )
+                    continue
         try:
-            protocol = ledger.prospective_protocol(hypothesis_id)
             if protocol is None:
                 result = evaluate_hypothesis(
                     hypothesis,
@@ -214,7 +242,9 @@ def evaluate_registered_hypotheses(
             result=result,
             output_dir=output_dir,
         )
-        candidate_results.append(_candidate_summary(hypothesis, result))
+        candidate_results.append(
+            _candidate_summary(hypothesis, result, activity="evaluated")
+        )
         evaluated.append(hypothesis_id)
         if result.get("historical_screen_passed") is True:
             qualified.append(hypothesis_id)
@@ -224,6 +254,7 @@ def evaluate_registered_hypotheses(
         "registered_count": len(registered),
         "evaluated": evaluated,
         "reused": reused,
+        "carried_forward": carried_forward,
         "historically_qualified": qualified,
         "evaluation_failed": failed,
         "candidate_results": sorted(
@@ -255,6 +286,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cost-calibration", required=True)
     parser.add_argument("--portfolio-notional-usd", type=float)
     parser.add_argument("--instrument-master")
+    parser.add_argument(
+        "--cadence",
+        choices=("daily", "weekly"),
+        default="weekly",
+        help=(
+            "Daily evaluates newly registered and prospective candidates; weekly "
+            "rechecks the complete registered family."
+        ),
+    )
     return parser
 
 
@@ -296,6 +336,7 @@ def main(argv: list[str] | None = None) -> int:
             args.cost_calibration,
             portfolio_notional_usd=args.portfolio_notional_usd,
         ),
+        evaluation_cadence=args.cadence,
     )
     result["excluded_outside_instrument_lifetime_rows"] = len(
         excluded_lifetime_points

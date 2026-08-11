@@ -90,15 +90,15 @@ class ResearchPlanHypothesesTests(unittest.TestCase):
                 planner=planner,
                 now=datetime(2026, 7, 27, tzinfo=timezone.utc),
             )
-            # Duplicate configs collapse to one registration; pre-fill two more
+            # Duplicate configs collapse to one registration; pre-fill four more
             # distinct registrations with timestamps in the same ISO week.
             registered = HypothesisLedger(root / "ledger").registered()
             base = registered[0]
-            for index in (1, 2):
+            for index in (1, 2, 3, 4):
                 clone = dict(base)
                 clone["hypothesis_id"] = f"00000000-0000-5000-8000-00000000000{index}"
                 clone["config"] = dict(base["config"])
-                clone["config"]["lookback_trading_days"] = 126 + 63 * index
+                clone["config"]["lookback_trading_days"] = 126 + 21 * index
                 path = root / "ledger" / "hypotheses" / f"{clone['hypothesis_id']}.json"
                 path.write_text(
                     __import__("json").dumps(clone, ensure_ascii=False, sort_keys=True, indent=2)
@@ -119,7 +119,30 @@ class ResearchPlanHypothesesTests(unittest.TestCase):
 
             self.assertEqual(first["created"], [registered[0]["hypothesis_id"]])
             self.assertEqual(second["state"], "weekly_limit_reached")
-            self.assertEqual(second["registered_this_week"], 3)
+            self.assertEqual(second["registered_this_week"], 5)
+
+    def test_zero_run_limit_performs_audit_without_calling_model(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            universe = root / "universe.csv"
+            universe.write_text("symbol\nSPY\nSGOV\n", encoding="utf-8")
+            planner = _Planner([_proposal()])
+
+            result = plan_hypotheses(
+                policy_path="config/autonomous_research_policy.json",
+                universe_path=universe,
+                ledger_dir=root / "ledger",
+                output_dir=root / "run",
+                project_id="project",
+                location="global",
+                model="gemini-test",
+                planner=planner,
+                max_new=0,
+            )
+
+            self.assertEqual(result["state"], "cadence_audit")
+            self.assertEqual(result["created"], [])
+            self.assertEqual(planner.calls, [])
 
 
 if __name__ == "__main__":

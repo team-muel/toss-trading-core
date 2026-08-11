@@ -357,6 +357,7 @@ def autonomous_research_snapshot(
             "disabled",
             "capacity_reached",
             "weekly_limit_reached",
+            "cadence_audit",
         }:
             raise ValueError("hypothesis plan result has invalid state")
         created = payload.get("created", [])
@@ -388,6 +389,7 @@ def autonomous_research_snapshot(
             "evaluated_count": 0,
             "historically_qualified_count": 0,
             "evaluation_failed_count": 0,
+            "carried_forward_count": 0,
             "promotion_authorized": False,
             "execution_authorized": False,
         }
@@ -406,6 +408,7 @@ def autonomous_research_snapshot(
     for field in (
         "evaluated",
         "reused",
+        "carried_forward",
         "historically_qualified",
         "evaluation_failed",
     ):
@@ -437,12 +440,73 @@ def autonomous_research_snapshot(
             "evaluated_count": len(lists["evaluated"]),
             "historically_qualified_count": len(lists["historically_qualified"]),
             "evaluation_failed_count": len(lists["evaluation_failed"]),
+            "carried_forward_count": len(lists["carried_forward"]),
             "candidate_results": sorted(
                 normalized_candidates, key=lambda item: item["hypothesis_id"]
             ),
         }
     )
     return snapshot
+
+
+def data_progress_snapshot(
+    tiingo_collection: str | Path | None,
+) -> dict[str, Any]:
+    if tiingo_collection is None:
+        return {
+            "state": "not_available",
+            "history_start_date": None,
+            "requested_through_date": None,
+            "complete_through_date": None,
+            "normalized_rows_collected": 0,
+            "total_return_rows_collected": 0,
+            "symbol_count": 0,
+        }
+    payload = _read_object(Path(tiingo_collection))
+    symbols = payload.get("symbols")
+    if (
+        not isinstance(symbols, list)
+        or any(not isinstance(symbol, str) or not symbol.strip() for symbol in symbols)
+    ):
+        raise ValueError("Tiingo collection symbols are invalid")
+    normalized_rows = payload.get("rows")
+    total_return_rows = payload.get("total_return_rows")
+    if (
+        isinstance(normalized_rows, bool)
+        or not isinstance(normalized_rows, int)
+        or normalized_rows <= 0
+    ):
+        raise ValueError("Tiingo collection row count is invalid")
+    if total_return_rows is None:
+        total_return_rows = normalized_rows // 2
+    if (
+        isinstance(total_return_rows, bool)
+        or not isinstance(total_return_rows, int)
+        or total_return_rows <= 0
+        or total_return_rows > normalized_rows
+    ):
+        raise ValueError("Tiingo total-return row count is invalid")
+    date_fields = {}
+    for field in (
+        "history_start_date",
+        "requested_through_date",
+        "complete_through_date",
+    ):
+        value = payload.get(field)
+        if not isinstance(value, str) or len(value) != 10:
+            raise ValueError(f"Tiingo collection {field} is invalid")
+        try:
+            datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"Tiingo collection {field} is invalid") from exc
+        date_fields[field] = value
+    return {
+        "state": "collected",
+        **date_fields,
+        "normalized_rows_collected": normalized_rows,
+        "total_return_rows_collected": total_return_rows,
+        "symbol_count": len(set(symbols)),
+    }
 
 
 def build_research_summary(
@@ -458,6 +522,7 @@ def build_research_summary(
     strategy_experiment: str | Path | None = None,
     hypothesis_plan: str | Path | None = None,
     hypothesis_evaluation: str | Path | None = None,
+    tiingo_collection: str | Path | None = None,
     available_manifest_ids: set[str] | None = None,
 ) -> dict[str, Any]:
     symbols = quality.get("symbols")
@@ -525,6 +590,7 @@ def build_research_summary(
         "autonomous_research": autonomous_research_snapshot(
             hypothesis_plan, hypothesis_evaluation
         ),
+        "data_progress": data_progress_snapshot(tiingo_collection),
     }
     return summary
 
