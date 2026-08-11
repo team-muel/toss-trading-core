@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -123,12 +123,18 @@ def evaluate_registered_hypotheses(
     points: list[PricePoint],
     execution_cost_model: ExecutionCostModel,
     evaluation_cadence: str = "weekly",
+    prospective_cutoff: str | None = None,
 ) -> dict[str, Any]:
     if not code_revision.strip() or code_revision.lower() == "unknown":
         raise ValueError("an immutable code revision is required")
     policy = load_research_policy(policy_path)
     if evaluation_cadence not in {"daily", "weekly"}:
         raise ValueError("evaluation_cadence must be daily or weekly")
+    if prospective_cutoff is not None:
+        try:
+            date.fromisoformat(prospective_cutoff)
+        except ValueError as exc:
+            raise ValueError("prospective_cutoff must be an ISO date") from exc
     ledger = HypothesisLedger(ledger_dir)
     registered = ledger.registered()
     family_size = max(1, len(registered))
@@ -214,7 +220,11 @@ def evaluate_registered_hypotheses(
                 result = evaluate_prospective_hypothesis(
                     hypothesis,
                     protocol=protocol,
-                    points=points,
+                    points=(
+                        [point for point in points if point.date <= prospective_cutoff]
+                        if prospective_cutoff is not None
+                        else points
+                    ),
                     policy=policy,
                     family_size=family_size,
                     data_manifest_ids=data_manifest_ids,
@@ -287,6 +297,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--portfolio-notional-usd", type=float)
     parser.add_argument("--instrument-master")
     parser.add_argument(
+        "--prospective-cutoff",
+        help="Latest market date proven by a previously completed automation run.",
+    )
+    parser.add_argument(
         "--cadence",
         choices=("daily", "weekly"),
         default="weekly",
@@ -337,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
             portfolio_notional_usd=args.portfolio_notional_usd,
         ),
         evaluation_cadence=args.cadence,
+        prospective_cutoff=args.prospective_cutoff,
     )
     result["excluded_outside_instrument_lifetime_rows"] = len(
         excluded_lifetime_points

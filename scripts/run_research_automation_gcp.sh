@@ -339,6 +339,9 @@ if [[ "${TIINGO_STATE}" == "collected" \
     && "${MARKET_DATA_ADVANCED}" == "1" ]]; then
     PLAN_LIMIT="1"
   fi
+  if [[ -n "${RESEARCH_HYPOTHESIS_MAX_NEW_OVERRIDE:-}" ]]; then
+    PLAN_LIMIT="${RESEARCH_HYPOTHESIS_MAX_NEW_OVERRIDE}"
+  fi
   if "${PYTHON_BIN}" -m toss_trading.cli.research_plan_hypotheses \
     --policy "${ROOT_DIR}/config/autonomous_research_policy.json" \
     --universe "${ROOT_DIR}/data/universe.csv" \
@@ -373,12 +376,17 @@ if [[ ( "${RUN_MODE}" == "weekly" \
     exit 65
   fi
   HYPOTHESIS_EVALUATION_RESULT="${REPORT_DIR}/hypothesis-evaluation.json"
+  PROSPECTIVE_CUTOFF_ARGS=()
+  if [[ -n "${PREVIOUS_MARKET_DATE}" ]]; then
+    PROSPECTIVE_CUTOFF_ARGS=(--prospective-cutoff "${PREVIOUS_MARKET_DATE}")
+  fi
   if "${PYTHON_BIN}" -m toss_trading.cli.research_evaluate_hypotheses \
     --policy "${ROOT_DIR}/config/autonomous_research_policy.json" \
     --ledger-dir "${RUNTIME_ROOT}/hypothesis-ledger" \
     --output-dir "${LAKE_DIR}/gold/hypothesis_evaluations" \
     --run-id "${RUN_ID}" \
     --cadence "${RUN_MODE}" \
+    "${PROSPECTIVE_CUTOFF_ARGS[@]}" \
     --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet" \
     --manifest-root "${LAKE_DIR}/catalog/manifests" \
     --code-revision "${CODE_REVISION}" \
@@ -402,8 +410,13 @@ if [[ -z "${STRATEGY_EXPERIMENT}" \
   && ( "${RUN_MODE}" == "weekly" \
     || "${MARKET_DATA_ADVANCED}" == "1" ) \
   && "${TIINGO_STATE}" == "collected" ]]; then
+  STRATEGY_CUTOFF_ARGS=()
+  if [[ -n "${PREVIOUS_MARKET_DATE}" ]]; then
+    STRATEGY_CUTOFF_ARGS=(--as-of-date "${PREVIOUS_MARKET_DATE}")
+  fi
   "${PYTHON_BIN}" -m toss_trading.cli.research_backtest \
     --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet" \
+    "${STRATEGY_CUTOFF_ARGS[@]}" \
     --candidate SPY \
     --candidate QQQ \
     --candidate VTV \
