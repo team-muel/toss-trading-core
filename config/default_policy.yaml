@@ -110,6 +110,18 @@ starter_guardrails:
   kill_switch_states_allowing_orders:
     - NORMAL
 
+# This profile is consumed only by the persistent local paper broker. It does
+# not relax starter_guardrails or enable a Toss write capability.
+paper_guardrails:
+  enabled: true
+  live_orders_enabled: false
+  initial_cash_usd: 10000
+  minimum_trade_notional_usd: 1
+  max_open_orders: 1
+  max_drawdown_kill_switch_pct: 100
+  single_trade_max_loss_nav_pct: 100
+  single_live_order_notional_nav_pct: 100
+
 portfolio_limits:
   # Populated only after calibration review. Do not copy report numbers here.
   max_drawdown_warning_pct: null

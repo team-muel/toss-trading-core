@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run on personal-agent-vm after the candidate release has passed tests.
+# Run only on personal-research-agent-vm after the candidate release has passed tests.
 set -Eeuo pipefail
 umask 077
 
@@ -14,7 +14,12 @@ for command in sudo systemctl; do
 done
 
 sudo install -d -m 0750 -o seoje -g seoje \
-  /home/seoje/toss-trading/research-runtime
+  /home/seoje/toss-trading/research-runtime \
+  /home/seoje/toss-trading/research-runtime/input \
+  /home/seoje/toss-trading/paper-runtime \
+  /home/seoje/toss-trading/paper-runtime/input \
+  /home/seoje/toss-trading/paper-runtime/reports \
+  /home/seoje/toss-trading/stock-recommendation-runtime
 sudo install -d -m 0755 /etc/toss-trading
 if [[ ! -f /etc/toss-trading/research.env ]]; then
   sudo install -m 0600 -o root -g root \
@@ -23,17 +28,15 @@ if [[ ! -f /etc/toss-trading/research.env ]]; then
 fi
 
 sudo systemd-analyze verify \
-  deploy/systemd/toss-foundation.service \
-  deploy/systemd/toss-foundation.timer \
   deploy/systemd/toss-research-automation@.service \
   deploy/systemd/toss-research-daily.timer \
   deploy/systemd/toss-research-weekly.timer \
   deploy/systemd/toss-research-prune.service \
-  deploy/systemd/toss-research-prune.timer
-sudo install -m 0644 deploy/systemd/toss-foundation.service \
-  /etc/systemd/system/toss-foundation.service
-sudo install -m 0644 deploy/systemd/toss-foundation.timer \
-  /etc/systemd/system/toss-foundation.timer
+  deploy/systemd/toss-research-prune.timer \
+  deploy/systemd/toss-paper-operation.service \
+  deploy/systemd/toss-paper-operation.timer \
+  deploy/systemd/toss-stock-recommendations.service \
+  deploy/systemd/toss-stock-recommendations.timer
 sudo install -m 0644 deploy/systemd/toss-research-automation@.service \
   /etc/systemd/system/toss-research-automation@.service
 sudo install -m 0644 deploy/systemd/toss-research-daily.timer \
@@ -44,18 +47,28 @@ sudo install -m 0644 deploy/systemd/toss-research-prune.service \
   /etc/systemd/system/toss-research-prune.service
 sudo install -m 0644 deploy/systemd/toss-research-prune.timer \
   /etc/systemd/system/toss-research-prune.timer
-sudo install -m 0644 deploy/ops-agent/toss-foundation.yaml \
+sudo install -m 0644 deploy/systemd/toss-paper-operation.service \
+  /etc/systemd/system/toss-paper-operation.service
+sudo install -m 0644 deploy/systemd/toss-paper-operation.timer \
+  /etc/systemd/system/toss-paper-operation.timer
+sudo install -m 0644 deploy/systemd/toss-stock-recommendations.service \
+  /etc/systemd/system/toss-stock-recommendations.service
+sudo install -m 0644 deploy/systemd/toss-stock-recommendations.timer \
+  /etc/systemd/system/toss-stock-recommendations.timer
+sudo install -m 0644 deploy/ops-agent/toss-research.yaml \
   /etc/google-cloud-ops-agent/config.yaml
 sudo systemctl daemon-reload
 sudo systemctl restart google-cloud-ops-agent
 sudo systemctl enable --now \
-  toss-foundation.timer \
   toss-research-daily.timer \
   toss-research-weekly.timer \
-  toss-research-prune.timer
+  toss-research-prune.timer \
+  toss-paper-operation.timer \
+  toss-stock-recommendations.timer
 
 sudo systemctl is-active google-cloud-ops-agent
-sudo systemctl is-enabled toss-foundation.timer
 sudo systemctl is-enabled toss-research-daily.timer
 sudo systemctl is-enabled toss-research-weekly.timer
 sudo systemctl is-enabled toss-research-prune.timer
+sudo systemctl is-enabled toss-paper-operation.timer
+sudo systemctl is-enabled toss-stock-recommendations.timer

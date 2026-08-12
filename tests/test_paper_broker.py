@@ -179,6 +179,34 @@ class PaperBrokerTest(unittest.TestCase):
             self.assertIn("limit_price_decimal", columns)
             migrated.close()
 
+    def test_minimum_commission_is_charged_once_across_partial_fills(self):
+        broker = PaperBrokerAdapter(
+            initial_cash={"USD": "1000"},
+            commission_bps="0",
+            minimum_commission="1",
+            slippage_bps="0",
+        )
+        broker.submit_order(
+            {
+                "client_order_id": "minimum-commission",
+                "symbol": "SPY",
+                "side": "BUY",
+                "qty": "2",
+                "order_amount": None,
+            }
+        )
+        broker.process_order(
+            "minimum-commission", market_price="100", fill_ratio="0.5"
+        )
+        result = broker.process_order(
+            "minimum-commission", market_price="100", fill_ratio="1"
+        )
+        self.assertEqual(Decimal(result["commission"]), Decimal("1"))
+        self.assertEqual(
+            Decimal(broker.get_balances()["cash"]["USD"]), Decimal("799")
+        )
+        broker.close()
+
 
 if __name__ == "__main__":
     unittest.main()

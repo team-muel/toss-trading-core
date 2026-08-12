@@ -136,13 +136,22 @@ providers:
       approved_contact_user_agent_required: true
 
   massive:
-    decision: deferred_not_primary_total_return_source
-    reason: aggregate bars are split-adjusted by default but not dividend-adjusted
+    decision: selected_pending_user_credential_for_broad_stock_screening
+    reason: grouped daily bars cover the broad US stock universe efficiently but are not the ETF baseline total-return source
+    credential_env: MASSIVE_API_KEY
+    recommendation_scope:
+      target_common_stock_universe: 2500
+      grouped_daily_adjusted_bars: true
+      research_recommendations_only: true
+      order_authority: false
+      activation_gate: personal_terms_approval_and_secret_version_required
     future_scope:
       - options_snapshots
       - dividends
       - splits
     prohibited_use:
       - primary_total_return_backtest_bars
+      - personalized_advice_claims
+      - recommendation_to_live_order_promotion
     official_adjustment_policy: https://massive.com/knowledge-base/article/is-massives-stock-data-adjusted-for-splits-or-dividends
     official_dividend_policy: https://massive.com/knowledge-base/article/does-massive-adjust-historic-dividends-for-splits

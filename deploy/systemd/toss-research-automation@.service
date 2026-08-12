@@ -19,7 +19,7 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictRealtime=true
 CapabilityBoundingSet=
-ReadWritePaths=/home/seoje/toss-trading/research-runtime /home/seoje/toss-trading/runtime
+ReadWritePaths=/home/seoje/toss-trading/research-runtime
 EnvironmentFile=-/etc/toss-trading/research.env
 Environment=GCP_PROJECT_ID=toss-trading-core-lab
 Environment=TOSS_CLIENT_ID_SECRET=toss-research-client-id
@@ -28,8 +28,9 @@ Environment=RESEARCH_RUNTIME_ROOT=/home/seoje/toss-trading/research-runtime
 Environment=RESEARCH_JSON_LOG_PATH=/home/seoje/toss-trading/research-runtime/research_automation.jsonl
 Environment=RESEARCH_LOCK_PATH=/home/seoje/toss-trading/research-runtime/research_automation.lock
 Environment=RESEARCH_PROSPECTIVE_OBSERVATION_LEDGER=/home/seoje/toss-trading/research-runtime/prospective_collection_observations.jsonl
-Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/runtime/toss_api.lock
-Environment=RESEARCH_EXECUTION_COST_CALIBRATION=/home/seoje/toss-trading/runtime/research_execution_cost_calibration.json
+Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/research-runtime/toss_api.lock
+Environment=RESEARCH_EXECUTION_COST_CALIBRATION=/home/seoje/toss-trading/research-runtime/input/research_execution_cost_calibration.json
+Environment=RESEARCH_EXECUTION_COST_CALIBRATION_SECRET=research-execution-cost-calibration
 Environment=RESEARCH_PORTFOLIO_NOTIONAL_USD=10000
 Environment=RESEARCH_GCS_URI=gs://toss-trading-core-lab-research-data/research
 Environment=RESEARCH_BIGQUERY_DATASET=toss_research_reporting

@@ -118,6 +118,23 @@ class RiskHubTest(unittest.TestCase):
         self.assertFalse(stale.approved)
         self.assertIn("snapshot", stale.reason)
 
+    def test_paper_profile_does_not_relax_starter_live_limits(self):
+        proposed = signal()
+        paper_intent = intent(amount=9_000)
+        portfolio = state()
+        portfolio["available_cash"] = 10_000
+        starter = self.hub.evaluate_signal(
+            proposed, portfolio, order_intent=paper_intent
+        )
+        paper = self.hub.evaluate_signal(
+            proposed,
+            portfolio,
+            order_intent=paper_intent,
+            guardrail_profile="paper_guardrails",
+        )
+        self.assertFalse(starter.approved)
+        self.assertTrue(paper.approved)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run broad stock recommendations after daily research
+
+[Timer]
+OnCalendar=*-*-* 02:00:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+Unit=toss-stock-recommendations.service
+
+[Install]
+WantedBy=timers.target

@@ -50,13 +50,21 @@ class PaperBrokerAdapter:
         *,
         initial_cash: dict[str, str] | None = None,
         commission_bps: str = "10",
+        minimum_commission: str = "0",
         slippage_bps: str = "2.0",
     ) -> None:
         self.conn = sqlite3.connect(str(db_path))
         self.conn.row_factory = sqlite3.Row
         self.commission_bps = _decimal(commission_bps, name="commission_bps")
+        self.minimum_commission = _decimal(
+            minimum_commission, name="minimum_commission"
+        )
         self.slippage_bps = _decimal(slippage_bps, name="slippage_bps")
-        if min(self.commission_bps, self.slippage_bps) < 0:
+        if min(
+            self.commission_bps,
+            self.minimum_commission,
+            self.slippage_bps,
+        ) < 0:
             raise ValueError("paper costs must be nonnegative")
         self.conn.executescript(
             """
@@ -279,7 +287,13 @@ class PaperBrokerAdapter:
             complete = fill_amount == remaining_amount
         if min(fill_qty, fill_amount) <= 0:
             raise ValueError("paper order has no remaining quantity")
-        commission = fill_amount * self.commission_bps / Decimal("10000")
+        target_commission = max(
+            self.minimum_commission,
+            (already_amount + fill_amount)
+            * self.commission_bps
+            / Decimal("10000"),
+        )
+        commission = target_commission - Decimal(row["commission_decimal"])
 
         cash_row = self.conn.execute(
             "SELECT balance_decimal FROM paper_cash WHERE currency = ?",
@@ -317,7 +331,7 @@ class PaperBrokerAdapter:
 
         new_filled_qty = already_qty + fill_qty
         new_filled_amount = already_amount + fill_amount
-        new_commission = Decimal(row["commission_decimal"]) + commission
+        new_commission = target_commission
         average_fill = new_filled_amount / new_filled_qty
         now = _utc_now()
         with self.conn:
