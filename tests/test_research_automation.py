@@ -377,22 +377,10 @@ class ResearchAutomationTest(unittest.TestCase):
         installer = Path(
             "scripts/install_research_automation_vm.sh"
         ).read_text(encoding="utf-8")
-        self.assertIn(
-            "deploy/systemd/toss-foundation.service",
-            installer,
-        )
-        self.assertIn(
-            "/etc/systemd/system/toss-foundation.service",
-            installer,
-        )
-        self.assertIn(
-            "deploy/systemd/toss-foundation.timer",
-            installer,
-        )
-        self.assertIn(
-            "/etc/systemd/system/toss-foundation.timer",
-            installer,
-        )
+        self.assertNotIn("toss-foundation.service", installer)
+        self.assertNotIn("toss-foundation.timer", installer)
+        self.assertIn("toss-paper-operation.service", installer)
+        self.assertIn("toss-paper-operation.timer", installer)
 
         research_service = Path(
             "deploy/systemd/toss-research-automation@.service"

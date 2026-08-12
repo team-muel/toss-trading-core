@@ -1,0 +1,32 @@
+[Unit]
+Description=Broad US common-stock research recommendations
+After=toss-research-automation@daily.service
+
+[Service]
+Type=oneshot
+User=seoje
+Group=seoje
+WorkingDirectory=/home/seoje/toss-trading/current
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+ReadWritePaths=/home/seoje/toss-trading/stock-recommendation-runtime
+EnvironmentFile=-/etc/toss-trading/research.env
+Environment=GCP_PROJECT_ID=toss-trading-core-lab
+Environment=STOCK_RECOMMENDATION_RUNTIME_ROOT=/home/seoje/toss-trading/stock-recommendation-runtime
+Environment=MASSIVE_API_KEY_SECRET=massive-api-key
+Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:/snap/google-cloud-cli/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python
+ExecStart=/usr/bin/bash /home/seoje/toss-trading/current/scripts/run_stock_recommendations_gcp.sh
+TimeoutStartSec=3h
+
+[Install]
+WantedBy=multi-user.target

@@ -9,6 +9,9 @@ cd "${ROOT_DIR}"
 PROJECT_ID="${GCP_PROJECT_ID:-toss-trading-core-lab}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 INSTANCE_NAME="${GCP_INSTANCE_NAME:-personal-research-agent-vm}"
+ADDRESS_NAME="${GCP_RESEARCH_ADDRESS_NAME:-toss-research-static-ip}"
+MACHINE_TYPE="${GCP_RESEARCH_MACHINE_TYPE:-e2-micro}"
+BOOT_DISK_SIZE="${GCP_RESEARCH_BOOT_DISK_SIZE:-30GB}"
 BUCKET_NAME="${RESEARCH_GCS_BUCKET:-toss-trading-core-lab-research-data}"
 BUILD_SOURCE_BUCKET="${CLOUD_BUILD_SOURCE_BUCKET:-${PROJECT_ID}_cloudbuild}"
 RESEARCH_SERVICE_ACCOUNT_NAME="${RESEARCH_SERVICE_ACCOUNT_NAME:-toss-research-runner}"
@@ -45,6 +48,7 @@ if ! gcloud iam service-accounts describe "${SERVICE_ACCOUNT}" \
 fi
 
 gcloud services enable \
+  compute.googleapis.com \
   storage.googleapis.com \
   logging.googleapis.com \
   monitoring.googleapis.com \
@@ -54,6 +58,38 @@ gcloud services enable \
   gmail.googleapis.com \
   aiplatform.googleapis.com \
   --project="${PROJECT_ID}"
+
+REGION="${ZONE%-*}"
+if ! gcloud compute addresses describe "${ADDRESS_NAME}" \
+  --project="${PROJECT_ID}" \
+  --region="${REGION}" >/dev/null 2>&1; then
+  gcloud compute addresses create "${ADDRESS_NAME}" \
+    --project="${PROJECT_ID}" \
+    --region="${REGION}"
+fi
+RESEARCH_IP="$(gcloud compute addresses describe "${ADDRESS_NAME}" \
+  --project="${PROJECT_ID}" \
+  --region="${REGION}" \
+  --format='value(address)')"
+if ! gcloud compute instances describe "${INSTANCE_NAME}" \
+  --project="${PROJECT_ID}" \
+  --zone="${ZONE}" >/dev/null 2>&1; then
+  gcloud compute instances create "${INSTANCE_NAME}" \
+    --project="${PROJECT_ID}" \
+    --zone="${ZONE}" \
+    --machine-type="${MACHINE_TYPE}" \
+    --network-interface="network=default,address=${RESEARCH_IP}" \
+    --service-account="${SERVICE_ACCOUNT}" \
+    --scopes=cloud-platform \
+    --image-family=ubuntu-2404-lts-amd64 \
+    --image-project=ubuntu-os-cloud \
+    --boot-disk-size="${BOOT_DISK_SIZE}" \
+    --boot-disk-type=pd-balanced \
+    --metadata=enable-osconfig=TRUE \
+    --shielded-secure-boot \
+    --shielded-vtpm \
+    --shielded-integrity-monitoring
+fi
 
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SERVICE_ACCOUNT}" \
@@ -118,6 +154,7 @@ for secret_name in \
   toss-research-client-secret \
   tiingo-api-token \
   fred-api-key \
+  massive-api-key \
   sec-user-agent \
   toss-research-gmail-oauth-client-id \
   toss-research-gmail-oauth-client-secret \
@@ -131,7 +168,36 @@ for secret_name in \
       --condition=None
   fi
 done
+if ! gcloud secrets describe massive-api-key \
+  --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud secrets create massive-api-key \
+    --project="${PROJECT_ID}" \
+    --replication-policy=automatic
+  gcloud secrets add-iam-policy-binding massive-api-key \
+    --project="${PROJECT_ID}" \
+    --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role="roles/secretmanager.secretAccessor" \
+    --condition=None
+fi
 
+CALIBRATION_SECRET="research-execution-cost-calibration"
+if ! gcloud secrets describe "${CALIBRATION_SECRET}" \
+  --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud secrets create "${CALIBRATION_SECRET}" \
+    --project="${PROJECT_ID}" \
+    --replication-policy=automatic
+fi
+gcloud secrets add-iam-policy-binding "${CALIBRATION_SECRET}" \
+  --project="${PROJECT_ID}" \
+  --member="serviceAccount:${SERVICE_ACCOUNT}" \
+  --role="roles/secretmanager.secretAccessor" \
+  --condition=None
+FOUNDATION_SERVICE_ACCOUNT="toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com"
+gcloud secrets add-iam-policy-binding "${CALIBRATION_SECRET}" \
+  --project="${PROJECT_ID}" \
+  --member="serviceAccount:${FOUNDATION_SERVICE_ACCOUNT}" \
+  --role="roles/secretmanager.secretVersionAdder" \
+  --condition=None
 METRIC_DIR="${WORK_DIR}/metrics"
 "${PYTHON_BIN}" scripts/render_research_log_metrics.py \
   --output-dir "${METRIC_DIR}"
@@ -274,3 +340,5 @@ bq --project_id="${PROJECT_ID}" show \
 gcloud monitoring dashboards list \
   --project="${PROJECT_ID}" \
   --filter="displayName=\"${DASHBOARD_DISPLAY_NAME}\""
+echo "research_instance=${INSTANCE_NAME} service_account=${SERVICE_ACCOUNT} static_ip=${RESEARCH_IP}"
+echo "toss_allowlist_action=register_static_ip_${RESEARCH_IP}_for_research_client"

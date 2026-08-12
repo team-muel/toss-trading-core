@@ -13,4 +13,4 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/seoje/toss-trading/research-runtime /home/seoje/toss-trading/releases
-ExecStart=/home/seoje/toss-trading/current/scripts/prune_research_runtime.sh --apply
+ExecStart=/usr/bin/bash /home/seoje/toss-trading/current/scripts/prune_research_runtime.sh --apply

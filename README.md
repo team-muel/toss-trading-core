@@ -54,6 +54,8 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/27_p0_identity_and_holdout_remediation.md` | P0 전향 표본 봉인·복구 증거와 research 전용 identity 전환 게이트 |
 | `docs/28_p1_research_data_completion.md` | P1 8개 작업의 구현·운영 증거·배포 경계 점검 |
 | `docs/29_daily_autonomous_research_operation.md` | 일일 자율 연구, 데이터 전진 조건, 중복 메일 억제 운영 규칙 |
+| `docs/32_three_axis_reinforcement.md` | 활성 release 증거, 연구 신원 격리, persistent paper 운영 기준 |
+| `docs/33_broad_stock_recommendations.md` | 2,000~3,000개 미국 주식 스크리닝·추천·전향 추적 기준 |
 
 ## Current Operating Snapshot — 2026-08-08
 
@@ -176,3 +178,7 @@ sudo systemctl status toss-research-automation@daily.service --no-pager
 [`docs/30_multi_direction_quant_research.md`](docs/30_multi_direction_quant_research.md)에 정리되어 있습니다.
 ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙은
 [`docs/31_alfred_point_in_time_macro_regime.md`](docs/31_alfred_point_in_time_macro_regime.md)에 정리되어 있습니다.
+
+광범위 주식 추천은 ETF baseline과 분리합니다. 미국 보통주 약 2,500개를 고정된
+유동성·momentum·저변동성·trend 규칙으로 평가하되, 공급자 credential과 이용약관
+gate가 완료되기 전에는 비활성이고 결과는 주문 권한을 갖지 않습니다.

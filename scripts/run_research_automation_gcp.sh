@@ -23,6 +23,7 @@ BIGQUERY_TABLE="${RESEARCH_BIGQUERY_TABLE:-run_summaries}"
 STRATEGY_EXPERIMENT="${RESEARCH_STRATEGY_EXPERIMENT:-}"
 PROSPECTIVE_OBSERVATION_LEDGER="${RESEARCH_PROSPECTIVE_OBSERVATION_LEDGER:-${RUNTIME_ROOT}/prospective_collection_observations.jsonl}"
 EXECUTION_COST_CALIBRATION="${RESEARCH_EXECUTION_COST_CALIBRATION:-/home/seoje/toss-trading/runtime/research_execution_cost_calibration.json}"
+EXECUTION_COST_CALIBRATION_SECRET="${RESEARCH_EXECUTION_COST_CALIBRATION_SECRET:-}"
 : "${RESEARCH_PORTFOLIO_NOTIONAL_USD:?RESEARCH_PORTFOLIO_NOTIONAL_USD is required}"
 PORTFOLIO_NOTIONAL_USD="${RESEARCH_PORTFOLIO_NOTIONAL_USD}"
 CODE_REVISION="${FOUNDATION_CODE_REVISION:-}"
@@ -118,6 +119,17 @@ export TOSS_CLIENT_SECRET_SECRET
 
 # shellcheck disable=SC1091
 source "scripts/load_gcp_secrets.sh"
+
+if [[ -n "${EXECUTION_COST_CALIBRATION_SECRET}" ]]; then
+  mkdir -p "$(dirname "${EXECUTION_COST_CALIBRATION}")"
+  calibration_temporary="${EXECUTION_COST_CALIBRATION}.tmp"
+  gcloud secrets versions access latest \
+    --project="${GCP_PROJECT_ID}" \
+    --secret="${EXECUTION_COST_CALIBRATION_SECRET}" \
+    > "${calibration_temporary}"
+  chmod 0600 "${calibration_temporary}"
+  mv -f "${calibration_temporary}" "${EXECUTION_COST_CALIBRATION}"
+fi
 
 load_optional_secret() {
   local env_name="$1"

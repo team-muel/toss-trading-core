@@ -1,0 +1,32 @@
+[Unit]
+Description=Persistent Toss research paper operation
+After=toss-research-automation@daily.service
+
+[Service]
+Type=oneshot
+User=seoje
+Group=seoje
+WorkingDirectory=/home/seoje/toss-trading/current
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+ReadOnlyPaths=/home/seoje/toss-trading/research-runtime
+ReadWritePaths=/home/seoje/toss-trading/paper-runtime
+Environment=GCP_PROJECT_ID=toss-trading-core-lab
+Environment=RESEARCH_RUNTIME_ROOT=/home/seoje/toss-trading/research-runtime
+Environment=PAPER_RUNTIME_ROOT=/home/seoje/toss-trading/paper-runtime
+Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:/snap/google-cloud-cli/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python
+ExecStart=/usr/bin/bash /home/seoje/toss-trading/current/scripts/run_paper_operation_gcp.sh
+TimeoutStartSec=30m
+
+[Install]
+WantedBy=multi-user.target

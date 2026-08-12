@@ -1,0 +1,11 @@
+[Unit]
+Description=Run persistent paper operation after daily research
+
+[Timer]
+OnCalendar=*-*-* 01:30:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+Unit=toss-paper-operation.service
+
+[Install]
+WantedBy=timers.target

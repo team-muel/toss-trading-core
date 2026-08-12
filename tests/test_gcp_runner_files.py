@@ -37,6 +37,14 @@ class GcpRunnerFilesTest(unittest.TestCase):
             "deploy/systemd/toss-foundation.service",
             "deploy/systemd/toss-foundation.timer",
             "scripts/check_research_identity_gcp.sh",
+            "scripts/audit_active_research_release.sh",
+            "scripts/run_paper_operation_gcp.sh",
+            "scripts/bootstrap_research_vm.sh",
+            "deploy/systemd/toss-paper-operation.service",
+            "deploy/systemd/toss-paper-operation.timer",
+            "scripts/run_stock_recommendations_gcp.sh",
+            "deploy/systemd/toss-stock-recommendations.service",
+            "deploy/systemd/toss-stock-recommendations.timer",
             "docs/27_p0_identity_and_holdout_remediation.md",
         ]:
             self.assertTrue(Path(path).exists(), path)
@@ -163,6 +171,37 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("--cost-calibration", research_runner)
         self.assertIn("RESEARCH_EXECUTION_COST_CALIBRATION", service)
 
+    def test_release_audit_and_prune_do_not_depend_on_release_mode_bits(self):
+        audit = Path("scripts/audit_active_research_release.sh").read_text(
+            encoding="utf-8"
+        )
+        prune = Path("deploy/systemd/toss-research-prune.service").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("sha256sum -c SHA256SUMS", audit)
+        self.assertIn("revision_mismatch", audit)
+        self.assertIn("prune_not_verified", audit)
+        self.assertIn("/usr/bin/bash", prune)
+
+    def test_paper_service_is_local_only_and_hardened(self):
+        service = Path(
+            "deploy/systemd/toss-paper-operation.service"
+        ).read_text(encoding="utf-8")
+        timer = Path("deploy/systemd/toss-paper-operation.timer").read_text(
+            encoding="utf-8"
+        )
+        runner = Path("scripts/run_paper_operation_gcp.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("NoNewPrivileges=true", service)
+        self.assertIn("CapabilityBoundingSet=", service)
+        self.assertIn("ReadOnlyPaths=/home/seoje/toss-trading/research-runtime", service)
+        self.assertIn("ReadWritePaths=/home/seoje/toss-trading/paper-runtime", service)
+        self.assertNotIn("toss-client-id", service + runner)
+        self.assertNotIn("TOSS_ACCOUNT_SEQ", service + runner)
+        self.assertIn("Persistent=true", timer)
+        self.assertIn("paper_operation_ok", runner)
+
     def test_ops_agent_collects_and_parses_foundation_jsonl(self):
         config = Path("deploy/ops-agent/toss-foundation.yaml").read_text(
             encoding="utf-8"
@@ -173,6 +212,19 @@ class GcpRunnerFilesTest(unittest.TestCase):
         )
         self.assertIn("type: parse_json", config)
         self.assertIn("toss_foundation_pipeline", config)
+
+    def test_research_vm_installer_never_installs_foundation_services(self):
+        installer = Path("scripts/install_research_automation_vm.sh").read_text(
+            encoding="utf-8"
+        )
+        research_ops = Path("deploy/ops-agent/toss-research.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("toss-foundation.service", installer)
+        self.assertNotIn("toss-foundation.timer", installer)
+        self.assertIn("toss-paper-operation.timer", installer)
+        self.assertIn("toss-stock-recommendations.timer", installer)
+        self.assertNotIn("foundation_runner.jsonl", research_ops)
 
     def test_additional_monitoring_policies_cover_backup_and_overlap(self):
         backup_policy = Path(

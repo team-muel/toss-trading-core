@@ -32,9 +32,16 @@ class RiskHub:
         portfolio_state: dict,
         *,
         order_intent: OrderIntent | None = None,
+        guardrail_profile: str = "starter_guardrails",
     ) -> RiskDecision:
         runtime = self.policy.get("runtime", {})
-        guardrails = self.policy.get("starter_guardrails", {})
+        if guardrail_profile not in {"starter_guardrails", "paper_guardrails"}:
+            return RiskDecision(False, "unsupported guardrail profile")
+        guardrails = self.policy.get(guardrail_profile, {})
+        if guardrail_profile == "paper_guardrails" and not guardrails.get(
+            "enabled", False
+        ):
+            return RiskDecision(False, "paper guardrails are disabled")
         if runtime.get("live_trading_enabled") is True:
             return RiskDecision(False, "live trading is disabled until a reviewed live adapter exists")
         if portfolio_state.get("kill_switch_state", "HARD_FREEZE") != "NORMAL":
@@ -89,8 +96,12 @@ class RiskHub:
         )
         max_loss_pct = independent_max_loss / nav * 100
         limit = self.policy.get("portfolio_limits", {}).get("single_trade_max_loss_nav_pct")
-        if limit is None:
+        if limit is None or guardrail_profile == "paper_guardrails":
             limit = self.policy["starter_guardrails"]["single_trade_max_loss_nav_pct"]
+            if guardrail_profile == "paper_guardrails":
+                limit = guardrails.get("single_trade_max_loss_nav_pct")
+        if limit is None:
+            return RiskDecision(False, "single trade max loss limit is missing")
         if max_loss_pct > limit:
             return RiskDecision(False, "single trade max loss limit exceeded")
 
@@ -98,7 +109,7 @@ class RiskHub:
         drawdown_limit = self.policy.get("portfolio_limits", {}).get(
             "max_drawdown_kill_switch_pct"
         )
-        if drawdown_limit is None:
+        if drawdown_limit is None or guardrail_profile == "paper_guardrails":
             drawdown_limit = guardrails.get("max_drawdown_kill_switch_pct")
         if not isfinite(drawdown_pct) or drawdown_pct < 0:
             return RiskDecision(False, "drawdown must be finite and nonnegative")
@@ -110,8 +121,10 @@ class RiskHub:
         notional_limit = self.policy.get("portfolio_limits", {}).get(
             "single_live_order_notional_nav_pct"
         )
-        if notional_limit is None:
+        if notional_limit is None or guardrail_profile == "paper_guardrails":
             notional_limit = guardrails.get("single_live_order_notional_nav_pct")
+        if notional_limit is None:
+            return RiskDecision(False, "single order notional limit is missing")
         if proposed_notional / nav * 100 > float(notional_limit):
             return RiskDecision(False, "single order notional limit exceeded")
         if signal.side == "BUY":

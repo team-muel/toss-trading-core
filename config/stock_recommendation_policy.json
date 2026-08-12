@@ -1,0 +1,27 @@
+{
+  "schema_version": "stock-recommendation-policy-v1",
+  "enabled": false,
+  "activation_gate": "massive_api_key_and_personal_terms_approval_required",
+  "provider": "massive-grouped-daily",
+  "market": "US",
+  "security_type": "common_stock",
+  "target_universe_size": 2500,
+  "minimum_universe_size": 2000,
+  "maximum_universe_size": 3000,
+  "minimum_price_usd": 5.0,
+  "minimum_median_dollar_volume_usd": 5000000,
+  "minimum_history_trading_days": 253,
+  "maximum_recommendations": 10,
+  "factor_weights": {
+    "momentum_12_1": 0.35,
+    "momentum_6_1": 0.25,
+    "low_volatility": 0.2,
+    "trend_strength": 0.2
+  },
+  "require_positive_12_1_momentum": true,
+  "require_above_200_day_average": true,
+  "prospective_horizons_trading_days": [5, 21, 63],
+  "benchmark": "SPY",
+  "execution_authorized": false,
+  "promotion_authorized": false
+}
