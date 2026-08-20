@@ -9,18 +9,26 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-POLICY_SCHEMA = "focused-research-policy-v3"
-DOSSIER_SCHEMA = "focused-research-dossier-v3"
+POLICY_SCHEMA = "focused-research-policy-v4"
+DOSSIER_SCHEMA = "focused-research-dossier-v4"
 RESEARCH_SECTION_ORDER = [
     "investment_thesis",
     "variant_view",
     "earnings_model",
+    "earnings_quality",
     "valuation",
     "catalyst_path",
     "risk_disconfirming_evidence",
     "position_construction",
     "score_summary",
 ]
+EARNINGS_QUALITY_ADJUSTMENT_IDS = (
+    "stock_based_compensation",
+    "restructuring",
+    "acquisition_adjustment",
+    "tax_benefit",
+    "one_off_gain",
+)
 
 
 def _canonical_json(value: Any) -> str:
@@ -86,6 +94,7 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "allowed_source_types",
         "allowed_implied_methods",
         "allowed_valuation_methods",
+        "required_earnings_quality_adjustment_ids",
     ):
         value = payload.get(field)
         if (
@@ -95,6 +104,12 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
             or any(not isinstance(item, str) or not item for item in value)
         ):
             raise ValueError(f"focused research policy {field} is invalid")
+    if set(payload["required_earnings_quality_adjustment_ids"]) != set(
+        EARNINGS_QUALITY_ADJUSTMENT_IDS
+    ):
+        raise ValueError(
+            "focused research policy earnings quality adjustments are incomplete"
+        )
     for field in (
         "require_price_implied_chain",
         "require_consensus_chain",
@@ -104,6 +119,9 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "require_driver_based_earnings_model",
         "require_cash_flow_bridge",
         "require_incremental_roic",
+        "require_earnings_quality_analysis",
+        "require_eps_growth_attribution",
+        "require_gaap_non_gaap_reconciliation",
     ):
         if payload.get(field) is not True:
             raise ValueError(f"focused research policy {field} must remain enabled")
@@ -809,6 +827,667 @@ def _earnings_model(
     }
 
 
+def _growth_percent(current: float, prior: float) -> float | None:
+    if math.isclose(prior, 0.0, abs_tol=1e-12):
+        return None
+    return (current / prior - 1) * 100
+
+
+def _earnings_quality(
+    raw: Any,
+    *,
+    registry: dict[str, dict[str, Any]],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a sourced, fully reconciled earnings-quality analysis."""
+
+    if not isinstance(raw, dict):
+        raise ValueError("earnings_quality must be an object")
+    periods_raw = raw.get("periods")
+    if not isinstance(periods_raw, dict):
+        raise ValueError("earnings_quality.periods must be an object")
+    periods = {
+        "prior_period": _bounded_text(
+            periods_raw.get("prior_period"),
+            field="earnings_quality.prior_period",
+            maximum=40,
+        ),
+        "current_period": _bounded_text(
+            periods_raw.get("current_period"),
+            field="earnings_quality.current_period",
+            maximum=40,
+        ),
+    }
+    if periods["prior_period"] == periods["current_period"]:
+        raise ValueError("earnings quality periods must be distinct")
+
+    def sourced_group(name: str) -> tuple[dict[str, Any], list[str], str]:
+        value = raw.get(name)
+        if not isinstance(value, dict):
+            raise ValueError(f"earnings_quality.{name} must be an object")
+        return (
+            value,
+            _source_ids(
+                value.get("source_ids"),
+                field=f"earnings_quality.{name}",
+                registry=registry,
+            ),
+            _bounded_text(
+                value.get("methodology"),
+                field=f"earnings_quality.{name}.methodology",
+                maximum=1000,
+            ),
+        )
+
+    def period_values(
+        group_name: str,
+        value: dict[str, Any],
+        fields: tuple[str, ...],
+        *,
+        nonnegative: set[str] | None = None,
+        positive: set[str] | None = None,
+    ) -> dict[str, dict[str, float]]:
+        result: dict[str, dict[str, float]] = {}
+        for period_key in ("prior", "current"):
+            period_raw = value.get(period_key)
+            if not isinstance(period_raw, dict):
+                raise ValueError(
+                    f"earnings_quality.{group_name}.{period_key} must be an object"
+                )
+            parsed = {
+                field: _finite_number(
+                    period_raw.get(field),
+                    field=f"earnings_quality.{group_name}.{period_key}.{field}",
+                )
+                for field in fields
+            }
+            for field in nonnegative or set():
+                if parsed[field] < 0:
+                    raise ValueError(
+                        f"earnings_quality.{group_name}.{period_key}.{field} cannot be negative"
+                    )
+            for field in positive or set():
+                if parsed[field] <= 0:
+                    raise ValueError(
+                        f"earnings_quality.{group_name}.{period_key}.{field} must be positive"
+                    )
+            result[period_key] = parsed
+        return result
+
+    balance_raw, balance_sources, balance_method = sourced_group("balance_sheet")
+    balance_fields = (
+        "revenue_usd_millions",
+        "accounts_receivable_usd_millions",
+        "inventory_usd_millions",
+        "contract_liabilities_usd_millions",
+        "deferred_revenue_usd_millions",
+    )
+    balance = period_values(
+        "balance_sheet",
+        balance_raw,
+        balance_fields,
+        nonnegative=set(balance_fields),
+        positive={"revenue_usd_millions"},
+    )
+    balance.update({"source_ids": balance_sources, "methodology": balance_method})
+
+    cash_raw, cash_sources, cash_method = sourced_group("cash_conversion")
+    cash = period_values(
+        "cash_conversion",
+        cash_raw,
+        (
+            "operating_cash_flow_usd_millions",
+            "total_assets_usd_millions",
+            "working_capital_contribution_usd_millions",
+        ),
+        positive={"total_assets_usd_millions"},
+    )
+    cash.update({"source_ids": cash_sources, "methodology": cash_method})
+
+    capital_raw, capital_sources, capital_method = sourced_group("capital_investment")
+    capital = period_values(
+        "capital_investment",
+        capital_raw,
+        (
+            "depreciation_amortization_usd_millions",
+            "capex_usd_millions",
+        ),
+        nonnegative={
+            "depreciation_amortization_usd_millions",
+            "capex_usd_millions",
+        },
+        positive={"capex_usd_millions"},
+    )
+    capital.update({"source_ids": capital_sources, "methodology": capital_method})
+
+    bridge_raw, bridge_sources, bridge_method = sourced_group("earnings_bridge")
+    bridge_fields = (
+        "core_operating_income_usd_millions",
+        "reported_gaap_operating_income_usd_millions",
+        "recurring_non_operating_income_usd_millions",
+        "normalized_tax_rate_percent",
+        "reported_gaap_pretax_income_usd_millions",
+        "reported_gaap_net_income_usd_millions",
+        "reported_gaap_eps_usd",
+        "reported_non_gaap_net_income_usd_millions",
+        "reported_non_gaap_eps_usd",
+        "diluted_shares_millions",
+        "buyback_attributable_weighted_average_share_reduction_millions",
+    )
+    bridge = period_values(
+        "earnings_bridge",
+        bridge_raw,
+        bridge_fields,
+        nonnegative={"buyback_attributable_weighted_average_share_reduction_millions"},
+        positive={"diluted_shares_millions"},
+    )
+    for period_key in ("prior", "current"):
+        bridge[period_key]["normalized_tax_rate_percent"] = _percentage(
+            bridge[period_key]["normalized_tax_rate_percent"],
+            field=f"earnings_quality.earnings_bridge.{period_key}.normalized_tax_rate_percent",
+        )
+    bridge.update({"source_ids": bridge_sources, "methodology": bridge_method})
+
+    required_adjustments = set(policy["required_earnings_quality_adjustment_ids"])
+    adjustments_raw = raw.get("adjustments")
+    if not isinstance(adjustments_raw, list) or len(adjustments_raw) != len(
+        required_adjustments
+    ):
+        raise ValueError("earnings quality adjustments are incomplete")
+    adjustments: list[dict[str, Any]] = []
+    adjustment_ids: set[str] = set()
+    for item in adjustments_raw:
+        if not isinstance(item, dict):
+            raise ValueError("earnings quality adjustment must be an object")
+        adjustment_id = _bounded_text(
+            item.get("adjustment_id"),
+            field="earnings_quality.adjustment_id",
+            maximum=80,
+        )
+        if adjustment_id in adjustment_ids or adjustment_id not in required_adjustments:
+            raise ValueError("earnings quality adjustment id is invalid")
+        adjustment_ids.add(adjustment_id)
+        location = item.get("income_statement_location")
+        if location not in {"operating", "non_operating", "tax"}:
+            raise ValueError(
+                f"earnings quality adjustment {adjustment_id} location is invalid"
+            )
+        parsed = {
+            field: _finite_number(
+                item.get(field), field=f"earnings_quality.{adjustment_id}.{field}"
+            )
+            for field in (
+                "prior_pretax_impact_usd_millions",
+                "current_pretax_impact_usd_millions",
+                "prior_after_tax_impact_usd_millions",
+                "current_after_tax_impact_usd_millions",
+            )
+        }
+        if location == "tax" and (
+            not math.isclose(
+                parsed["prior_pretax_impact_usd_millions"], 0.0, abs_tol=1e-12
+            )
+            or not math.isclose(
+                parsed["current_pretax_impact_usd_millions"], 0.0, abs_tol=1e-12
+            )
+        ):
+            raise ValueError("tax adjustments cannot have a pretax impact")
+        if adjustment_id == "stock_based_compensation" and any(
+            parsed[field] > 0
+            for field in (
+                "prior_pretax_impact_usd_millions",
+                "current_pretax_impact_usd_millions",
+                "prior_after_tax_impact_usd_millions",
+                "current_after_tax_impact_usd_millions",
+            )
+        ):
+            raise ValueError("stock based compensation must be represented as an expense")
+        if adjustment_id == "tax_benefit" and any(
+            parsed[field] < 0
+            for field in (
+                "prior_after_tax_impact_usd_millions",
+                "current_after_tax_impact_usd_millions",
+            )
+        ):
+            raise ValueError("tax benefit must be represented as a positive benefit")
+        if adjustment_id == "one_off_gain" and any(
+            parsed[field] < 0
+            for field in parsed
+        ):
+            raise ValueError("one-off gain must be represented as a positive gain")
+        adjustments.append(
+            {
+                "adjustment_id": adjustment_id,
+                "label": _bounded_text(
+                    item.get("label"), field=f"earnings_quality.{adjustment_id}.label"
+                ),
+                "income_statement_location": location,
+                **parsed,
+                "source_ids": _source_ids(
+                    item.get("source_ids"),
+                    field=f"earnings_quality.{adjustment_id}",
+                    registry=registry,
+                ),
+                "methodology": _bounded_text(
+                    item.get("methodology"),
+                    field=f"earnings_quality.{adjustment_id}.methodology",
+                    maximum=800,
+                ),
+            }
+        )
+    if adjustment_ids != required_adjustments:
+        raise ValueError("earnings quality adjustments are incomplete")
+    adjustments.sort(key=lambda item: item["adjustment_id"])
+
+    def require_close(actual: float, expected: float, field: str) -> None:
+        if not math.isclose(actual, expected, rel_tol=1e-9, abs_tol=1e-8):
+            raise ValueError(f"earnings quality {field} does not reconcile")
+
+    adjustment_by_id = {item["adjustment_id"]: item for item in adjustments}
+    reconciled_periods: dict[str, dict[str, float]] = {}
+    for period_key in ("prior", "current"):
+        values = bridge[period_key]
+        prefix = "prior" if period_key == "prior" else "current"
+        core_pretax = (
+            values["core_operating_income_usd_millions"]
+            + values["recurring_non_operating_income_usd_millions"]
+        )
+        core_net_income = core_pretax * (
+            1 - values["normalized_tax_rate_percent"] / 100
+        )
+        operating_adjustments = sum(
+            item[f"{prefix}_pretax_impact_usd_millions"]
+            for item in adjustments
+            if item["income_statement_location"] == "operating"
+        )
+        pretax_adjustments = sum(
+            item[f"{prefix}_pretax_impact_usd_millions"]
+            for item in adjustments
+            if item["income_statement_location"] in {"operating", "non_operating"}
+        )
+        after_tax_adjustments = sum(
+            item[f"{prefix}_after_tax_impact_usd_millions"]
+            for item in adjustments
+        )
+        expected_gaap_operating_income = (
+            values["core_operating_income_usd_millions"] + operating_adjustments
+        )
+        expected_gaap_pretax_income = core_pretax + pretax_adjustments
+        expected_gaap_net_income = core_net_income + after_tax_adjustments
+        expected_gaap_eps = (
+            expected_gaap_net_income / values["diluted_shares_millions"]
+        )
+        expected_non_gaap_eps = core_net_income / values["diluted_shares_millions"]
+        require_close(
+            values["reported_gaap_operating_income_usd_millions"],
+            expected_gaap_operating_income,
+            f"{period_key}.reported_gaap_operating_income",
+        )
+        require_close(
+            values["reported_gaap_pretax_income_usd_millions"],
+            expected_gaap_pretax_income,
+            f"{period_key}.reported_gaap_pretax_income",
+        )
+        require_close(
+            values["reported_gaap_net_income_usd_millions"],
+            expected_gaap_net_income,
+            f"{period_key}.reported_gaap_net_income",
+        )
+        require_close(
+            values["reported_gaap_eps_usd"],
+            expected_gaap_eps,
+            f"{period_key}.reported_gaap_eps",
+        )
+        require_close(
+            values["reported_non_gaap_net_income_usd_millions"],
+            core_net_income,
+            f"{period_key}.reported_non_gaap_net_income",
+        )
+        require_close(
+            values["reported_non_gaap_eps_usd"],
+            expected_non_gaap_eps,
+            f"{period_key}.reported_non_gaap_eps",
+        )
+        reconciled_periods[period_key] = {
+            "core_pretax_income_usd_millions": core_pretax,
+            "core_net_income_usd_millions": core_net_income,
+            "operating_adjustments_usd_millions": operating_adjustments,
+            "pretax_adjustments_usd_millions": pretax_adjustments,
+            "after_tax_adjustments_usd_millions": after_tax_adjustments,
+            "gaap_operating_income_usd_millions": expected_gaap_operating_income,
+            "gaap_pretax_income_usd_millions": expected_gaap_pretax_income,
+            "gaap_net_income_usd_millions": expected_gaap_net_income,
+            "gaap_eps_usd": expected_gaap_eps,
+            "non_gaap_net_income_usd_millions": core_net_income,
+            "non_gaap_eps_usd": expected_non_gaap_eps,
+        }
+
+    prior_balance = balance["prior"]
+    current_balance = balance["current"]
+    revenue_growth = _growth_percent(
+        current_balance["revenue_usd_millions"],
+        prior_balance["revenue_usd_millions"],
+    )
+
+    def balance_growth(field: str) -> dict[str, float | None]:
+        growth = _growth_percent(current_balance[field], prior_balance[field])
+        return {
+            "growth_percent": growth,
+            "minus_revenue_growth_percentage_points": (
+                growth - revenue_growth
+                if growth is not None and revenue_growth is not None
+                else None
+            ),
+            "absolute_change_usd_millions": (
+                current_balance[field] - prior_balance[field]
+            ),
+        }
+
+    current_cash = cash["current"]
+    current_gaap_net_income = reconciled_periods["current"][
+        "gaap_net_income_usd_millions"
+    ]
+    average_assets = (
+        cash["prior"]["total_assets_usd_millions"]
+        + current_cash["total_assets_usd_millions"]
+    ) / 2
+    accruals = current_gaap_net_income - current_cash[
+        "operating_cash_flow_usd_millions"
+    ]
+
+    current_capital = capital["current"]
+    prior_bridge = bridge["prior"]
+    current_bridge = bridge["current"]
+    prior_eps = reconciled_periods["prior"]["gaap_eps_usd"]
+    current_eps = reconciled_periods["current"]["gaap_eps_usd"]
+    eps_growth = _growth_percent(current_eps, prior_eps)
+    attribution_components: list[dict[str, Any]] = []
+    if eps_growth is not None:
+        denominator = prior_bridge["diluted_shares_millions"] * prior_eps
+
+        def contribution(amount_usd_millions: float) -> float:
+            return amount_usd_millions / denominator * 100
+
+        prior_tax = prior_bridge["normalized_tax_rate_percent"] / 100
+        current_tax = current_bridge["normalized_tax_rate_percent"] / 100
+        current_core_pretax = reconciled_periods["current"][
+            "core_pretax_income_usd_millions"
+        ]
+        attribution_components.extend(
+            [
+                {
+                    "driver_id": "core_operating_income_growth",
+                    "label": "Core operating income growth",
+                    "contribution_percentage_points": contribution(
+                        (
+                            current_bridge["core_operating_income_usd_millions"]
+                            - prior_bridge["core_operating_income_usd_millions"]
+                        )
+                        * (1 - prior_tax)
+                    ),
+                },
+                {
+                    "driver_id": "recurring_non_operating_change",
+                    "label": "Recurring non-operating change",
+                    "contribution_percentage_points": contribution(
+                        (
+                            current_bridge[
+                                "recurring_non_operating_income_usd_millions"
+                            ]
+                            - prior_bridge[
+                                "recurring_non_operating_income_usd_millions"
+                            ]
+                        )
+                        * (1 - prior_tax)
+                    ),
+                },
+                {
+                    "driver_id": "normalized_tax_rate_change",
+                    "label": "Normalized tax-rate change",
+                    "contribution_percentage_points": contribution(
+                        current_core_pretax * (prior_tax - current_tax)
+                    ),
+                },
+            ]
+        )
+        for adjustment in adjustments:
+            attribution_components.append(
+                {
+                    "driver_id": adjustment["adjustment_id"],
+                    "label": adjustment["label"],
+                    "contribution_percentage_points": contribution(
+                        adjustment["current_after_tax_impact_usd_millions"]
+                        - adjustment["prior_after_tax_impact_usd_millions"]
+                    ),
+                }
+            )
+        total_share_count_effect = (
+            current_gaap_net_income
+            * (
+                1 / current_bridge["diluted_shares_millions"]
+                - 1 / prior_bridge["diluted_shares_millions"]
+            )
+            / prior_eps
+            * 100
+        )
+        buyback_reduction = current_bridge[
+            "buyback_attributable_weighted_average_share_reduction_millions"
+        ]
+        shares_without_buyback = (
+            current_bridge["diluted_shares_millions"] + buyback_reduction
+        )
+        buyback_effect = (
+            current_gaap_net_income
+            * (
+                1 / current_bridge["diluted_shares_millions"]
+                - 1 / shares_without_buyback
+            )
+            / prior_eps
+            * 100
+        )
+        attribution_components.extend(
+            [
+                {
+                    "driver_id": "share_repurchase",
+                    "label": "Share-repurchase EPS effect",
+                    "contribution_percentage_points": buyback_effect,
+                },
+                {
+                    "driver_id": "other_share_count_change",
+                    "label": "Other net share-count change",
+                    "contribution_percentage_points": (
+                        total_share_count_effect - buyback_effect
+                    ),
+                },
+            ]
+        )
+        require_close(
+            sum(item["contribution_percentage_points"] for item in attribution_components),
+            eps_growth,
+            "EPS growth attribution",
+        )
+        attribution_state = "reconciled"
+    else:
+        attribution_state = "not_meaningful_prior_eps_zero"
+
+    adjustment_metrics = []
+    for adjustment in adjustments:
+        prior_pretax = abs(adjustment["prior_pretax_impact_usd_millions"])
+        current_pretax = abs(adjustment["current_pretax_impact_usd_millions"])
+        adjustment_metrics.append(
+            {
+                **adjustment,
+                "absolute_pretax_amount_growth_percent": _growth_percent(
+                    current_pretax, prior_pretax
+                ),
+                "current_absolute_pretax_percent_of_revenue": (
+                    current_pretax / current_balance["revenue_usd_millions"] * 100
+                ),
+            }
+        )
+    stock_comp = adjustment_by_id["stock_based_compensation"]
+    gaap_non_gaap_gap = (
+        _growth_percent(
+            reconciled_periods["current"]["non_gaap_eps_usd"],
+            reconciled_periods["current"]["gaap_eps_usd"],
+        )
+    )
+    buyback_component = next(
+        (
+            item["contribution_percentage_points"]
+            for item in attribution_components
+            if item["driver_id"] == "share_repurchase"
+        ),
+        None,
+    )
+    buyback_share_of_growth = (
+        buyback_component / eps_growth * 100
+        if buyback_component is not None
+        and eps_growth is not None
+        and not math.isclose(eps_growth, 0.0, abs_tol=1e-12)
+        else None
+    )
+
+    def comparison(value: float | None, reference: float = 0.0) -> str:
+        if value is None:
+            return "not_meaningful"
+        if math.isclose(value, reference, abs_tol=1e-12):
+            return "in_line"
+        return "above" if value > reference else "below"
+
+    receivables = balance_growth("accounts_receivable_usd_millions")
+    inventory = balance_growth("inventory_usd_millions")
+    contract_liabilities = balance_growth("contract_liabilities_usd_millions")
+    deferred_revenue = balance_growth("deferred_revenue_usd_millions")
+    cash_conversion_percent = (
+        current_cash["operating_cash_flow_usd_millions"]
+        / current_gaap_net_income
+        * 100
+        if not math.isclose(current_gaap_net_income, 0.0, abs_tol=1e-12)
+        else None
+    )
+    working_capital_percent_of_ocf = (
+        current_cash["working_capital_contribution_usd_millions"]
+        / current_cash["operating_cash_flow_usd_millions"]
+        * 100
+        if not math.isclose(
+            current_cash["operating_cash_flow_usd_millions"], 0.0, abs_tol=1e-12
+        )
+        else None
+    )
+    return {
+        **periods,
+        "balance_sheet_inputs": balance,
+        "cash_conversion_inputs": cash,
+        "capital_investment_inputs": capital,
+        "earnings_bridge_inputs": bridge,
+        "adjustments": adjustment_metrics,
+        "balance_sheet_growth": {
+            "revenue_growth_percent": revenue_growth,
+            "accounts_receivable": receivables,
+            "inventory": inventory,
+            "contract_liabilities": contract_liabilities,
+            "deferred_revenue": deferred_revenue,
+        },
+        "accruals_and_cash_conversion": {
+            "accruals_usd_millions": accruals,
+            "accrual_ratio_percent_of_average_assets": accruals / average_assets * 100,
+            "cash_conversion_percent": cash_conversion_percent,
+            "working_capital_contribution_usd_millions": current_cash[
+                "working_capital_contribution_usd_millions"
+            ],
+            "working_capital_contribution_percent_of_ocf": (
+                working_capital_percent_of_ocf
+            ),
+        },
+        "stock_based_compensation": {
+            "prior_expense_usd_millions": abs(
+                stock_comp["prior_pretax_impact_usd_millions"]
+            ),
+            "current_expense_usd_millions": abs(
+                stock_comp["current_pretax_impact_usd_millions"]
+            ),
+            "growth_percent": _growth_percent(
+                abs(stock_comp["current_pretax_impact_usd_millions"]),
+                abs(stock_comp["prior_pretax_impact_usd_millions"]),
+            ),
+            "percent_of_revenue": abs(
+                stock_comp["current_pretax_impact_usd_millions"]
+            )
+            / current_balance["revenue_usd_millions"]
+            * 100,
+        },
+        "gaap_to_non_gaap_reconciliation": {
+            "periods": reconciled_periods,
+            "current_non_gaap_eps_premium_percent": gaap_non_gaap_gap,
+            "equation": "GAAP net income − signed after-tax adjustments = non-GAAP core net income",
+        },
+        "capital_intensity": {
+            "prior_depreciation_to_capex_percent": capital["prior"][
+                "depreciation_amortization_usd_millions"
+            ]
+            / capital["prior"]["capex_usd_millions"]
+            * 100,
+            "current_depreciation_to_capex_percent": current_capital[
+                "depreciation_amortization_usd_millions"
+            ]
+            / current_capital["capex_usd_millions"]
+            * 100,
+            "depreciation_growth_percent": _growth_percent(
+                current_capital["depreciation_amortization_usd_millions"],
+                capital["prior"]["depreciation_amortization_usd_millions"],
+            ),
+            "capex_growth_percent": _growth_percent(
+                current_capital["capex_usd_millions"],
+                capital["prior"]["capex_usd_millions"],
+            ),
+        },
+        "eps_growth_attribution": {
+            "state": attribution_state,
+            "reported_eps_growth_percent": eps_growth,
+            "components": attribution_components,
+            "reconciled_total_percentage_points": (
+                sum(
+                    item["contribution_percentage_points"]
+                    for item in attribution_components
+                )
+                if attribution_components
+                else None
+            ),
+            "share_repurchase_contribution_percentage_points": buyback_component,
+            "share_repurchase_share_of_eps_growth_percent": buyback_share_of_growth,
+            "equation": "core operating income + recurring non-operating + normalized tax + signed adjustments + share repurchase + other share-count change",
+        },
+        "directional_diagnostics": {
+            "receivables_growth_vs_revenue": comparison(
+                receivables["minus_revenue_growth_percentage_points"]
+            ),
+            "inventory_growth_vs_revenue": comparison(
+                inventory["minus_revenue_growth_percentage_points"]
+            ),
+            "contract_liabilities_growth_vs_revenue": comparison(
+                contract_liabilities["minus_revenue_growth_percentage_points"]
+            ),
+            "deferred_revenue_growth_vs_revenue": comparison(
+                deferred_revenue["minus_revenue_growth_percentage_points"]
+            ),
+            "cash_conversion_vs_net_income": comparison(
+                cash_conversion_percent, 100.0
+            ),
+            "working_capital_cash_contribution": comparison(
+                current_cash["working_capital_contribution_usd_millions"]
+            ),
+            "accruals": comparison(accruals),
+        },
+        "methodology": _bounded_text(
+            raw.get("methodology"), field="earnings_quality.methodology", maximum=1200
+        ),
+        "source_ids": _source_ids(
+            raw.get("source_ids"), field="earnings_quality", registry=registry
+        ),
+    }
+
+
 def _valuation(
     raw: Any,
     *,
@@ -1236,6 +1915,9 @@ def build_focused_research_dossier(
     earnings = _earnings_model(
         payload.get("earnings_model"), registry=sources, policy=policy
     )
+    earnings_quality = _earnings_quality(
+        payload.get("earnings_quality"), registry=sources, policy=policy
+    )
     valuation = _valuation(
         payload.get("valuation"),
         current_price=current_price,
@@ -1282,6 +1964,7 @@ def build_focused_research_dossier(
             "expectation_chains": sorted(chains, key=lambda item: item["metric_id"]),
         },
         "earnings_model": earnings,
+        "earnings_quality": earnings_quality,
         "valuation": valuation,
         "catalyst_path": sorted(catalysts, key=lambda item: (item["window_start"], item["catalyst_id"])),
         "risk_disconfirming_evidence": risk_evidence,
@@ -1584,6 +2267,42 @@ def validate_focused_research_dossier(
                     )
             else:
                 require_close(results.get(field), expected, f"sensitivity.{field}")
+    quality = sections.get("earnings_quality")
+    if not isinstance(quality, dict):
+        raise ValueError("focused research earnings quality analysis is missing")
+    source_registry = {
+        str(item.get("source_id")): item
+        for item in dossier.get("sources", [])
+        if isinstance(item, dict) and item.get("source_id")
+    }
+    try:
+        rebuilt_quality = _earnings_quality(
+            {
+                "periods": {
+                    "prior_period": quality.get("prior_period"),
+                    "current_period": quality.get("current_period"),
+                },
+                "balance_sheet": quality.get("balance_sheet_inputs"),
+                "cash_conversion": quality.get("cash_conversion_inputs"),
+                "capital_investment": quality.get("capital_investment_inputs"),
+                "earnings_bridge": quality.get("earnings_bridge_inputs"),
+                "adjustments": quality.get("adjustments"),
+                "methodology": quality.get("methodology"),
+                "source_ids": quality.get("source_ids"),
+            },
+            registry=source_registry,
+            policy={
+                "required_earnings_quality_adjustment_ids": list(
+                    EARNINGS_QUALITY_ADJUSTMENT_IDS
+                )
+            },
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "focused research earnings quality analysis does not reconcile"
+        ) from exc
+    if rebuilt_quality != quality:
+        raise ValueError("focused research earnings quality analysis does not reconcile")
     score = sections.get("score_summary", {})
     if score.get("used_for_recommendation_gate") is not False or score.get(
         "used_for_position_sizing"
@@ -1643,15 +2362,25 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     thesis = sections["investment_thesis"]
     variant = sections["variant_view"]
     earnings = sections["earnings_model"]
+    quality = sections["earnings_quality"]
     valuation = sections["valuation"]
     risks = sections["risk_disconfirming_evidence"]
     position = sections["position_construction"]
     score = sections["score_summary"]
     earnings_cases = {item["name"]: item for item in earnings["scenarios"]}
     base_case = earnings_cases["base"]
+    quality_growth = quality["balance_sheet_growth"]
+    quality_cash = quality["accruals_and_cash_conversion"]
+    quality_eps = quality["eps_growth_attribution"]
+    attribution_by_id = {
+        item["driver_id"]: item for item in quality_eps["components"]
+    }
 
     def formatted_change(value: float | None) -> str:
         return "not meaningful" if value is None else f"{value:+.1f}%"
+
+    def formatted_points(value: float | None) -> str:
+        return "not meaningful" if value is None else f"{value:+.1f} pp"
 
     lines = [
         f"# {dossier['symbol']} Focused Research",
@@ -1719,30 +2448,78 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
             for case in earnings["sensitivity_cases"]
         ],
         "",
-        "## 4. Valuation",
+        "## 4. Earnings Quality",
+        "",
+        f"Comparison: {quality['prior_period']} → {quality['current_period']} | Reported GAAP EPS growth: {formatted_change(quality_eps['reported_eps_growth_percent'])}",
+        "",
+        "### Balance-sheet growth versus revenue",
+        "",
+        "| Metric | Growth | Gap vs revenue | Absolute change ($m) |",
+        "|---|---:|---:|---:|",
+        f"| Revenue | {formatted_change(quality_growth['revenue_growth_percent'])} | — | — |",
+        *[
+            f"| {label} | {formatted_change(quality_growth[key]['growth_percent'])} | {formatted_points(quality_growth[key]['minus_revenue_growth_percentage_points'])} | {quality_growth[key]['absolute_change_usd_millions']:+.1f} |"
+            for key, label in (
+                ("accounts_receivable", "Accounts receivable"),
+                ("inventory", "Inventory"),
+                ("contract_liabilities", "Contract liabilities"),
+                ("deferred_revenue", "Deferred revenue"),
+            )
+        ],
+        "",
+        "### Accruals and cash conversion",
+        "",
+        f"Accruals ${quality_cash['accruals_usd_millions']:+.1f}m ({quality_cash['accrual_ratio_percent_of_average_assets']:+.1f}% of average assets) | cash conversion {formatted_change(quality_cash['cash_conversion_percent'])} | working-capital contribution ${quality_cash['working_capital_contribution_usd_millions']:+.1f}m ({formatted_change(quality_cash['working_capital_contribution_percent_of_ocf'])} of OCF)",
+        f"SBC ${quality['stock_based_compensation']['current_expense_usd_millions']:.1f}m | {quality['stock_based_compensation']['percent_of_revenue']:.1f}% of revenue | growth {formatted_change(quality['stock_based_compensation']['growth_percent'])}",
+        f"D&A/CAPEX {quality['capital_intensity']['current_depreciation_to_capex_percent']:.1f}% | D&A growth {formatted_change(quality['capital_intensity']['depreciation_growth_percent'])} | CAPEX growth {formatted_change(quality['capital_intensity']['capex_growth_percent'])}",
+        "",
+        "### GAAP to non-GAAP reconciliation",
+        "",
+        f"GAAP EPS ${quality['gaap_to_non_gaap_reconciliation']['periods']['current']['gaap_eps_usd']:.2f} → non-GAAP EPS ${quality['gaap_to_non_gaap_reconciliation']['periods']['current']['non_gaap_eps_usd']:.2f} | premium {formatted_change(quality['gaap_to_non_gaap_reconciliation']['current_non_gaap_eps_premium_percent'])}",
+        "",
+        "| Adjustment | Location | Current pretax impact ($m) | Current after-tax impact ($m) | EPS growth contribution |",
+        "|---|---|---:|---:|---:|",
+        *[
+            f"| {item['label']} | {item['income_statement_location']} | {item['current_pretax_impact_usd_millions']:+.1f} | {item['current_after_tax_impact_usd_millions']:+.1f} | {formatted_points(attribution_by_id.get(item['adjustment_id'], {}).get('contribution_percentage_points'))} |"
+            for item in quality["adjustments"]
+        ],
+        "",
+        "### EPS growth attribution",
+        "",
+        "| Driver | Contribution |",
+        "|---|---:|",
+        *[
+            f"| {item['label']} | {formatted_points(item['contribution_percentage_points'])} |"
+            for item in quality_eps["components"]
+        ],
+        f"| Reconciled EPS growth | {formatted_points(quality_eps['reconciled_total_percentage_points'])} |",
+        "",
+        f"Share-repurchase contribution: {formatted_points(quality_eps['share_repurchase_contribution_percentage_points'])} ({formatted_change(quality_eps['share_repurchase_share_of_eps_growth_percent'])} of total EPS growth)",
+        "",
+        "## 5. Valuation",
         "",
         f"Probability-weighted price: ${valuation['probability_weighted_price']:.2f} | Expected return: {valuation['probability_weighted_return']:+.1%} | Bear return: {valuation['bear_case_return']:+.1%}",
         f"Reward/risk: {valuation['reward_to_risk']:.2f}" if valuation["reward_to_risk"] is not None else "Reward/risk: not meaningful",
         "",
-        "## 5. Catalyst Path",
+        "## 6. Catalyst Path",
         "",
         *[
             f"- {item['window_start']}–{item['window_end']}: {item['event']} — {item['observable']}"
             for item in sections["catalyst_path"]
         ],
         "",
-        "## 6. Risk / Disconfirming Evidence",
+        "## 7. Risk / Disconfirming Evidence",
         "",
         *[f"- Risk ({item['probability']}): {item['statement']} — monitor: {item['monitor']}" for item in risks["risks"]],
         *[f"- Contrary evidence: {item['observation']} — impact: {item['thesis_impact']}" for item in risks["contrary_evidence"]],
         "",
-        "## 7. Position Construction",
+        "## 8. Position Construction",
         "",
         f"Initial {position['initial_weight_percent']:.2f}% → target {position['target_weight_percent']:.2f}% → maximum {position['maximum_weight_percent']:.2f}%",
         f"Entry ${position['entry_price_low']:.2f}–${position['entry_price_high']:.2f} | risk budget {position['risk_budget_bps']:.0f} bps | earnings-event cap {position['earnings_event_weight_percent']:.2f}%",
         position["sizing_rationale"],
         "",
-        "## 8. Score Summary",
+        "## 9. Score Summary",
         "",
         f"Investment Conviction: {score['investment_conviction']}/100",
         score["summary"],

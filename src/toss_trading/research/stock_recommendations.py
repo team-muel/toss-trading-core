@@ -177,12 +177,16 @@ def generate_stock_recommendations(
     selected = eligible[: int(policy["maximum_screening_candidates"])]
     dossier_by_symbol: dict[str, dict[str, Any]] = {}
     stale_dossier_symbols: set[str] = set()
-    legacy_dossier_symbols: set[str] = set()
+    driver_model_upgrade_symbols: set[str] = set()
+    earnings_quality_upgrade_symbols: set[str] = set()
     for dossier in focused_research_dossiers:
         dossier_symbol = str(dossier.get("symbol") or "").upper()
         if dossier.get("schema_version") != DOSSIER_SCHEMA:
             if dossier_symbol:
-                legacy_dossier_symbols.add(dossier_symbol)
+                if dossier.get("schema_version") == "focused-research-dossier-v3":
+                    earnings_quality_upgrade_symbols.add(dossier_symbol)
+                else:
+                    driver_model_upgrade_symbols.add(dossier_symbol)
             continue
         dossier_date = date.fromisoformat(str(dossier.get("as_of_date")))
         current_date = date.fromisoformat(as_of_date)
@@ -214,7 +218,9 @@ def generate_stock_recommendations(
             focus_state = f"focused_research_{thesis.get('recommendation', 'no_view')}"
         elif item["symbol"] in stale_dossier_symbols:
             focus_state = "focused_research_stale"
-        elif item["symbol"] in legacy_dossier_symbols:
+        elif item["symbol"] in earnings_quality_upgrade_symbols:
+            focus_state = "focused_research_earnings_quality_required"
+        elif item["symbol"] in driver_model_upgrade_symbols:
             focus_state = "focused_research_driver_model_required"
         else:
             focus_state = "focused_research_required"
@@ -229,6 +235,7 @@ def generate_stock_recommendations(
         if focus_state == "buy_dossier_passed":
             valuation = sections["valuation"]
             earnings = sections["earnings_model"]
+            earnings_quality = sections["earnings_quality"]
             recommendations.append(
                 {
                     "symbol": item["symbol"],
@@ -237,6 +244,7 @@ def generate_stock_recommendations(
                     "investment_thesis": thesis,
                     "variant_view": sections["variant_view"],
                     "earnings_model": earnings,
+                    "earnings_quality": earnings_quality,
                     "valuation": valuation,
                     "catalyst_path": sections["catalyst_path"],
                     "risk_disconfirming_evidence": sections["risk_disconfirming_evidence"],
@@ -273,7 +281,7 @@ def generate_stock_recommendations(
         uuid.uuid5(uuid.NAMESPACE_URL, "stock-recommendation:" + _canonical_json(identity))
     )
     return {
-        "schema_version": "stock-recommendation-run-v4",
+        "schema_version": "stock-recommendation-run-v5",
         "recommendation_id": recommendation_id,
         "as_of_date": as_of_date,
         "code_revision": code_revision,
@@ -308,6 +316,11 @@ def generate_stock_recommendations(
                 == "focused_research_driver_model_required"
                 for item in screening_candidates
             ),
+            "earnings_quality_upgrade_required_count": sum(
+                item["focused_research_state"]
+                == "focused_research_earnings_quality_required"
+                for item in screening_candidates
+            ),
             "non_buy_dossier_count": sum(
                 item["focused_research_state"]
                 in {
@@ -328,6 +341,7 @@ def generate_stock_recommendations(
                     "investment_thesis",
                     "variant_view",
                     "earnings_model",
+                    "earnings_quality",
                     "valuation",
                     "catalyst_path",
                     "risk_disconfirming_evidence",
