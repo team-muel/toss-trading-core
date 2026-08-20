@@ -6,6 +6,7 @@ from toss_trading.research.stock_recommendations import (
     generate_stock_recommendations,
     load_recommendation_policy,
 )
+from tests.focused_research_fixtures import earnings_call_payload
 from toss_trading.research.variant_perception import (
     build_focused_research_dossier,
     load_focused_research_policy,
@@ -149,6 +150,8 @@ class StockRecommendationTest(unittest.TestCase):
             {"source_id": "customer_b", "source_type": "company_guidance", "organization": "Customer B", "observed_at": as_of, "locator": "capital plan"},
             {"source_id": "supplier", "source_type": "earnings_transcript", "organization": "Supplier Co", "observed_at": as_of, "locator": "earnings call"},
             {"source_id": "peer", "source_type": "earnings_transcript", "organization": "Peer Co", "observed_at": as_of, "locator": "earnings call"},
+            {"source_id": "aaa_prior_call", "source_type": "earnings_transcript", "organization": "AAA", "observed_at": as_of, "locator": "prior-quarter earnings call transcript"},
+            {"source_id": "aaa_current_call", "source_type": "earnings_transcript", "organization": "AAA", "observed_at": as_of, "locator": "current-quarter earnings call transcript"},
         ]
         chains = []
         for metric_id, category, consensus, implied, house in [
@@ -318,6 +321,12 @@ class StockRecommendationTest(unittest.TestCase):
                 "methodology": "Map numeric issuer signals through explicit relationships and lags, count independent organizations, and preserve contradictory evidence.",
                 "source_ids": ["filing", "customer_a", "customer_b", "supplier", "peer"],
             },
+            "earnings_call_diff": earnings_call_payload(
+                as_of=as_of,
+                prior_call_source="aaa_prior_call",
+                current_call_source="aaa_current_call",
+                primary_source="filing",
+            ),
             "valuation": {"framework": "Scenario EPS and normalized P/E cross-checked against cash flow.", "cases": [
                 {"name": "bear", "probability": 0.2, "price_target": 26.0, "method": "pe", "equation": "Bear EPS times 13x.", "assumptions": ["Multiple contracts.", "No mix premium."], "source_ids": ["px", "consensus"]},
                 {"name": "base", "probability": 0.5, "price_target": 42.0, "method": "pe", "equation": "Base EPS times 13.1x.", "assumptions": ["Normal multiple.", "Partial mix premium."], "source_ids": ["px", "consensus"]},
@@ -346,7 +355,7 @@ class StockRecommendationTest(unittest.TestCase):
             source_manifest_ids=["manifest-1"],
         )
         self.assertEqual(result["universe"]["ranked_count"], 4)
-        self.assertEqual(result["schema_version"], "stock-recommendation-run-v7")
+        self.assertEqual(result["schema_version"], "stock-recommendation-run-v8")
         self.assertEqual(len(result["screening_candidates"]), 2)
         self.assertEqual(result["screening_candidates"][0]["symbol"], "AAA")
         self.assertEqual(result["recommendations"], [])
@@ -403,6 +412,10 @@ class StockRecommendationTest(unittest.TestCase):
         self.assertEqual(
             supply_chain["cross_company_confirmation"]["state"],
             "confirmed_with_counter_signals",
+        )
+        earnings_call = result["recommendations"][0]["earnings_call_diff"]
+        self.assertEqual(
+            earnings_call["management_guidance_calibration"]["quarter_count"], 8
         )
         self.assertEqual(list(result["recommendations"][0])[-1], "score_summary")
 
@@ -521,25 +534,50 @@ class StockRecommendationTest(unittest.TestCase):
         )
         self.assertEqual(result["recommendations"], [])
 
-    def test_newest_legacy_dossier_version_controls_upgrade_queue(self):
+    def test_v6_dossier_requires_earnings_call_upgrade_without_failing_run(self):
         as_of, rows = self.rows()
-        v3 = copy.deepcopy(self.focused_dossier(as_of))
-        v3["schema_version"] = "focused-research-dossier-v3"
-        v5 = copy.deepcopy(self.focused_dossier(as_of))
-        v5["schema_version"] = "focused-research-dossier-v5"
+        legacy = copy.deepcopy(self.focused_dossier(as_of))
+        legacy["schema_version"] = "focused-research-dossier-v6"
         result = generate_stock_recommendations(
             rows,
             policy=self.policy,
             as_of_date=as_of,
             code_revision="a" * 40,
-            focused_research_dossiers=[v3, v5],
+            focused_research_dossiers=[legacy],
         )
         aaa = next(
             item for item in result["screening_candidates"] if item["symbol"] == "AAA"
         )
         self.assertEqual(
             aaa["focused_research_state"],
-            "focused_research_supply_chain_required",
+            "focused_research_earnings_call_required",
+        )
+        self.assertEqual(
+            result["recommendation_gate"]["earnings_call_upgrade_required_count"], 1
+        )
+        self.assertEqual(result["recommendations"], [])
+
+    def test_newest_legacy_dossier_version_controls_upgrade_queue(self):
+        as_of, rows = self.rows()
+        v3 = copy.deepcopy(self.focused_dossier(as_of))
+        v3["schema_version"] = "focused-research-dossier-v3"
+        v5 = copy.deepcopy(self.focused_dossier(as_of))
+        v5["schema_version"] = "focused-research-dossier-v5"
+        v6 = copy.deepcopy(self.focused_dossier(as_of))
+        v6["schema_version"] = "focused-research-dossier-v6"
+        result = generate_stock_recommendations(
+            rows,
+            policy=self.policy,
+            as_of_date=as_of,
+            code_revision="a" * 40,
+            focused_research_dossiers=[v3, v5, v6],
+        )
+        aaa = next(
+            item for item in result["screening_candidates"] if item["symbol"] == "AAA"
+        )
+        self.assertEqual(
+            aaa["focused_research_state"],
+            "focused_research_earnings_call_required",
         )
 
     def test_refuses_too_small_universe(self):

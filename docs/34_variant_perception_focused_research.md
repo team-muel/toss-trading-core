@@ -21,7 +21,7 @@
 
 ## 의사결정 메모의 고정 순서
 
-모든 `focused-research-dossier-v6`는 다음 순서를 그대로 사용한다.
+모든 `focused-research-dossier-v7`는 다음 순서를 그대로 사용한다.
 
 ```text
 Investment Thesis
@@ -29,6 +29,7 @@ Investment Thesis
   → Earnings Model
   → Earnings Quality
   → Supply-chain Read-through
+  → Earnings Call Diff / Management Calibration
   → Valuation
   → Catalyst Path
   → Risk / Disconfirming Evidence
@@ -51,6 +52,9 @@ Investment Thesis
 - 매출 대비 매출채권·재고·계약부채·이연매출 증가율과 현금전환·accrual 분석
 - GAAP/non-GAAP reconciliation과 EPS 성장의 영업·세율·조정·자사주 기여도
 - 고객·공급업체·경쟁사의 관계와 시차, 독립 1차 출처별 지지·반대 신호
+- 연속 두 earnings call의 새 표현·사라진 표현, horizon·confidence와 질문·회피 변화
+- 수치 guidance 범위 변화와 같은 지표의 직전 8개 분기 guidance 대 실제 결과
+- 과거 경영진 약속의 `met`, `missed`, `changed`, `pending` 상태와 이행률
 - Base EPS의 컨센서스·시장 내재 값 대비 차이
 - bear/base/bull 목표가격과 확률가중 기대수익
 - 날짜가 있는 촉매, 관측 변수, thesis 해소 방식
@@ -310,6 +314,34 @@ entity와 metric의 예시일 뿐이다. 실제 dossier에서는 해당 시점�
 확보하고, 총 CAPEX 중 장비 주소가능 비중·점유율·인식 시차를 별도 방법론으로 연결해야
 한다. 여러 회사가 같은 산업 데이터 한 건을 재인용한 것은 독립 확인 세 건이 아니다.
 
+## Earnings Call Diff / Management Calibration
+
+실적 콜은 현재 분기 요약문 하나로 저장하지 않는다. 대상 회사가 직접 공개한 연속 두
+분기의 earnings transcript를 사용하고, 안정적인 `topic_id`, `theme_id`, `guidance_id`로
+두 시점을 맞춘다. 각 statement에는 원문, speaker, 유형, horizon과 0~4 confidence
+annotation을 남긴다. confidence는 원문에 연결된 비교용 annotation이며 추천 점수나
+포지션 크기로 사용하지 않는다.
+
+검증기는 다음을 자동 계산한다.
+
+- 새로 등장하거나 사라진 topic과 표현
+- 같은 topic에서 추가·삭제된 단어, horizon과 confidence 변화
+- 새로 등장하거나 사라진 analyst 질문 주제
+- 답변 상태 `answered`, `partial`, `evaded`와 새로 회피된 질문
+- 동일 지표 numeric guidance의 low, high, midpoint, width 변화와 범위 확대·축소
+- 과거 약속의 `met`, `missed`, `changed`, `pending` 및 해결된 약속의 이행률
+
+경영진 보수성·공격성은 정확히 직전 8개 분기의 동일 지표·동일 단위로만 측정한다.
+각 분기 guidance low/high와 실제 결과를 비교해 range hit와 midpoint 오차를 계산하고,
+지표에서 높은 값과 낮은 값 중 어느 쪽이 유리한지도 명시한다. 평균 유리방향 오차가
+정책 threshold보다 크면 `historically_conservative`, 작으면
+`historically_aggressive`, 그 사이면 `historically_balanced`로 표시한다. 이는 경영진
+발언을 신뢰하라는 점수가 아니라 현재 guidance 해석에 붙는 과거 calibration이다.
+
+콜 날짜와 guidance 실제기간은 연결된 1차 출처의 관측일보다 늦을 수 없다. transcript가
+아닌 뉴스 요약으로 콜을 대체하거나, 8개 분기 중 빠진 값을 추정하거나, 서로 다른
+지표를 이어 붙이면 dossier 생성이 실패한다.
+
 ## 출처와 시점 규칙
 
 - 모든 출처는 `as_of_date` 이전에 관측 가능해야 한다.
@@ -365,7 +397,8 @@ python -m toss_trading.cli.research_validate_focus_dossier \
 검증기는 source 시점, source type, metric 범주, 가격 재현, gap 계산, driver-based
 earnings/cash-flow/ROIC model과 sensitivity 재계산, Earnings Quality와 EPS 성장
 attribution, GAAP/non-GAAP reconciliation, supply-chain graph 연결성, issuer-primary
-source 독립성, 지지·반대 신호 재계산, valuation, 촉매 연결, 반증 증거, 포지션 상한과
+source 독립성, 지지·반대 신호 재계산, earnings-call 언어·질문·guidance diff,
+8개 분기 management calibration과 과거 약속 이행, valuation, 촉매 연결, 반증 증거, 포지션 상한과
 추천 조건을 확인한다. 통과 결과에는
 결정적 `dossier_id`와 `content_sha256`이 붙고 동일 ID의 `.md` 메모도 생성된다. 이후
 내용이 바뀌면 추천 게이트의 hash 검사가 실패한다.

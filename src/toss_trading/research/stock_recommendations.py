@@ -181,11 +181,14 @@ def generate_stock_recommendations(
     earnings_quality_upgrade_symbols: set[str] = set()
     incremental_economics_upgrade_symbols: set[str] = set()
     supply_chain_upgrade_symbols: set[str] = set()
+    earnings_call_upgrade_symbols: set[str] = set()
     for dossier in focused_research_dossiers:
         dossier_symbol = str(dossier.get("symbol") or "").upper()
         if dossier.get("schema_version") != DOSSIER_SCHEMA:
             if dossier_symbol:
-                if dossier.get("schema_version") == "focused-research-dossier-v5":
+                if dossier.get("schema_version") == "focused-research-dossier-v6":
+                    earnings_call_upgrade_symbols.add(dossier_symbol)
+                elif dossier.get("schema_version") == "focused-research-dossier-v5":
                     supply_chain_upgrade_symbols.add(dossier_symbol)
                 elif dossier.get("schema_version") == "focused-research-dossier-v4":
                     incremental_economics_upgrade_symbols.add(dossier_symbol)
@@ -224,6 +227,8 @@ def generate_stock_recommendations(
             focus_state = f"focused_research_{thesis.get('recommendation', 'no_view')}"
         elif item["symbol"] in stale_dossier_symbols:
             focus_state = "focused_research_stale"
+        elif item["symbol"] in earnings_call_upgrade_symbols:
+            focus_state = "focused_research_earnings_call_required"
         elif item["symbol"] in supply_chain_upgrade_symbols:
             focus_state = "focused_research_supply_chain_required"
         elif item["symbol"] in incremental_economics_upgrade_symbols:
@@ -247,6 +252,7 @@ def generate_stock_recommendations(
             earnings = sections["earnings_model"]
             earnings_quality = sections["earnings_quality"]
             supply_chain = sections["supply_chain_read_through"]
+            earnings_call = sections["earnings_call_diff"]
             recommendations.append(
                 {
                     "symbol": item["symbol"],
@@ -257,6 +263,7 @@ def generate_stock_recommendations(
                     "earnings_model": earnings,
                     "earnings_quality": earnings_quality,
                     "supply_chain_read_through": supply_chain,
+                    "earnings_call_diff": earnings_call,
                     "valuation": valuation,
                     "catalyst_path": sections["catalyst_path"],
                     "risk_disconfirming_evidence": sections["risk_disconfirming_evidence"],
@@ -293,7 +300,7 @@ def generate_stock_recommendations(
         uuid.uuid5(uuid.NAMESPACE_URL, "stock-recommendation:" + _canonical_json(identity))
     )
     return {
-        "schema_version": "stock-recommendation-run-v7",
+        "schema_version": "stock-recommendation-run-v8",
         "recommendation_id": recommendation_id,
         "as_of_date": as_of_date,
         "code_revision": code_revision,
@@ -343,6 +350,11 @@ def generate_stock_recommendations(
                 == "focused_research_supply_chain_required"
                 for item in screening_candidates
             ),
+            "earnings_call_upgrade_required_count": sum(
+                item["focused_research_state"]
+                == "focused_research_earnings_call_required"
+                for item in screening_candidates
+            ),
             "non_buy_dossier_count": sum(
                 item["focused_research_state"]
                 in {
@@ -366,6 +378,7 @@ def generate_stock_recommendations(
                     "earnings_model.incremental_economics",
                     "earnings_quality",
                     "supply_chain_read_through",
+                    "earnings_call_diff",
                     "valuation",
                     "catalyst_path",
                     "risk_disconfirming_evidence",
