@@ -101,11 +101,10 @@ class StockRecommendationTest(unittest.TestCase):
             "current_price": 30.0,
             "currency": "USD",
             "price_source_ids": ["px"],
-            "market_narrative": "The market expects a modest cycle recovery with limited incremental returns.",
-            "variant_summary": "Capacity mix should lift growth, margin, and incremental returns above price-implied levels.",
+            "investment_thesis": {"statement": "Capacity mix creates an underappreciated earnings and return uplift.", "time_horizon_months": 12, "pillars": ["Capacity mix lifts growth.", "Incremental returns exceed the implied case."], "recommendation": "buy"},
+            "variant_view": {"market_expectation_summary": "The market expects a modest cycle recovery with limited incremental returns.", "our_variant_summary": "Capacity mix should lift growth, margin, and incremental returns above price-implied levels.", "expectation_chains": chains},
             "sources": sources,
-            "variant_chains": chains,
-            "catalysts": [{
+            "catalyst_path": [{
                 "catalyst_id": "earnings",
                 "window_start": as_of,
                 "window_end": as_of,
@@ -114,13 +113,22 @@ class StockRecommendationTest(unittest.TestCase):
                 "thesis_resolution": "The reported mix either closes or invalidates the modeled expectation gap.",
                 "source_ids": ["filing"],
             }],
-            "scenario_analysis": [
-                {"name": "bear", "probability": 0.2, "price_target": 20.0, "thesis": "Capacity is underutilized."},
-                {"name": "base", "probability": 0.5, "price_target": 36.0, "thesis": "Mix develops as estimated."},
-                {"name": "bull", "probability": 0.3, "price_target": 48.0, "thesis": "Demand and mix both surprise higher."},
-            ],
-            "recommendation": "buy",
-            "monitoring_plan": "Refresh consensus and reverse valuation after every earnings release.",
+            "earnings_model": {"forecast_period": "FY2027", "market_implied_eps_usd": 2.5, "market_implied_eps_source_ids": ["px", "filing"], "market_implied_eps_methodology": "Solve implied FY2027 EPS at the observed price.", "consensus_eps_usd": 2.8, "consensus_eps_source_ids": ["consensus"], "consensus_eps_methodology": "Point-in-time median FY2027 EPS.", "scenarios": [
+                {"name": "bear", "probability": 0.2, "revenue_usd_millions": 900, "gross_margin_percent": 27, "operating_margin_percent": 18, "eps_usd": 2.0, "free_cash_flow_usd_millions": 120, "capex_usd_millions": 80, "key_assumptions": ["Capacity is underused.", "Mix does not improve."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up driver model."},
+                {"name": "base", "probability": 0.5, "revenue_usd_millions": 1100, "gross_margin_percent": 32, "operating_margin_percent": 23, "eps_usd": 3.2, "free_cash_flow_usd_millions": 190, "capex_usd_millions": 70, "key_assumptions": ["Mix improves.", "Demand remains firm."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up driver model."},
+                {"name": "bull", "probability": 0.3, "revenue_usd_millions": 1300, "gross_margin_percent": 35, "operating_margin_percent": 27, "eps_usd": 4.0, "free_cash_flow_usd_millions": 250, "capex_usd_millions": 70, "key_assumptions": ["Demand accelerates.", "Pricing holds."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up driver model."},
+            ]},
+            "valuation": {"framework": "Scenario EPS and normalized P/E cross-checked against cash flow.", "cases": [
+                {"name": "bear", "probability": 0.2, "price_target": 26.0, "method": "pe", "equation": "Bear EPS times 13x.", "assumptions": ["Multiple contracts.", "No mix premium."], "source_ids": ["px", "consensus"]},
+                {"name": "base", "probability": 0.5, "price_target": 42.0, "method": "pe", "equation": "Base EPS times 13.1x.", "assumptions": ["Normal multiple.", "Partial mix premium."], "source_ids": ["px", "consensus"]},
+                {"name": "bull", "probability": 0.3, "price_target": 54.0, "method": "pe", "equation": "Bull EPS times 13.5x.", "assumptions": ["Growth persists.", "Full mix premium."], "source_ids": ["px", "consensus"]},
+            ]},
+            "risk_disconfirming_evidence": {"risks": [
+                {"risk_id": "margin", "statement": "Margin does not expand.", "probability": "medium", "impact": "EPS upside disappears.", "monitor": "Gross margin stays below 30%.", "source_ids": ["filing"]},
+                {"risk_id": "demand", "statement": "Capacity is underutilized.", "probability": "medium", "impact": "Revenue misses the base case.", "monitor": "Orders decline for two quarters.", "source_ids": ["industry"]},
+            ], "contrary_evidence": [{"evidence_id": "spend", "observation": "Capacity spend precedes demand.", "thesis_impact": "Free cash flow may weaken.", "source_ids": ["filing"]}], "monitoring_plan": "Refresh consensus and reverse valuation after every earnings release."},
+            "position_construction": {"initial_weight_percent": 1.0, "target_weight_percent": 3.0, "maximum_weight_percent": 5.0, "earnings_event_weight_percent": 1.5, "entry_price_low": 28.0, "entry_price_high": 31.0, "risk_budget_bps": 40, "sizing_rationale": "Start below target pending mix confirmation.", "add_conditions": ["Mix and margin confirm."], "reduce_conditions": ["Price reaches value before evidence."], "exit_conditions": ["Orders and margin falsify the thesis."]},
+            "score_summary": {"investment_conviction": 78, "summary": "A positive but evidence-dependent setup."},
         }
         return build_focused_research_dossier(
             payload,
@@ -138,6 +146,7 @@ class StockRecommendationTest(unittest.TestCase):
             source_manifest_ids=["manifest-1"],
         )
         self.assertEqual(result["universe"]["ranked_count"], 4)
+        self.assertEqual(result["schema_version"], "stock-recommendation-run-v3")
         self.assertEqual(len(result["screening_candidates"]), 2)
         self.assertEqual(result["screening_candidates"][0]["symbol"], "AAA")
         self.assertEqual(result["recommendations"], [])
@@ -149,6 +158,10 @@ class StockRecommendationTest(unittest.TestCase):
         self.assertFalse(result["promotion_authorized"])
         self.assertFalse(
             result["prospective_tracking"]["performance_revealed"]
+        )
+        self.assertEqual(
+            result["focused_research_queue"][0]["required_sections"][-1],
+            "score_summary",
         )
 
     def test_buy_recommendation_requires_passed_variant_perception_dossier(self):
@@ -166,8 +179,12 @@ class StockRecommendationTest(unittest.TestCase):
             "buy_dossier_passed",
         )
         self.assertGreater(
-            result["recommendations"][0]["probability_weighted_return"], 0
+            result["recommendations"][0]["valuation"]["probability_weighted_return"], 0
         )
+        earnings = result["recommendations"][0]["earnings_model"]
+        self.assertEqual(earnings["market_implied_eps_usd"], 2.5)
+        self.assertGreater(earnings["base_vs_consensus_percent"], 0)
+        self.assertEqual(list(result["recommendations"][0])[-1], "score_summary")
 
     def test_stale_dossier_returns_to_research_queue_instead_of_failing_run(self):
         as_of, rows = self.rows()

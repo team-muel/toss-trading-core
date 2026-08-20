@@ -200,14 +200,16 @@ def generate_stock_recommendations(
     screening_candidates: list[dict[str, Any]] = []
     for item in selected:
         dossier = dossier_by_symbol.get(item["symbol"])
+        sections = dossier.get("research_sections", {}) if dossier is not None else {}
+        thesis = sections.get("investment_thesis", {})
         focus_state = (
             "buy_dossier_passed"
-            if dossier is not None and dossier.get("recommendation") == "buy"
+            if dossier is not None and thesis.get("recommendation") == "buy"
             else "focused_research_required"
             if dossier is None and item["symbol"] not in stale_dossier_symbols
             else "focused_research_stale"
             if dossier is None
-            else f"focused_research_{dossier.get('recommendation', 'no_view')}"
+            else f"focused_research_{thesis.get('recommendation', 'no_view')}"
         )
         screened = {
             **item,
@@ -217,24 +219,46 @@ def generate_stock_recommendations(
             ),
         }
         screening_candidates.append(screened)
-        if focus_state == "buy_dossier_passed" and len(recommendations) < int(
-            policy["maximum_buy_recommendations"]
-        ):
+        if focus_state == "buy_dossier_passed":
+            valuation = sections["valuation"]
+            earnings = sections["earnings_model"]
+            earnings_by_name = {case["name"]: case for case in earnings["scenarios"]}
             recommendations.append(
                 {
-                    **screened,
-                    "variant_summary": dossier["variant_summary"],
-                    "probability_weighted_return": dossier["scenario_analysis"][
-                        "probability_weighted_return"
-                    ],
-                    "bear_case_return": dossier["scenario_analysis"][
-                        "bear_case_return"
-                    ],
-                    "catalyst_ids": [
-                        catalyst["catalyst_id"] for catalyst in dossier["catalysts"]
-                    ],
+                    "symbol": item["symbol"],
+                    "focused_research_state": focus_state,
+                    "focused_research_dossier_id": dossier["dossier_id"],
+                    "investment_thesis": thesis,
+                    "variant_view": sections["variant_view"],
+                    "earnings_model": {
+                        "forecast_period": earnings["forecast_period"],
+                        "market_implied_eps_usd": earnings["market_implied_eps_usd"],
+                        "consensus_eps_usd": earnings["consensus_eps_usd"],
+                        "bear_eps_usd": earnings_by_name["bear"]["eps_usd"],
+                        "base_eps_usd": earnings_by_name["base"]["eps_usd"],
+                        "bull_eps_usd": earnings_by_name["bull"]["eps_usd"],
+                        "base_vs_consensus_percent": earnings["base_vs_consensus_percent"],
+                        "base_vs_market_implied_percent": earnings["base_vs_market_implied_percent"],
+                    },
+                    "valuation": valuation,
+                    "catalyst_path": sections["catalyst_path"],
+                    "risk_disconfirming_evidence": sections["risk_disconfirming_evidence"],
+                    "position_construction": sections["position_construction"],
+                    "screening_summary": {
+                        "composite_score": item["composite_score"],
+                        "momentum_12_1": item["momentum_12_1"],
+                    },
+                    "score_summary": sections["score_summary"],
                 }
             )
+    recommendations.sort(
+        key=lambda item: (
+            -float(item["position_construction"]["target_weight_percent"]),
+            -float(item["valuation"]["probability_weighted_return"]),
+            item["symbol"],
+        )
+    )
+    recommendations = recommendations[: int(policy["maximum_buy_recommendations"])]
     manifests = sorted(set(source_manifest_ids))
     identity = {
         "as_of_date": as_of_date,
@@ -252,7 +276,7 @@ def generate_stock_recommendations(
         uuid.uuid5(uuid.NAMESPACE_URL, "stock-recommendation:" + _canonical_json(identity))
     )
     return {
-        "schema_version": "stock-recommendation-run-v2",
+        "schema_version": "stock-recommendation-run-v3",
         "recommendation_id": recommendation_id,
         "as_of_date": as_of_date,
         "code_revision": code_revision,
@@ -298,7 +322,17 @@ def generate_stock_recommendations(
                 "symbol": item["symbol"],
                 "screening_score": item["composite_score"],
                 "state": item["focused_research_state"],
-                "required_chain": [
+                "required_sections": [
+                    "investment_thesis",
+                    "variant_view",
+                    "earnings_model",
+                    "valuation",
+                    "catalyst_path",
+                    "risk_disconfirming_evidence",
+                    "position_construction",
+                    "score_summary",
+                ],
+                "required_expectation_chain": [
                     "market_consensus",
                     "price_implied_expectation",
                     "house_estimate",
