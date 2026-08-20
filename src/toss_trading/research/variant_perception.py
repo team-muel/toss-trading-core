@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-POLICY_SCHEMA = "focused-research-policy-v2"
-DOSSIER_SCHEMA = "focused-research-dossier-v2"
+POLICY_SCHEMA = "focused-research-policy-v3"
+DOSSIER_SCHEMA = "focused-research-dossier-v3"
 RESEARCH_SECTION_ORDER = [
     "investment_thesis",
     "variant_view",
@@ -64,6 +64,8 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         ("minimum_thesis_pillars", 2, 10),
         ("minimum_risks", 1, 20),
         ("minimum_contrary_evidence", 1, 20),
+        ("minimum_revenue_drivers", 1, 20),
+        ("minimum_sensitivity_cases", 1, 20),
     ):
         value = payload.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
@@ -80,6 +82,7 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
     for field in (
         "required_metric_categories",
         "allowed_units",
+        "allowed_driver_units",
         "allowed_source_types",
         "allowed_implied_methods",
         "allowed_valuation_methods",
@@ -98,6 +101,9 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "require_falsification",
         "require_bear_base_bull",
         "buy_requires_positive_expected_return",
+        "require_driver_based_earnings_model",
+        "require_cash_flow_bridge",
+        "require_incremental_roic",
     ):
         if payload.get(field) is not True:
             raise ValueError(f"focused research policy {field} must remain enabled")
@@ -131,6 +137,14 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
     )
     if not 0 < reward_to_risk <= 10:
         raise ValueError("focused research minimum_reward_to_risk is invalid")
+    maximum_shock = _finite_number(
+        payload.get("maximum_driver_sensitivity_shock_percent"),
+        field="maximum_driver_sensitivity_shock_percent",
+    )
+    if not 0 < maximum_shock <= 100:
+        raise ValueError(
+            "focused research maximum_driver_sensitivity_shock_percent is invalid"
+        )
     return payload
 
 
@@ -242,7 +256,340 @@ def _text_list(
     ]
 
 
-def _earnings_model(raw: Any, *, registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+def _percentage(
+    value: Any,
+    *,
+    field: str,
+    minimum: float = 0.0,
+    maximum: float = 100.0,
+    minimum_inclusive: bool = True,
+) -> float:
+    result = _finite_number(value, field=field)
+    lower_ok = result >= minimum if minimum_inclusive else result > minimum
+    if not lower_ok or result > maximum:
+        raise ValueError(f"{field} is outside the permitted percentage range")
+    return result
+
+
+def _calculate_driver_scenario(model: dict[str, Any]) -> dict[str, float]:
+    revenue = sum(item["revenue_usd_millions"] for item in model["revenue_drivers"])
+    gross_profit = sum(
+        item["gross_profit_usd_millions"] for item in model["revenue_drivers"]
+    )
+    gross_margin = gross_profit / revenue * 100
+    opex = model["operating_expenses"]
+    variable_opex = revenue * opex["variable_percent_of_revenue"] / 100
+    total_opex = opex["fixed_usd_millions"] + variable_opex
+    operating_income = gross_profit - total_opex
+    operating_margin = operating_income / revenue * 100
+    below_line = model["below_the_line"]
+    pretax_income = (
+        operating_income
+        - below_line["net_interest_expense_usd_millions"]
+        + below_line["other_non_operating_income_usd_millions"]
+    )
+    tax_expense = pretax_income * below_line["tax_rate_percent"] / 100
+    net_income = pretax_income - tax_expense
+    eps = net_income / below_line["diluted_shares_millions"]
+    cash = model["cash_flow"]
+    operating_cash_flow = (
+        net_income
+        + cash["depreciation_amortization_usd_millions"]
+        + cash["stock_based_compensation_usd_millions"]
+        - cash["change_in_net_working_capital_usd_millions"]
+        + cash["other_operating_cash_adjustments_usd_millions"]
+    )
+    capex = (
+        cash["maintenance_capex_usd_millions"]
+        + cash["growth_capex_usd_millions"]
+    )
+    free_cash_flow = operating_cash_flow - capex
+    capital = model["capital_efficiency"]
+    incremental_invested_capital = (
+        capital["ending_invested_capital_usd_millions"]
+        - capital["prior_period_invested_capital_usd_millions"]
+    )
+    incremental_nopat = (
+        operating_income - capital["prior_period_operating_income_usd_millions"]
+    ) * (1 - below_line["tax_rate_percent"] / 100)
+    incremental_roic = incremental_nopat / incremental_invested_capital * 100
+    return {
+        "revenue_usd_millions": revenue,
+        "gross_profit_usd_millions": gross_profit,
+        "gross_margin_percent": gross_margin,
+        "variable_operating_expense_usd_millions": variable_opex,
+        "operating_expense_usd_millions": total_opex,
+        "operating_income_usd_millions": operating_income,
+        "operating_margin_percent": operating_margin,
+        "pretax_income_usd_millions": pretax_income,
+        "tax_expense_usd_millions": tax_expense,
+        "net_income_usd_millions": net_income,
+        "eps_usd": eps,
+        "operating_cash_flow_usd_millions": operating_cash_flow,
+        "capex_usd_millions": capex,
+        "free_cash_flow_usd_millions": free_cash_flow,
+        "incremental_nopat_usd_millions": incremental_nopat,
+        "incremental_invested_capital_usd_millions": incremental_invested_capital,
+        "incremental_roic_percent": incremental_roic,
+    }
+
+
+def _driver_scenario(
+    raw: Any,
+    *,
+    registry: dict[str, dict[str, Any]],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("earnings model scenario must be an object")
+    name = raw.get("name")
+    if name not in {"bear", "base", "bull"}:
+        raise ValueError("earnings model has an invalid scenario name")
+    probability = _finite_number(raw.get("probability"), field=f"{name}.probability")
+    if not 0 < probability < 1:
+        raise ValueError(f"{name} probability is invalid")
+    raw_drivers = raw.get("revenue_drivers")
+    minimum_drivers = int(policy["minimum_revenue_drivers"])
+    if not isinstance(raw_drivers, list) or not minimum_drivers <= len(raw_drivers) <= 20:
+        raise ValueError(
+            f"{name} must contain between {minimum_drivers} and 20 revenue drivers"
+        )
+    drivers: list[dict[str, Any]] = []
+    driver_ids: set[str] = set()
+    for item in raw_drivers:
+        if not isinstance(item, dict):
+            raise ValueError(f"{name} revenue driver must be an object")
+        driver_id = _bounded_text(
+            item.get("driver_id"), field=f"{name}.driver_id", maximum=80
+        )
+        if driver_id in driver_ids:
+            raise ValueError(f"{name} revenue driver ids must be unique")
+        driver_ids.add(driver_id)
+        driver_value = _finite_number(
+            item.get("driver_value"), field=f"{name}.{driver_id}.driver_value"
+        )
+        conversion = _finite_number(
+            item.get("revenue_conversion_factor"),
+            field=f"{name}.{driver_id}.revenue_conversion_factor",
+        )
+        if driver_value <= 0 or conversion <= 0:
+            raise ValueError(f"{name} revenue driver values must be positive")
+        share = _percentage(
+            item.get("company_share_percent"),
+            field=f"{name}.{driver_id}.company_share_percent",
+            minimum_inclusive=False,
+        )
+        timing = _percentage(
+            item.get("timing_conversion_percent"),
+            field=f"{name}.{driver_id}.timing_conversion_percent",
+            minimum_inclusive=False,
+        )
+        segment_margin = _percentage(
+            item.get("gross_margin_percent"),
+            field=f"{name}.{driver_id}.gross_margin_percent",
+            minimum_inclusive=False,
+        )
+        driver_unit = _bounded_text(
+            item.get("driver_unit"),
+            field=f"{name}.{driver_id}.driver_unit",
+            maximum=80,
+        )
+        if driver_unit not in set(policy["allowed_driver_units"]):
+            raise ValueError(f"{name}.{driver_id}.driver_unit is unsupported")
+        revenue = driver_value * share / 100 * conversion * timing / 100
+        drivers.append(
+            {
+                "driver_id": driver_id,
+                "segment_name": _bounded_text(
+                    item.get("segment_name"),
+                    field=f"{name}.{driver_id}.segment_name",
+                    maximum=160,
+                ),
+                "economic_driver": _bounded_text(
+                    item.get("economic_driver"),
+                    field=f"{name}.{driver_id}.economic_driver",
+                    maximum=240,
+                ),
+                "driver_value": driver_value,
+                "driver_unit": driver_unit,
+                "company_share_percent": share,
+                "revenue_conversion_factor": conversion,
+                "timing_conversion_percent": timing,
+                "gross_margin_percent": segment_margin,
+                "revenue_usd_millions": revenue,
+                "gross_profit_usd_millions": revenue * segment_margin / 100,
+                "source_ids": _source_ids(
+                    item.get("source_ids"),
+                    field=f"{name}.{driver_id}",
+                    registry=registry,
+                ),
+                "methodology": _bounded_text(
+                    item.get("methodology"),
+                    field=f"{name}.{driver_id}.methodology",
+                    maximum=800,
+                ),
+            }
+        )
+
+    def sourced_model(section: str) -> tuple[dict[str, Any], list[str], str]:
+        value = raw.get(section)
+        if not isinstance(value, dict):
+            raise ValueError(f"{name}.{section} must be an object")
+        return (
+            value,
+            _source_ids(
+                value.get("source_ids"),
+                field=f"{name}.{section}",
+                registry=registry,
+            ),
+            _bounded_text(
+                value.get("methodology"), field=f"{name}.{section}.methodology"
+            ),
+        )
+
+    opex_raw, opex_sources, opex_method = sourced_model("operating_expenses")
+    fixed_opex = _finite_number(
+        opex_raw.get("fixed_usd_millions"), field=f"{name}.fixed_operating_expense"
+    )
+    if fixed_opex < 0:
+        raise ValueError(f"{name} fixed operating expense cannot be negative")
+    operating_expenses = {
+        "fixed_usd_millions": fixed_opex,
+        "variable_percent_of_revenue": _percentage(
+            opex_raw.get("variable_percent_of_revenue"),
+            field=f"{name}.variable_operating_expense_percent",
+        ),
+        "source_ids": opex_sources,
+        "methodology": opex_method,
+    }
+
+    below_raw, below_sources, below_method = sourced_model("below_the_line")
+    diluted_shares = _finite_number(
+        below_raw.get("diluted_shares_millions"), field=f"{name}.diluted_shares"
+    )
+    if diluted_shares <= 0:
+        raise ValueError(f"{name} diluted shares must be positive")
+    below_the_line = {
+        "net_interest_expense_usd_millions": _finite_number(
+            below_raw.get("net_interest_expense_usd_millions"),
+            field=f"{name}.net_interest_expense",
+        ),
+        "other_non_operating_income_usd_millions": _finite_number(
+            below_raw.get("other_non_operating_income_usd_millions"),
+            field=f"{name}.other_non_operating_income",
+        ),
+        "tax_rate_percent": _percentage(
+            below_raw.get("tax_rate_percent"), field=f"{name}.tax_rate"
+        ),
+        "diluted_shares_millions": diluted_shares,
+        "source_ids": below_sources,
+        "methodology": below_method,
+    }
+
+    cash_raw, cash_sources, cash_method = sourced_model("cash_flow")
+    cash_flow: dict[str, Any] = {
+        field: _finite_number(cash_raw.get(field), field=f"{name}.{field}")
+        for field in (
+            "depreciation_amortization_usd_millions",
+            "stock_based_compensation_usd_millions",
+            "change_in_net_working_capital_usd_millions",
+            "other_operating_cash_adjustments_usd_millions",
+            "maintenance_capex_usd_millions",
+            "growth_capex_usd_millions",
+        )
+    }
+    for field in (
+        "depreciation_amortization_usd_millions",
+        "stock_based_compensation_usd_millions",
+        "maintenance_capex_usd_millions",
+        "growth_capex_usd_millions",
+    ):
+        if cash_flow[field] < 0:
+            raise ValueError(f"{name}.{field} cannot be negative")
+    cash_flow.update({"source_ids": cash_sources, "methodology": cash_method})
+
+    capital_raw, capital_sources, capital_method = sourced_model("capital_efficiency")
+    capital_efficiency = {
+        field: _finite_number(capital_raw.get(field), field=f"{name}.{field}")
+        for field in (
+            "prior_period_operating_income_usd_millions",
+            "prior_period_invested_capital_usd_millions",
+            "ending_invested_capital_usd_millions",
+        )
+    }
+    if capital_efficiency["prior_period_invested_capital_usd_millions"] <= 0 or (
+        capital_efficiency["ending_invested_capital_usd_millions"]
+        <= capital_efficiency["prior_period_invested_capital_usd_millions"]
+    ):
+        raise ValueError(f"{name} requires positive incremental invested capital")
+    capital_efficiency.update(
+        {"source_ids": capital_sources, "methodology": capital_method}
+    )
+    model = {
+        "revenue_drivers": sorted(drivers, key=lambda item: item["driver_id"]),
+        "operating_expenses": operating_expenses,
+        "below_the_line": below_the_line,
+        "cash_flow": cash_flow,
+        "capital_efficiency": capital_efficiency,
+    }
+    calculated = _calculate_driver_scenario(model)
+    if calculated["revenue_usd_millions"] <= 0 or calculated["eps_usd"] <= 0:
+        raise ValueError(f"{name} calculated revenue and EPS must be positive")
+    return {
+        "name": name,
+        "probability": probability,
+        **model,
+        "income_statement": {
+            key: calculated[key]
+            for key in (
+                "revenue_usd_millions",
+                "gross_profit_usd_millions",
+                "gross_margin_percent",
+                "variable_operating_expense_usd_millions",
+                "operating_expense_usd_millions",
+                "operating_income_usd_millions",
+                "operating_margin_percent",
+                "pretax_income_usd_millions",
+                "tax_expense_usd_millions",
+                "net_income_usd_millions",
+                "eps_usd",
+            )
+        },
+        "cash_flow_bridge": {
+            key: calculated[key]
+            for key in (
+                "operating_cash_flow_usd_millions",
+                "capex_usd_millions",
+                "free_cash_flow_usd_millions",
+            )
+        },
+        "incremental_returns": {
+            key: calculated[key]
+            for key in (
+                "incremental_nopat_usd_millions",
+                "incremental_invested_capital_usd_millions",
+                "incremental_roic_percent",
+            )
+        },
+        **calculated,
+        "key_assumptions": _text_list(
+            raw.get("key_assumptions"), field=f"{name}.key_assumptions", minimum=2
+        ),
+        "source_ids": _source_ids(
+            raw.get("source_ids"), field=f"{name}.earnings_model", registry=registry
+        ),
+        "methodology": _bounded_text(
+            raw.get("methodology"), field=f"{name}.earnings_model.methodology"
+        ),
+    }
+
+
+def _earnings_model(
+    raw: Any,
+    *,
+    registry: dict[str, dict[str, Any]],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("earnings_model must be an object")
     forecast_period = _bounded_text(
@@ -273,51 +620,162 @@ def _earnings_model(raw: Any, *, registry: dict[str, dict[str, Any]]) -> dict[st
         raise ValueError("earnings_model must contain bear, base, and bull")
     scenarios: dict[str, dict[str, Any]] = {}
     for item in raw_scenarios:
-        if not isinstance(item, dict) or item.get("name") not in {"bear", "base", "bull"}:
-            raise ValueError("earnings model has an invalid scenario name")
-        name = str(item["name"])
+        scenario = _driver_scenario(item, registry=registry, policy=policy)
+        name = str(scenario["name"])
         if name in scenarios:
             raise ValueError("earnings model scenario names must be unique")
-        probability = _finite_number(item.get("probability"), field=f"{name}.probability")
-        values = {
-            field: _finite_number(item.get(field), field=f"{name}.{field}")
-            for field in (
-                "revenue_usd_millions",
-                "gross_margin_percent",
-                "operating_margin_percent",
-                "eps_usd",
-                "free_cash_flow_usd_millions",
-                "capex_usd_millions",
-            )
-        }
-        if not 0 < probability < 1 or values["revenue_usd_millions"] <= 0 or values["eps_usd"] <= 0:
-            raise ValueError(f"{name} earnings scenario values are invalid")
-        if not 0 < values["gross_margin_percent"] < 100 or not 0 < values["operating_margin_percent"] < 100:
-            raise ValueError(f"{name} earnings margins are invalid")
-        scenarios[name] = {
-            "name": name,
-            "probability": probability,
-            **values,
-            "key_assumptions": _text_list(
-                item.get("key_assumptions"),
-                field=f"{name}.key_assumptions",
-                minimum=2,
-            ),
-            "source_ids": _source_ids(
-                item.get("source_ids"), field=f"{name}.earnings_model", registry=registry
-            ),
-            "methodology": _bounded_text(
-                item.get("methodology"), field=f"{name}.earnings_model.methodology"
-            ),
-        }
+        scenarios[name] = scenario
     if set(scenarios) != {"bear", "base", "bull"}:
         raise ValueError("earnings_model must contain bear, base, and bull")
     if not math.isclose(sum(item["probability"] for item in scenarios.values()), 1.0, abs_tol=1e-9):
         raise ValueError("earnings model probabilities must sum to one")
     if not scenarios["bear"]["eps_usd"] < scenarios["base"]["eps_usd"] < scenarios["bull"]["eps_usd"]:
         raise ValueError("earnings EPS must increase from bear to bull")
+    driver_sets = [
+        {item["driver_id"] for item in scenarios[name]["revenue_drivers"]}
+        for name in ("bear", "base", "bull")
+    ]
+    if not driver_sets[0] == driver_sets[1] == driver_sets[2]:
+        raise ValueError("earnings scenarios must use the same revenue driver ids")
     ordered = [scenarios[name] for name in ("bear", "base", "bull")]
     base_eps = scenarios["base"]["eps_usd"]
+    sensitivity_raw = raw.get("sensitivity_cases")
+    minimum_sensitivities = int(policy["minimum_sensitivity_cases"])
+    if (
+        not isinstance(sensitivity_raw, list)
+        or not minimum_sensitivities <= len(sensitivity_raw) <= 20
+    ):
+        raise ValueError(
+            "earnings_model sensitivity cases do not meet the policy minimum"
+        )
+    sensitivity_cases: list[dict[str, Any]] = []
+    sensitivity_ids: set[str] = set()
+    base = scenarios["base"]
+    base_drivers = {item["driver_id"]: item for item in base["revenue_drivers"]}
+    maximum_shock = float(policy["maximum_driver_sensitivity_shock_percent"])
+    for case in sensitivity_raw:
+        if not isinstance(case, dict):
+            raise ValueError("earnings sensitivity case must be an object")
+        sensitivity_id = _bounded_text(
+            case.get("sensitivity_id"), field="sensitivity_id", maximum=80
+        )
+        if sensitivity_id in sensitivity_ids:
+            raise ValueError("earnings sensitivity ids must be unique")
+        sensitivity_ids.add(sensitivity_id)
+        shocks_raw = case.get("driver_shocks")
+        if not isinstance(shocks_raw, list) or not shocks_raw:
+            raise ValueError(f"sensitivity {sensitivity_id} requires driver shocks")
+        shocks: dict[str, float] = {}
+        for shock_raw in shocks_raw:
+            if not isinstance(shock_raw, dict):
+                raise ValueError(f"sensitivity {sensitivity_id} shock must be an object")
+            driver_id = _bounded_text(
+                shock_raw.get("driver_id"), field="sensitivity.driver_id", maximum=80
+            )
+            if driver_id not in base_drivers or driver_id in shocks:
+                raise ValueError(f"sensitivity {sensitivity_id} has an invalid driver id")
+            shock = _finite_number(
+                shock_raw.get("shock_percent"), field=f"{sensitivity_id}.shock_percent"
+            )
+            if shock == 0 or abs(shock) > maximum_shock:
+                raise ValueError(f"sensitivity {sensitivity_id} shock is outside policy")
+            shocks[driver_id] = shock
+        shocked_drivers = []
+        for driver in base["revenue_drivers"]:
+            shocked = dict(driver)
+            shock = shocks.get(driver["driver_id"], 0.0)
+            shocked["driver_value"] = driver["driver_value"] * (1 + shock / 100)
+            shocked["revenue_usd_millions"] = (
+                shocked["driver_value"]
+                * shocked["company_share_percent"]
+                / 100
+                * shocked["revenue_conversion_factor"]
+                * shocked["timing_conversion_percent"]
+                / 100
+            )
+            shocked["gross_profit_usd_millions"] = (
+                shocked["revenue_usd_millions"]
+                * shocked["gross_margin_percent"]
+                / 100
+            )
+            shocked_drivers.append(shocked)
+        shocked_model = {
+            "revenue_drivers": shocked_drivers,
+            "operating_expenses": base["operating_expenses"],
+            "below_the_line": base["below_the_line"],
+            "cash_flow": base["cash_flow"],
+            "capital_efficiency": base["capital_efficiency"],
+        }
+        shocked = _calculate_driver_scenario(shocked_model)
+
+        def percent_change(field: str) -> float | None:
+            denominator = float(base[field])
+            return (
+                (float(shocked[field]) / denominator - 1) * 100
+                if not math.isclose(denominator, 0.0, abs_tol=1e-12)
+                else None
+            )
+
+        sensitivity_cases.append(
+            {
+                "sensitivity_id": sensitivity_id,
+                "label": _bounded_text(case.get("label"), field="sensitivity.label"),
+                "base_scenario": "base",
+                "driver_shocks": [
+                    {
+                        "driver_id": driver_id,
+                        "shock_percent": shocks[driver_id],
+                        "base_driver_value": base_drivers[driver_id]["driver_value"],
+                        "shocked_driver_value": base_drivers[driver_id]["driver_value"]
+                        * (1 + shocks[driver_id] / 100),
+                    }
+                    for driver_id in sorted(shocks)
+                ],
+                "results": {
+                    "revenue_change_percent": percent_change("revenue_usd_millions"),
+                    "gross_margin_change_basis_points": (
+                        shocked["gross_margin_percent"] - base["gross_margin_percent"]
+                    )
+                    * 100,
+                    "operating_income_change_percent": percent_change(
+                        "operating_income_usd_millions"
+                    ),
+                    "operating_margin_change_basis_points": (
+                        shocked["operating_margin_percent"]
+                        - base["operating_margin_percent"]
+                    )
+                    * 100,
+                    "eps_change_percent": percent_change("eps_usd"),
+                    "operating_cash_flow_change_percent": percent_change(
+                        "operating_cash_flow_usd_millions"
+                    ),
+                    "free_cash_flow_change_percent": percent_change(
+                        "free_cash_flow_usd_millions"
+                    ),
+                    "incremental_roic_change_basis_points": (
+                        shocked["incremental_roic_percent"]
+                        - base["incremental_roic_percent"]
+                    )
+                    * 100,
+                    "base_eps_usd": base["eps_usd"],
+                    "shocked_eps_usd": shocked["eps_usd"],
+                    "base_free_cash_flow_usd_millions": base[
+                        "free_cash_flow_usd_millions"
+                    ],
+                    "shocked_free_cash_flow_usd_millions": shocked[
+                        "free_cash_flow_usd_millions"
+                    ],
+                },
+                "source_ids": _source_ids(
+                    case.get("source_ids"),
+                    field=f"sensitivity {sensitivity_id}",
+                    registry=registry,
+                ),
+                "rationale": _bounded_text(
+                    case.get("rationale"), field=f"sensitivity {sensitivity_id}.rationale"
+                ),
+            }
+        )
     return {
         "forecast_period": forecast_period,
         "market_implied_eps_usd": market_implied_eps,
@@ -332,6 +790,17 @@ def _earnings_model(raw: Any, *, registry: dict[str, dict[str, Any]]) -> dict[st
             raw.get("consensus_eps_methodology"), field="consensus_eps_methodology"
         ),
         "scenarios": ordered,
+        "sensitivity_cases": sorted(
+            sensitivity_cases, key=lambda item: item["sensitivity_id"]
+        ),
+        "model_equations": {
+            "segment_revenue": "driver value × company share × revenue conversion factor × timing conversion",
+            "operating_income": "segment gross profit − fixed operating expense − variable operating expense",
+            "eps": "(operating income − net interest expense + other non-operating income − tax) ÷ diluted shares",
+            "operating_cash_flow": "net income + D&A + stock compensation − change in net working capital + other operating cash adjustments",
+            "free_cash_flow": "operating cash flow − maintenance CAPEX − growth CAPEX",
+            "incremental_roic": "incremental NOPAT ÷ incremental invested capital",
+        },
         "base_vs_consensus_percent": (base_eps / consensus_eps - 1) * 100,
         "base_vs_market_implied_percent": (base_eps / market_implied_eps - 1) * 100,
         "probability_weighted_eps_usd": sum(
@@ -764,7 +1233,9 @@ def build_focused_research_dossier(
     if not required_categories.issubset(categories):
         raise ValueError("variant chains do not cover every required metric category")
 
-    earnings = _earnings_model(payload.get("earnings_model"), registry=sources)
+    earnings = _earnings_model(
+        payload.get("earnings_model"), registry=sources, policy=policy
+    )
     valuation = _valuation(
         payload.get("valuation"),
         current_price=current_price,
@@ -877,6 +1348,242 @@ def validate_focused_research_dossier(
     sections = dossier.get("research_sections")
     if not isinstance(sections, dict) or list(sections) != RESEARCH_SECTION_ORDER:
         raise ValueError("focused research dossier section order is incomplete")
+    earnings = sections.get("earnings_model", {})
+    scenarios_raw = earnings.get("scenarios")
+    if not isinstance(scenarios_raw, list) or len(scenarios_raw) != 3:
+        raise ValueError("focused research driver model scenarios are incomplete")
+
+    def require_close(actual: Any, expected: float, field: str) -> None:
+        value = _finite_number(actual, field=field)
+        if not math.isclose(value, expected, rel_tol=1e-9, abs_tol=1e-8):
+            raise ValueError(f"focused research driver model {field} does not reconcile")
+
+    scenarios: dict[str, dict[str, Any]] = {}
+    driver_sets: list[set[str]] = []
+    income_statement_fields = (
+        "revenue_usd_millions",
+        "gross_profit_usd_millions",
+        "gross_margin_percent",
+        "variable_operating_expense_usd_millions",
+        "operating_expense_usd_millions",
+        "operating_income_usd_millions",
+        "operating_margin_percent",
+        "pretax_income_usd_millions",
+        "tax_expense_usd_millions",
+        "net_income_usd_millions",
+        "eps_usd",
+    )
+    cash_flow_fields = (
+        "operating_cash_flow_usd_millions",
+        "capex_usd_millions",
+        "free_cash_flow_usd_millions",
+    )
+    incremental_return_fields = (
+        "incremental_nopat_usd_millions",
+        "incremental_invested_capital_usd_millions",
+        "incremental_roic_percent",
+    )
+    for scenario in scenarios_raw:
+        if not isinstance(scenario, dict) or scenario.get("name") not in {
+            "bear",
+            "base",
+            "bull",
+        }:
+            raise ValueError("focused research driver model scenario is invalid")
+        name = str(scenario["name"])
+        if name in scenarios:
+            raise ValueError("focused research driver model scenario is duplicated")
+        raw_drivers = scenario.get("revenue_drivers")
+        if not isinstance(raw_drivers, list) or not raw_drivers:
+            raise ValueError("focused research revenue driver model is missing")
+        calculated_drivers = []
+        ids: set[str] = set()
+        for driver in raw_drivers:
+            if not isinstance(driver, dict):
+                raise ValueError("focused research revenue driver is invalid")
+            driver_id = str(driver.get("driver_id"))
+            if not driver_id or driver_id in ids:
+                raise ValueError("focused research revenue driver id is invalid")
+            ids.add(driver_id)
+            revenue = (
+                _finite_number(driver.get("driver_value"), field="driver_value")
+                * _finite_number(
+                    driver.get("company_share_percent"), field="company_share_percent"
+                )
+                / 100
+                * _finite_number(
+                    driver.get("revenue_conversion_factor"),
+                    field="revenue_conversion_factor",
+                )
+                * _finite_number(
+                    driver.get("timing_conversion_percent"),
+                    field="timing_conversion_percent",
+                )
+                / 100
+            )
+            gross_profit = revenue * _finite_number(
+                driver.get("gross_margin_percent"), field="driver_gross_margin"
+            ) / 100
+            require_close(
+                driver.get("revenue_usd_millions"),
+                revenue,
+                f"{name}.{driver_id}.revenue",
+            )
+            require_close(
+                driver.get("gross_profit_usd_millions"),
+                gross_profit,
+                f"{name}.{driver_id}.gross_profit",
+            )
+            calculated_drivers.append(
+                {
+                    **driver,
+                    "revenue_usd_millions": revenue,
+                    "gross_profit_usd_millions": gross_profit,
+                }
+            )
+        model = {
+            "revenue_drivers": calculated_drivers,
+            "operating_expenses": scenario.get("operating_expenses"),
+            "below_the_line": scenario.get("below_the_line"),
+            "cash_flow": scenario.get("cash_flow"),
+            "capital_efficiency": scenario.get("capital_efficiency"),
+        }
+        if any(
+            not isinstance(model[field], dict)
+            for field in (
+                "operating_expenses",
+                "below_the_line",
+                "cash_flow",
+                "capital_efficiency",
+            )
+        ):
+            raise ValueError("focused research financial bridge is incomplete")
+        calculated = _calculate_driver_scenario(model)
+        for field, expected in calculated.items():
+            require_close(scenario.get(field), expected, f"{name}.{field}")
+        for section_name, fields in (
+            ("income_statement", income_statement_fields),
+            ("cash_flow_bridge", cash_flow_fields),
+            ("incremental_returns", incremental_return_fields),
+        ):
+            section = scenario.get(section_name)
+            if not isinstance(section, dict):
+                raise ValueError(f"focused research {section_name} is incomplete")
+            for field in fields:
+                require_close(
+                    section.get(field), calculated[field], f"{name}.{section_name}.{field}"
+                )
+        scenarios[name] = scenario
+        driver_sets.append(ids)
+    if set(scenarios) != {"bear", "base", "bull"} or not (
+        driver_sets[0] == driver_sets[1] == driver_sets[2]
+    ):
+        raise ValueError("focused research driver scenarios are not comparable")
+
+    sensitivities = earnings.get("sensitivity_cases")
+    if not isinstance(sensitivities, list) or not sensitivities:
+        raise ValueError("focused research driver sensitivities are incomplete")
+    base = scenarios["base"]
+    base_drivers = {item["driver_id"]: item for item in base["revenue_drivers"]}
+    for sensitivity in sensitivities:
+        if not isinstance(sensitivity, dict):
+            raise ValueError("focused research driver sensitivity is invalid")
+        shocks_raw = sensitivity.get("driver_shocks")
+        if not isinstance(shocks_raw, list) or not shocks_raw:
+            raise ValueError("focused research driver sensitivity shock is missing")
+        shocks = {
+            str(item.get("driver_id")): _finite_number(
+                item.get("shock_percent"), field="sensitivity.shock_percent"
+            )
+            for item in shocks_raw
+            if isinstance(item, dict)
+        }
+        if len(shocks) != len(shocks_raw) or not set(shocks).issubset(base_drivers):
+            raise ValueError("focused research driver sensitivity shock is invalid")
+        shocked_drivers = []
+        for driver_id, driver in base_drivers.items():
+            shock = shocks.get(driver_id, 0.0)
+            shocked_value = driver["driver_value"] * (1 + shock / 100)
+            revenue = (
+                shocked_value
+                * driver["company_share_percent"]
+                / 100
+                * driver["revenue_conversion_factor"]
+                * driver["timing_conversion_percent"]
+                / 100
+            )
+            shocked_drivers.append(
+                {
+                    **driver,
+                    "driver_value": shocked_value,
+                    "revenue_usd_millions": revenue,
+                    "gross_profit_usd_millions": revenue
+                    * driver["gross_margin_percent"]
+                    / 100,
+                }
+            )
+        shocked = _calculate_driver_scenario(
+            {
+                "revenue_drivers": shocked_drivers,
+                "operating_expenses": base["operating_expenses"],
+                "below_the_line": base["below_the_line"],
+                "cash_flow": base["cash_flow"],
+                "capital_efficiency": base["capital_efficiency"],
+            }
+        )
+
+        def expected_percent_change(field: str) -> float | None:
+            denominator = float(base[field])
+            return (
+                (float(shocked[field]) / denominator - 1) * 100
+                if not math.isclose(denominator, 0.0, abs_tol=1e-12)
+                else None
+            )
+
+        results = sensitivity.get("results")
+        if not isinstance(results, dict):
+            raise ValueError("focused research driver sensitivity results are missing")
+        expected_results = {
+            "revenue_change_percent": expected_percent_change("revenue_usd_millions"),
+            "gross_margin_change_basis_points": (
+                shocked["gross_margin_percent"] - base["gross_margin_percent"]
+            )
+            * 100,
+            "operating_income_change_percent": expected_percent_change(
+                "operating_income_usd_millions"
+            ),
+            "operating_margin_change_basis_points": (
+                shocked["operating_margin_percent"] - base["operating_margin_percent"]
+            )
+            * 100,
+            "eps_change_percent": expected_percent_change("eps_usd"),
+            "operating_cash_flow_change_percent": expected_percent_change(
+                "operating_cash_flow_usd_millions"
+            ),
+            "free_cash_flow_change_percent": expected_percent_change(
+                "free_cash_flow_usd_millions"
+            ),
+            "incremental_roic_change_basis_points": (
+                shocked["incremental_roic_percent"] - base["incremental_roic_percent"]
+            )
+            * 100,
+            "base_eps_usd": base["eps_usd"],
+            "shocked_eps_usd": shocked["eps_usd"],
+            "base_free_cash_flow_usd_millions": base[
+                "free_cash_flow_usd_millions"
+            ],
+            "shocked_free_cash_flow_usd_millions": shocked[
+                "free_cash_flow_usd_millions"
+            ],
+        }
+        for field, expected in expected_results.items():
+            if expected is None:
+                if results.get(field) is not None:
+                    raise ValueError(
+                        f"focused research driver sensitivity {field} does not reconcile"
+                    )
+            else:
+                require_close(results.get(field), expected, f"sensitivity.{field}")
     score = sections.get("score_summary", {})
     if score.get("used_for_recommendation_gate") is not False or score.get(
         "used_for_position_sizing"
@@ -941,6 +1648,11 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     position = sections["position_construction"]
     score = sections["score_summary"]
     earnings_cases = {item["name"]: item for item in earnings["scenarios"]}
+    base_case = earnings_cases["base"]
+
+    def formatted_change(value: float | None) -> str:
+        return "not meaningful" if value is None else f"{value:+.1f}%"
+
     lines = [
         f"# {dossier['symbol']} Focused Research",
         "",
@@ -974,6 +1686,38 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
         "",
         f"{earnings['forecast_period']} EPS — market-implied ${earnings['market_implied_eps_usd']:.2f}, consensus ${earnings['consensus_eps_usd']:.2f}, bear ${earnings_cases['bear']['eps_usd']:.2f}, base ${earnings_cases['base']['eps_usd']:.2f}, bull ${earnings_cases['bull']['eps_usd']:.2f}",
         f"Base vs consensus: {earnings['base_vs_consensus_percent']:+.1f}% | Base vs price-implied: {earnings['base_vs_market_implied_percent']:+.1f}%",
+        "",
+        "### Scenario model outputs",
+        "",
+        "| Case | Revenue ($m) | GM | Operating income ($m) | EPS | OCF ($m) | Maintenance CAPEX ($m) | Growth CAPEX ($m) | FCF ($m) | Incremental ROIC |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+        *[
+            f"| {case['name']} | {case['revenue_usd_millions']:.1f} | {case['gross_margin_percent']:.1f}% | {case['operating_income_usd_millions']:.1f} | ${case['eps_usd']:.2f} | {case['operating_cash_flow_usd_millions']:.1f} | {case['cash_flow']['maintenance_capex_usd_millions']:.1f} | {case['cash_flow']['growth_capex_usd_millions']:.1f} | {case['free_cash_flow_usd_millions']:.1f} | {case['incremental_roic_percent']:.1f}% |"
+            for case in earnings["scenarios"]
+        ],
+        "",
+        "### Base-case revenue drivers",
+        "",
+        "| Segment | Economic driver | Driver value | Share | Revenue conversion | Timing | Revenue ($m) | Segment GM |",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
+        *[
+            f"| {driver['segment_name']} | {driver['economic_driver']} | {driver['driver_value']:.1f} {driver['driver_unit']} | {driver['company_share_percent']:.1f}% | {driver['revenue_conversion_factor']:.4f} | {driver['timing_conversion_percent']:.1f}% | {driver['revenue_usd_millions']:.1f} | {driver['gross_margin_percent']:.1f}% |"
+            for driver in base_case["revenue_drivers"]
+        ],
+        "",
+        "### Base-case financial bridge",
+        "",
+        f"Revenue ${base_case['revenue_usd_millions']:.1f}m → gross profit ${base_case['gross_profit_usd_millions']:.1f}m → operating expense ${base_case['operating_expense_usd_millions']:.1f}m → operating income ${base_case['operating_income_usd_millions']:.1f}m → tax ${base_case['tax_expense_usd_millions']:.1f}m → net income ${base_case['net_income_usd_millions']:.1f}m → EPS ${base_case['eps_usd']:.2f}",
+        f"Net income ${base_case['net_income_usd_millions']:.1f}m → OCF ${base_case['operating_cash_flow_usd_millions']:.1f}m → maintenance CAPEX ${base_case['cash_flow']['maintenance_capex_usd_millions']:.1f}m + growth CAPEX ${base_case['cash_flow']['growth_capex_usd_millions']:.1f}m → FCF ${base_case['free_cash_flow_usd_millions']:.1f}m → incremental ROIC {base_case['incremental_roic_percent']:.1f}%",
+        "",
+        "### Driver sensitivities",
+        "",
+        "| Shock | Revenue impact | Operating income impact | EPS impact | OCF impact | FCF impact | Incremental ROIC impact |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+        *[
+            f"| {case['label']} | {formatted_change(case['results']['revenue_change_percent'])} | {formatted_change(case['results']['operating_income_change_percent'])} | {formatted_change(case['results']['eps_change_percent'])} | {formatted_change(case['results']['operating_cash_flow_change_percent'])} | {formatted_change(case['results']['free_cash_flow_change_percent'])} | {case['results']['incremental_roic_change_basis_points']:+.0f} bps |"
+            for case in earnings["sensitivity_cases"]
+        ],
         "",
         "## 4. Valuation",
         "",

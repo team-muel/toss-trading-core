@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from toss_trading.research.variant_perception import (
+    DOSSIER_SCHEMA,
     validate_focused_research_dossier,
 )
 
@@ -176,8 +177,13 @@ def generate_stock_recommendations(
     selected = eligible[: int(policy["maximum_screening_candidates"])]
     dossier_by_symbol: dict[str, dict[str, Any]] = {}
     stale_dossier_symbols: set[str] = set()
+    legacy_dossier_symbols: set[str] = set()
     for dossier in focused_research_dossiers:
         dossier_symbol = str(dossier.get("symbol") or "").upper()
+        if dossier.get("schema_version") != DOSSIER_SCHEMA:
+            if dossier_symbol:
+                legacy_dossier_symbols.add(dossier_symbol)
+            continue
         dossier_date = date.fromisoformat(str(dossier.get("as_of_date")))
         current_date = date.fromisoformat(as_of_date)
         if dossier_date > current_date:
@@ -202,15 +208,16 @@ def generate_stock_recommendations(
         dossier = dossier_by_symbol.get(item["symbol"])
         sections = dossier.get("research_sections", {}) if dossier is not None else {}
         thesis = sections.get("investment_thesis", {})
-        focus_state = (
-            "buy_dossier_passed"
-            if dossier is not None and thesis.get("recommendation") == "buy"
-            else "focused_research_required"
-            if dossier is None and item["symbol"] not in stale_dossier_symbols
-            else "focused_research_stale"
-            if dossier is None
-            else f"focused_research_{thesis.get('recommendation', 'no_view')}"
-        )
+        if dossier is not None and thesis.get("recommendation") == "buy":
+            focus_state = "buy_dossier_passed"
+        elif dossier is not None:
+            focus_state = f"focused_research_{thesis.get('recommendation', 'no_view')}"
+        elif item["symbol"] in stale_dossier_symbols:
+            focus_state = "focused_research_stale"
+        elif item["symbol"] in legacy_dossier_symbols:
+            focus_state = "focused_research_driver_model_required"
+        else:
+            focus_state = "focused_research_required"
         screened = {
             **item,
             "focused_research_state": focus_state,
@@ -222,7 +229,6 @@ def generate_stock_recommendations(
         if focus_state == "buy_dossier_passed":
             valuation = sections["valuation"]
             earnings = sections["earnings_model"]
-            earnings_by_name = {case["name"]: case for case in earnings["scenarios"]}
             recommendations.append(
                 {
                     "symbol": item["symbol"],
@@ -230,16 +236,7 @@ def generate_stock_recommendations(
                     "focused_research_dossier_id": dossier["dossier_id"],
                     "investment_thesis": thesis,
                     "variant_view": sections["variant_view"],
-                    "earnings_model": {
-                        "forecast_period": earnings["forecast_period"],
-                        "market_implied_eps_usd": earnings["market_implied_eps_usd"],
-                        "consensus_eps_usd": earnings["consensus_eps_usd"],
-                        "bear_eps_usd": earnings_by_name["bear"]["eps_usd"],
-                        "base_eps_usd": earnings_by_name["base"]["eps_usd"],
-                        "bull_eps_usd": earnings_by_name["bull"]["eps_usd"],
-                        "base_vs_consensus_percent": earnings["base_vs_consensus_percent"],
-                        "base_vs_market_implied_percent": earnings["base_vs_market_implied_percent"],
-                    },
+                    "earnings_model": earnings,
                     "valuation": valuation,
                     "catalyst_path": sections["catalyst_path"],
                     "risk_disconfirming_evidence": sections["risk_disconfirming_evidence"],
@@ -276,7 +273,7 @@ def generate_stock_recommendations(
         uuid.uuid5(uuid.NAMESPACE_URL, "stock-recommendation:" + _canonical_json(identity))
     )
     return {
-        "schema_version": "stock-recommendation-run-v3",
+        "schema_version": "stock-recommendation-run-v4",
         "recommendation_id": recommendation_id,
         "as_of_date": as_of_date,
         "code_revision": code_revision,
@@ -304,6 +301,11 @@ def generate_stock_recommendations(
             ),
             "stale_dossier_count": sum(
                 item["focused_research_state"] == "focused_research_stale"
+                for item in screening_candidates
+            ),
+            "driver_model_upgrade_required_count": sum(
+                item["focused_research_state"]
+                == "focused_research_driver_model_required"
                 for item in screening_candidates
             ),
             "non_buy_dossier_count": sum(

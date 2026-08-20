@@ -56,7 +56,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/29_daily_autonomous_research_operation.md` | 일일 자율 연구, 데이터 전진 조건, 중복 메일 억제 운영 규칙 |
 | `docs/32_three_axis_reinforcement.md` | 활성 release 증거, 연구 신원 격리, persistent paper 운영 기준 |
 | `docs/33_broad_stock_recommendations.md` | 2,000~3,000개 미국 주식 스크리닝·추천·전향 추적 기준 |
-| `docs/34_variant_perception_focused_research.md` | 시장 컨센서스·가격 내재 기대·자체 추정·격차·촉매를 강제하는 집중연구 기준 |
+| `docs/34_variant_perception_focused_research.md` | 시장 기대 역산과 driver-based 손익·현금흐름·증분 ROIC·민감도를 강제하는 집중연구 기준 |
 
 ## Current Operating Snapshot — 2026-08-08
 
@@ -189,4 +189,5 @@ ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙
 집중연구 결과는 Investment Thesis → Variant View → Earnings Model → Valuation →
 Catalyst Path → Risk/Disconfirming Evidence → Position Construction 순서로 기록합니다.
 Investment Conviction 점수는 추천이나 비중 산정에 사용하지 않고 마지막 요약에만
-표시합니다.
+표시합니다. Earnings Model의 매출·EPS·OCF·FCF·증분 ROIC는 segment driver에서
+계산하며, 경제 driver 충격이 EPS에 미치는 영향도 같은 모델로 재계산합니다.

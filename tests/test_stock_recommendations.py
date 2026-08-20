@@ -95,6 +95,68 @@ class StockRecommendationTest(unittest.TestCase):
                 "falsification_criteria": ["Two consecutive quarters miss the disclosed capacity ramp."],
                 "catalyst_ids": ["earnings"],
             })
+
+        def scenario(name, probability, scale, margin_delta, fixed_opex):
+            drivers = []
+            for driver_id, segment_name, driver_value, share, gross_margin in [
+                ("core", "Core systems", 1000, 60, 35),
+                ("growth", "Growth systems", 1000, 50, 30),
+            ]:
+                drivers.append({
+                    "driver_id": driver_id,
+                    "segment_name": segment_name,
+                    "economic_driver": f"{segment_name} addressable demand",
+                    "driver_value": driver_value * scale,
+                    "driver_unit": "usd_millions",
+                    "company_share_percent": share,
+                    "revenue_conversion_factor": 1.0,
+                    "timing_conversion_percent": 100.0,
+                    "gross_margin_percent": gross_margin + margin_delta,
+                    "source_ids": ["filing", "industry"],
+                    "methodology": "Addressable demand multiplied by share and timing.",
+                })
+            return {
+                "name": name,
+                "probability": probability,
+                "revenue_drivers": drivers,
+                "operating_expenses": {
+                    "fixed_usd_millions": fixed_opex,
+                    "variable_percent_of_revenue": 5.0,
+                    "source_ids": ["filing"],
+                    "methodology": "Fixed operating costs plus a revenue-linked pool.",
+                },
+                "below_the_line": {
+                    "net_interest_expense_usd_millions": 5,
+                    "other_non_operating_income_usd_millions": 0,
+                    "tax_rate_percent": 20,
+                    "diluted_shares_millions": 55,
+                    "source_ids": ["filing"],
+                    "methodology": "Normalized tax rate and current diluted share base.",
+                },
+                "cash_flow": {
+                    "depreciation_amortization_usd_millions": 30,
+                    "stock_based_compensation_usd_millions": 10,
+                    "change_in_net_working_capital_usd_millions": 12 * scale,
+                    "other_operating_cash_adjustments_usd_millions": 0,
+                    "maintenance_capex_usd_millions": 30,
+                    "growth_capex_usd_millions": 40,
+                    "source_ids": ["filing"],
+                    "methodology": "Net income to OCF bridge with split CAPEX.",
+                },
+                "capital_efficiency": {
+                    "prior_period_operating_income_usd_millions": 150,
+                    "prior_period_invested_capital_usd_millions": 800,
+                    "ending_invested_capital_usd_millions": 1000,
+                    "source_ids": ["filing"],
+                    "methodology": "Incremental NOPAT divided by incremental invested capital.",
+                },
+                "key_assumptions": [
+                    "Demand and share are modeled independently.",
+                    "Cash conversion follows the explicit bridge.",
+                ],
+                "source_ids": ["filing", "industry"],
+                "methodology": "Bottom-up driver model.",
+            }
         payload = {
             "symbol": "AAA",
             "as_of_date": as_of,
@@ -114,10 +176,16 @@ class StockRecommendationTest(unittest.TestCase):
                 "source_ids": ["filing"],
             }],
             "earnings_model": {"forecast_period": "FY2027", "market_implied_eps_usd": 2.5, "market_implied_eps_source_ids": ["px", "filing"], "market_implied_eps_methodology": "Solve implied FY2027 EPS at the observed price.", "consensus_eps_usd": 2.8, "consensus_eps_source_ids": ["consensus"], "consensus_eps_methodology": "Point-in-time median FY2027 EPS.", "scenarios": [
-                {"name": "bear", "probability": 0.2, "revenue_usd_millions": 900, "gross_margin_percent": 27, "operating_margin_percent": 18, "eps_usd": 2.0, "free_cash_flow_usd_millions": 120, "capex_usd_millions": 80, "key_assumptions": ["Capacity is underused.", "Mix does not improve."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up driver model."},
-                {"name": "base", "probability": 0.5, "revenue_usd_millions": 1100, "gross_margin_percent": 32, "operating_margin_percent": 23, "eps_usd": 3.2, "free_cash_flow_usd_millions": 190, "capex_usd_millions": 70, "key_assumptions": ["Mix improves.", "Demand remains firm."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up driver model."},
-                {"name": "bull", "probability": 0.3, "revenue_usd_millions": 1300, "gross_margin_percent": 35, "operating_margin_percent": 27, "eps_usd": 4.0, "free_cash_flow_usd_millions": 250, "capex_usd_millions": 70, "key_assumptions": ["Demand accelerates.", "Pricing holds."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up driver model."},
-            ]},
+                scenario("bear", 0.2, 0.82, -3.0, 80),
+                scenario("base", 0.5, 1.0, 0.0, 80),
+                scenario("bull", 0.3, 1.18, 3.0, 85),
+            ], "sensitivity_cases": [{
+                "sensitivity_id": "growth_demand_plus_10",
+                "label": "Growth demand +10%",
+                "driver_shocks": [{"driver_id": "growth", "shock_percent": 10.0}],
+                "source_ids": ["filing", "industry"],
+                "rationale": "Measure the EPS and FCF flow-through from the growth demand driver.",
+            }]},
             "valuation": {"framework": "Scenario EPS and normalized P/E cross-checked against cash flow.", "cases": [
                 {"name": "bear", "probability": 0.2, "price_target": 26.0, "method": "pe", "equation": "Bear EPS times 13x.", "assumptions": ["Multiple contracts.", "No mix premium."], "source_ids": ["px", "consensus"]},
                 {"name": "base", "probability": 0.5, "price_target": 42.0, "method": "pe", "equation": "Base EPS times 13.1x.", "assumptions": ["Normal multiple.", "Partial mix premium."], "source_ids": ["px", "consensus"]},
@@ -146,7 +214,7 @@ class StockRecommendationTest(unittest.TestCase):
             source_manifest_ids=["manifest-1"],
         )
         self.assertEqual(result["universe"]["ranked_count"], 4)
-        self.assertEqual(result["schema_version"], "stock-recommendation-run-v3")
+        self.assertEqual(result["schema_version"], "stock-recommendation-run-v4")
         self.assertEqual(len(result["screening_candidates"]), 2)
         self.assertEqual(result["screening_candidates"][0]["symbol"], "AAA")
         self.assertEqual(result["recommendations"], [])
@@ -184,6 +252,10 @@ class StockRecommendationTest(unittest.TestCase):
         earnings = result["recommendations"][0]["earnings_model"]
         self.assertEqual(earnings["market_implied_eps_usd"], 2.5)
         self.assertGreater(earnings["base_vs_consensus_percent"], 0)
+        self.assertEqual(len(earnings["scenarios"][1]["revenue_drivers"]), 2)
+        self.assertGreater(
+            earnings["sensitivity_cases"][0]["results"]["eps_change_percent"], 0
+        )
         self.assertEqual(list(result["recommendations"][0])[-1], "score_summary")
 
     def test_stale_dossier_returns_to_research_queue_instead_of_failing_run(self):
@@ -202,6 +274,29 @@ class StockRecommendationTest(unittest.TestCase):
             item for item in result["screening_candidates"] if item["symbol"] == "AAA"
         )
         self.assertEqual(aaa["focused_research_state"], "focused_research_stale")
+
+    def test_legacy_dossier_requires_driver_model_upgrade_without_failing_run(self):
+        as_of, rows = self.rows()
+        legacy = copy.deepcopy(self.focused_dossier(as_of))
+        legacy["schema_version"] = "focused-research-dossier-v2"
+        result = generate_stock_recommendations(
+            rows,
+            policy=self.policy,
+            as_of_date=as_of,
+            code_revision="a" * 40,
+            focused_research_dossiers=[legacy],
+        )
+        aaa = next(
+            item for item in result["screening_candidates"] if item["symbol"] == "AAA"
+        )
+        self.assertEqual(
+            aaa["focused_research_state"],
+            "focused_research_driver_model_required",
+        )
+        self.assertEqual(
+            result["recommendation_gate"]["driver_model_upgrade_required_count"], 1
+        )
+        self.assertEqual(result["recommendations"], [])
 
     def test_refuses_too_small_universe(self):
         as_of, rows = self.rows()
