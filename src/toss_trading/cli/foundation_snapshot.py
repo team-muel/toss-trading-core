@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help=(
             "Read a bounded, overlapping CLOSED-order window. Enabled by default "
-            "under the approved OpenAPI 1.2.13 contract."
+            "under the approved OpenAPI 1.2.14 contract."
         ),
     )
     parser.add_argument(

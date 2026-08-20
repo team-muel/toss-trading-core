@@ -7,7 +7,7 @@ from scripts.check_toss_openapi import verify_openapi_document
 
 def contract_fixture() -> tuple[dict, dict, bytes]:
     document = {
-        "info": {"version": "1.2.13"},
+        "info": {"version": "1.2.14"},
         "paths": {
             "/api/v1/accounts": {"get": {}},
             "/api/v1/conditional-orders": {"get": {}, "post": {}},
@@ -17,7 +17,7 @@ def contract_fixture() -> tuple[dict, dict, bytes]:
     digest = hashlib.sha256(body).hexdigest()
     policy = {
         "runtime": {
-            "toss_openapi_schema_version": "1.2.13",
+            "toss_openapi_schema_version": "1.2.14",
             "toss_openapi_schema_hash": digest,
             "toss_openapi_schema_hash_source": "https://example.invalid/openapi.json",
             "broker_capabilities": {
@@ -28,7 +28,7 @@ def contract_fixture() -> tuple[dict, dict, bytes]:
         }
     }
     review = {
-        "approved_version": "1.2.13",
+        "approved_version": "1.2.14",
         "approved_sha256": digest,
         "source": "https://example.invalid/openapi.json",
         "required_operations": {"/api/v1/accounts": ["get"]},
@@ -47,7 +47,7 @@ class TossOpenApiContractTest(unittest.TestCase):
 
     def test_version_operation_and_enabled_write_drift_are_rejected(self):
         policy, review, body = contract_fixture()
-        policy["runtime"]["toss_openapi_schema_version"] = "1.2.14"
+        policy["runtime"]["toss_openapi_schema_version"] = "1.2.15"
         policy["runtime"]["broker_capabilities"]["conditional_order_entry"][
             "enabled"
         ] = True

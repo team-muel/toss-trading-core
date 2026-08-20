@@ -26,7 +26,7 @@ Toss API가 더 넓은 상품을 기술적으로 지원하는 것과 이 시스�
 
 | 순서 | 게이트 | 완료 증거 | 현재 상태 |
 | --- | --- | --- | --- |
-| 1 | 공식 계약 고정 | OpenAPI 1.2.13 version/hash/operation 검사, CI 일일 drift 검사 | 구현 |
+| 1 | 공식 계약 고정 | OpenAPI 1.2.14 version/hash/operation 검사, CI 일일 drift 검사 | 구현 |
 | 2 | 주문 연속성 | OPEN + 최근 7일 CLOSED 중첩 수집, 정확한 주문 상세 | 구현 |
 | 3 | 승인-주문 결속 | 계좌·스냅샷·정책·수량·가격의 동일 intent hash, 30초 만료 | 구현 |
 | 4 | 현금·대사 완결성 | 통화별 cash genesis, execution delta, 미해결 BLOCK 0 | `v2-live-readiness` 증거 필요 |

@@ -66,7 +66,7 @@
 - [ ] 내부 장부와 Toss holdings 대사
 - [x] `/oauth2/token`이 `access_denied` 또는 IP 제한 없이 성공
 - [ ] OPEN 주문 목록과 내부 open order ledger 대사
-- [x] CLOSED 목록은 OpenAPI 1.2.13에 따라 정기 runner에서 7일 중첩 window로 대사
+- [x] CLOSED 목록은 OpenAPI 1.2.14에 따라 정기 runner에서 7일 중첩 window로 대사
 - [x] OPEN 또는 검증된 CLOSED 복구 경로의 정확한 `orderId` 상세로 종료 상태 검증
 - [x] 부분체결 snapshot/delta 증분 처리와 synthetic 회귀 테스트
 - [ ] `clientOrderId`를 모든 주문에 강제

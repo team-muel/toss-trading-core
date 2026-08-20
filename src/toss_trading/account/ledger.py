@@ -482,7 +482,7 @@ class AccountLedger:
             INSERT INTO snapshot_run (
               run_id, account_seq, target_order_id, started_at, status, schema_version,
               normalizer_version, policy_hash, code_revision, created_at
-            ) VALUES (?, ?, ?, ?, 'RUNNING', 1, 'toss-openapi-1.2.13', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, 'RUNNING', 1, 'toss-openapi-1.2.14', ?, ?, ?)
             """,
             (run_id, account_seq, target_order_id, now, policy_hash, code_revision, now),
         )
