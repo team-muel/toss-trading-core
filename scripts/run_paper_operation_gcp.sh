@@ -10,7 +10,7 @@ RESEARCH_RUNTIME_ROOT="${RESEARCH_RUNTIME_ROOT:-/home/seoje/toss-trading/researc
 PAPER_RUNTIME_ROOT="${PAPER_RUNTIME_ROOT:-/home/seoje/toss-trading/paper-runtime}"
 LOCK_PATH="${PAPER_LOCK_PATH:-${PAPER_RUNTIME_ROOT}/paper_operation.lock}"
 JSON_LOG_PATH="${PAPER_JSON_LOG_PATH:-${PAPER_RUNTIME_ROOT}/paper_operation.jsonl}"
-CALIBRATION_PATH="${RESEARCH_EXECUTION_COST_CALIBRATION:-${PAPER_RUNTIME_ROOT}/input/research_execution_cost_calibration.json}"
+CALIBRATION_PATH="${PAPER_RUNTIME_ROOT}/input/research_execution_cost_calibration.json"
 CALIBRATION_SECRET="${RESEARCH_EXECUTION_COST_CALIBRATION_SECRET:-research-execution-cost-calibration}"
 LATEST_DAILY="${RESEARCH_RUNTIME_ROOT}/latest-daily"
 
