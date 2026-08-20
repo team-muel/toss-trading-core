@@ -9,8 +9,18 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-POLICY_SCHEMA = "focused-research-policy-v1"
-DOSSIER_SCHEMA = "focused-research-dossier-v1"
+POLICY_SCHEMA = "focused-research-policy-v2"
+DOSSIER_SCHEMA = "focused-research-dossier-v2"
+RESEARCH_SECTION_ORDER = [
+    "investment_thesis",
+    "variant_view",
+    "earnings_model",
+    "valuation",
+    "catalyst_path",
+    "risk_disconfirming_evidence",
+    "position_construction",
+    "score_summary",
+]
 
 
 def _canonical_json(value: Any) -> str:
@@ -51,6 +61,9 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         ("maximum_consensus_age_days", 1, 180),
         ("maximum_dossier_age_days", 1, 90),
         ("maximum_catalyst_horizon_days", 1, 1095),
+        ("minimum_thesis_pillars", 2, 10),
+        ("minimum_risks", 1, 20),
+        ("minimum_contrary_evidence", 1, 20),
     ):
         value = payload.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
@@ -69,6 +82,7 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "allowed_units",
         "allowed_source_types",
         "allowed_implied_methods",
+        "allowed_valuation_methods",
     ):
         value = payload.get(field)
         if (
@@ -90,6 +104,33 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
     for field in ("execution_authorized", "promotion_authorized"):
         if payload.get(field) is not False:
             raise ValueError(f"focused research policy {field} must remain disabled")
+    for field in (
+        "score_may_gate_recommendation",
+        "score_may_size_position",
+    ):
+        if payload.get(field) is not False:
+            raise ValueError(f"focused research policy {field} must remain disabled")
+    weight_limits = [
+        _finite_number(payload.get(field), field=field)
+        for field in (
+            "maximum_initial_weight_percent",
+            "maximum_target_weight_percent",
+            "maximum_single_name_weight_percent",
+        )
+    ]
+    if not 0 < weight_limits[0] <= weight_limits[1] <= weight_limits[2] <= 25:
+        raise ValueError("focused research position weight limits are invalid")
+    event_limit = _finite_number(
+        payload.get("maximum_earnings_event_weight_percent"),
+        field="maximum_earnings_event_weight_percent",
+    )
+    if not 0 < event_limit <= weight_limits[2]:
+        raise ValueError("focused research earnings event weight limit is invalid")
+    reward_to_risk = _finite_number(
+        payload.get("minimum_reward_to_risk"), field="minimum_reward_to_risk"
+    )
+    if not 0 < reward_to_risk <= 10:
+        raise ValueError("focused research minimum_reward_to_risk is invalid")
     return payload
 
 
@@ -186,47 +227,304 @@ def _estimate(
     }
 
 
-def _scenario_analysis(raw: Any, *, current_price: float) -> dict[str, Any]:
-    if not isinstance(raw, list) or len(raw) != 3:
-        raise ValueError("scenario_analysis must contain bear, base, and bull")
+def _text_list(
+    raw: Any,
+    *,
+    field: str,
+    minimum: int = 1,
+    maximum: int = 12,
+) -> list[str]:
+    if not isinstance(raw, list) or not minimum <= len(raw) <= maximum:
+        raise ValueError(f"{field} must contain between {minimum} and {maximum} items")
+    return [
+        _bounded_text(item, field=field, maximum=600)
+        for item in raw
+    ]
+
+
+def _earnings_model(raw: Any, *, registry: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("earnings_model must be an object")
+    forecast_period = _bounded_text(
+        raw.get("forecast_period"), field="earnings_model.forecast_period", maximum=40
+    )
+    market_implied_eps = _finite_number(
+        raw.get("market_implied_eps_usd"), field="market_implied_eps_usd"
+    )
+    consensus_eps = _finite_number(
+        raw.get("consensus_eps_usd"), field="consensus_eps_usd"
+    )
+    if market_implied_eps <= 0 or consensus_eps <= 0:
+        raise ValueError("earnings model EPS anchors must be positive")
+    market_implied_source_ids = _source_ids(
+        raw.get("market_implied_eps_source_ids"),
+        field="market_implied_eps",
+        registry=registry,
+        required_type="market_price",
+    )
+    consensus_source_ids = _source_ids(
+        raw.get("consensus_eps_source_ids"),
+        field="consensus_eps",
+        registry=registry,
+        required_type="consensus_dataset",
+    )
+    raw_scenarios = raw.get("scenarios")
+    if not isinstance(raw_scenarios, list) or len(raw_scenarios) != 3:
+        raise ValueError("earnings_model must contain bear, base, and bull")
     scenarios: dict[str, dict[str, Any]] = {}
-    for item in raw:
+    for item in raw_scenarios:
         if not isinstance(item, dict) or item.get("name") not in {"bear", "base", "bull"}:
-            raise ValueError("scenario analysis has an invalid name")
+            raise ValueError("earnings model has an invalid scenario name")
         name = str(item["name"])
         if name in scenarios:
-            raise ValueError("scenario analysis names must be unique")
+            raise ValueError("earnings model scenario names must be unique")
+        probability = _finite_number(item.get("probability"), field=f"{name}.probability")
+        values = {
+            field: _finite_number(item.get(field), field=f"{name}.{field}")
+            for field in (
+                "revenue_usd_millions",
+                "gross_margin_percent",
+                "operating_margin_percent",
+                "eps_usd",
+                "free_cash_flow_usd_millions",
+                "capex_usd_millions",
+            )
+        }
+        if not 0 < probability < 1 or values["revenue_usd_millions"] <= 0 or values["eps_usd"] <= 0:
+            raise ValueError(f"{name} earnings scenario values are invalid")
+        if not 0 < values["gross_margin_percent"] < 100 or not 0 < values["operating_margin_percent"] < 100:
+            raise ValueError(f"{name} earnings margins are invalid")
+        scenarios[name] = {
+            "name": name,
+            "probability": probability,
+            **values,
+            "key_assumptions": _text_list(
+                item.get("key_assumptions"),
+                field=f"{name}.key_assumptions",
+                minimum=2,
+            ),
+            "source_ids": _source_ids(
+                item.get("source_ids"), field=f"{name}.earnings_model", registry=registry
+            ),
+            "methodology": _bounded_text(
+                item.get("methodology"), field=f"{name}.earnings_model.methodology"
+            ),
+        }
+    if set(scenarios) != {"bear", "base", "bull"}:
+        raise ValueError("earnings_model must contain bear, base, and bull")
+    if not math.isclose(sum(item["probability"] for item in scenarios.values()), 1.0, abs_tol=1e-9):
+        raise ValueError("earnings model probabilities must sum to one")
+    if not scenarios["bear"]["eps_usd"] < scenarios["base"]["eps_usd"] < scenarios["bull"]["eps_usd"]:
+        raise ValueError("earnings EPS must increase from bear to bull")
+    ordered = [scenarios[name] for name in ("bear", "base", "bull")]
+    base_eps = scenarios["base"]["eps_usd"]
+    return {
+        "forecast_period": forecast_period,
+        "market_implied_eps_usd": market_implied_eps,
+        "market_implied_eps_source_ids": market_implied_source_ids,
+        "market_implied_eps_methodology": _bounded_text(
+            raw.get("market_implied_eps_methodology"),
+            field="market_implied_eps_methodology",
+        ),
+        "consensus_eps_usd": consensus_eps,
+        "consensus_eps_source_ids": consensus_source_ids,
+        "consensus_eps_methodology": _bounded_text(
+            raw.get("consensus_eps_methodology"), field="consensus_eps_methodology"
+        ),
+        "scenarios": ordered,
+        "base_vs_consensus_percent": (base_eps / consensus_eps - 1) * 100,
+        "base_vs_market_implied_percent": (base_eps / market_implied_eps - 1) * 100,
+        "probability_weighted_eps_usd": sum(
+            item["probability"] * item["eps_usd"] for item in ordered
+        ),
+    }
+
+
+def _valuation(
+    raw: Any,
+    *,
+    current_price: float,
+    earnings: dict[str, Any],
+    policy: dict[str, Any],
+    registry: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("valuation must be an object")
+    cases_raw = raw.get("cases")
+    if not isinstance(cases_raw, list) or len(cases_raw) != 3:
+        raise ValueError("valuation must contain bear, base, and bull")
+    allowed_methods = set(policy["allowed_valuation_methods"])
+    scenarios: dict[str, dict[str, Any]] = {}
+    earnings_by_name = {item["name"]: item for item in earnings["scenarios"]}
+    for item in cases_raw:
+        if not isinstance(item, dict) or item.get("name") not in {"bear", "base", "bull"}:
+            raise ValueError("valuation has an invalid scenario name")
+        name = str(item["name"])
+        if name in scenarios:
+            raise ValueError("valuation scenario names must be unique")
         probability = _finite_number(item.get("probability"), field=f"{name}.probability")
         price = _finite_number(item.get("price_target"), field=f"{name}.price_target")
         if not 0 < probability < 1 or price <= 0:
-            raise ValueError(f"{name} scenario values are invalid")
+            raise ValueError(f"{name} valuation values are invalid")
+        if not math.isclose(probability, earnings_by_name[name]["probability"], abs_tol=1e-9):
+            raise ValueError(f"{name} valuation probability must match earnings model")
+        method = item.get("method")
+        if method not in allowed_methods:
+            raise ValueError(f"{name} valuation method is invalid")
         scenarios[name] = {
             "name": name,
             "probability": probability,
             "price_target": price,
-            "thesis": _bounded_text(item.get("thesis"), field=f"{name}.thesis"),
+            "method": method,
+            "equation": _bounded_text(item.get("equation"), field=f"{name}.equation", maximum=800),
+            "assumptions": _text_list(item.get("assumptions"), field=f"{name}.assumptions", minimum=2),
+            "source_ids": _source_ids(
+                item.get("source_ids"), field=f"{name}.valuation", registry=registry
+            ),
         }
     if set(scenarios) != {"bear", "base", "bull"}:
-        raise ValueError("scenario analysis must contain bear, base, and bull")
+        raise ValueError("valuation must contain bear, base, and bull")
     if not math.isclose(
         sum(item["probability"] for item in scenarios.values()), 1.0, abs_tol=1e-9
     ):
-        raise ValueError("scenario probabilities must sum to one")
+        raise ValueError("valuation probabilities must sum to one")
     if not (
         scenarios["bear"]["price_target"]
         < scenarios["base"]["price_target"]
         < scenarios["bull"]["price_target"]
     ):
-        raise ValueError("scenario prices must increase from bear to bull")
+        raise ValueError("valuation prices must increase from bear to bull")
     ordered = [scenarios[name] for name in ("bear", "base", "bull")]
     expected_price = sum(
         item["probability"] * item["price_target"] for item in ordered
     )
-    return {
+    result = {
+        "framework": _bounded_text(raw.get("framework"), field="valuation.framework"),
         "scenarios": ordered,
         "probability_weighted_price": expected_price,
         "probability_weighted_return": expected_price / current_price - 1,
         "bear_case_return": scenarios["bear"]["price_target"] / current_price - 1,
+        "base_case_return": scenarios["base"]["price_target"] / current_price - 1,
+        "bull_case_return": scenarios["bull"]["price_target"] / current_price - 1,
+    }
+    downside = abs(min(result["bear_case_return"], 0))
+    result["reward_to_risk"] = (
+        result["base_case_return"] / downside if downside > 0 else None
+    )
+    return result
+
+
+def _risk_evidence(raw: Any, *, registry: dict[str, dict[str, Any]], policy: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("risk_disconfirming_evidence must be an object")
+    risks_raw = raw.get("risks")
+    if not isinstance(risks_raw, list) or len(risks_raw) < int(policy["minimum_risks"]):
+        raise ValueError("focused research has too few explicit risks")
+    risks = []
+    risk_ids: set[str] = set()
+    for item in risks_raw:
+        if not isinstance(item, dict):
+            raise ValueError("risk must be an object")
+        risk_id = _bounded_text(item.get("risk_id"), field="risk_id", maximum=80)
+        if risk_id in risk_ids:
+            raise ValueError("risk_id must be unique")
+        probability = item.get("probability")
+        if probability not in {"low", "medium", "high"}:
+            raise ValueError(f"risk {risk_id} probability is invalid")
+        risks.append({
+            "risk_id": risk_id,
+            "statement": _bounded_text(item.get("statement"), field="risk.statement"),
+            "probability": probability,
+            "impact": _bounded_text(item.get("impact"), field="risk.impact"),
+            "monitor": _bounded_text(item.get("monitor"), field="risk.monitor"),
+            "source_ids": _source_ids(item.get("source_ids"), field="risk", registry=registry),
+        })
+        risk_ids.add(risk_id)
+    contrary_raw = raw.get("contrary_evidence")
+    if not isinstance(contrary_raw, list) or len(contrary_raw) < int(policy["minimum_contrary_evidence"]):
+        raise ValueError("focused research has too little contrary evidence")
+    contrary = []
+    evidence_ids: set[str] = set()
+    for item in contrary_raw:
+        if not isinstance(item, dict):
+            raise ValueError("contrary evidence must be an object")
+        evidence_id = _bounded_text(item.get("evidence_id"), field="evidence_id", maximum=80)
+        if evidence_id in evidence_ids:
+            raise ValueError("evidence_id must be unique")
+        contrary.append({
+            "evidence_id": evidence_id,
+            "observation": _bounded_text(item.get("observation"), field="contrary_evidence.observation"),
+            "thesis_impact": _bounded_text(item.get("thesis_impact"), field="contrary_evidence.thesis_impact"),
+            "source_ids": _source_ids(item.get("source_ids"), field="contrary_evidence", registry=registry),
+        })
+        evidence_ids.add(evidence_id)
+    return {
+        "risks": sorted(risks, key=lambda item: item["risk_id"]),
+        "contrary_evidence": sorted(contrary, key=lambda item: item["evidence_id"]),
+        "monitoring_plan": _bounded_text(raw.get("monitoring_plan"), field="monitoring_plan"),
+    }
+
+
+def _position_construction(
+    raw: Any, *, policy: dict[str, Any], recommendation: str
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("position_construction must be an object")
+    weights = {
+        field: _finite_number(raw.get(field), field=f"position_construction.{field}")
+        for field in (
+            "initial_weight_percent",
+            "target_weight_percent",
+            "maximum_weight_percent",
+            "earnings_event_weight_percent",
+        )
+    }
+    if recommendation == "buy":
+        if not 0 < weights["initial_weight_percent"] <= weights["target_weight_percent"] <= weights["maximum_weight_percent"]:
+            raise ValueError("buy position weights must increase from initial to maximum")
+    elif any(value != 0 for value in weights.values()):
+        raise ValueError("non-buy research must specify a zero position")
+    if weights["initial_weight_percent"] > float(policy["maximum_initial_weight_percent"]):
+        raise ValueError("initial position weight exceeds policy")
+    if weights["target_weight_percent"] > float(policy["maximum_target_weight_percent"]):
+        raise ValueError("target position weight exceeds policy")
+    if weights["maximum_weight_percent"] > float(policy["maximum_single_name_weight_percent"]):
+        raise ValueError("maximum position weight exceeds policy")
+    if weights["earnings_event_weight_percent"] > min(
+        weights["maximum_weight_percent"], float(policy["maximum_earnings_event_weight_percent"])
+    ):
+        raise ValueError("earnings event weight exceeds policy")
+    entry_low = _finite_number(raw.get("entry_price_low"), field="entry_price_low")
+    entry_high = _finite_number(raw.get("entry_price_high"), field="entry_price_high")
+    risk_budget = _finite_number(raw.get("risk_budget_bps"), field="risk_budget_bps")
+    if not 0 < entry_low <= entry_high or not 0 <= risk_budget <= 1000:
+        raise ValueError("position entry range or risk budget is invalid")
+    if recommendation == "buy" and risk_budget == 0:
+        raise ValueError("buy research requires a positive risk budget")
+    return {
+        **weights,
+        "entry_price_low": entry_low,
+        "entry_price_high": entry_high,
+        "risk_budget_bps": risk_budget,
+        "sizing_rationale": _bounded_text(raw.get("sizing_rationale"), field="sizing_rationale"),
+        "add_conditions": _text_list(raw.get("add_conditions"), field="add_conditions"),
+        "reduce_conditions": _text_list(raw.get("reduce_conditions"), field="reduce_conditions"),
+        "exit_conditions": _text_list(raw.get("exit_conditions"), field="exit_conditions"),
+        "execution_authorized": False,
+    }
+
+
+def _score_summary(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("score_summary must be an object")
+    conviction = raw.get("investment_conviction")
+    if isinstance(conviction, bool) or not isinstance(conviction, int) or not 0 <= conviction <= 100:
+        raise ValueError("investment conviction must be an integer from 0 to 100")
+    return {
+        "investment_conviction": conviction,
+        "summary": _bounded_text(raw.get("summary"), field="score_summary.summary"),
+        "used_for_recommendation_gate": False,
+        "used_for_position_sizing": False,
     }
 
 
@@ -258,7 +556,31 @@ def build_focused_research_dossier(
         required_type="market_price",
     )
 
-    catalysts_raw = payload.get("catalysts")
+    thesis_raw = payload.get("investment_thesis")
+    if not isinstance(thesis_raw, dict):
+        raise ValueError("investment_thesis must be an object")
+    recommendation = thesis_raw.get("recommendation")
+    if recommendation not in {"buy", "watch", "avoid", "no_view"}:
+        raise ValueError("focused research recommendation is invalid")
+    horizon_months = thesis_raw.get("time_horizon_months")
+    if isinstance(horizon_months, bool) or not isinstance(horizon_months, int) or not 1 <= horizon_months <= 60:
+        raise ValueError("investment thesis time horizon is invalid")
+    investment_thesis = {
+        "statement": _bounded_text(thesis_raw.get("statement"), field="investment_thesis.statement"),
+        "time_horizon_months": horizon_months,
+        "pillars": _text_list(
+            thesis_raw.get("pillars"),
+            field="investment_thesis.pillars",
+            minimum=int(policy["minimum_thesis_pillars"]),
+            maximum=8,
+        ),
+        "recommendation": recommendation,
+    }
+    variant_raw = payload.get("variant_view")
+    if not isinstance(variant_raw, dict):
+        raise ValueError("variant_view must be an object")
+
+    catalysts_raw = payload.get("catalyst_path")
     if not isinstance(catalysts_raw, list) or not catalysts_raw:
         raise ValueError("focused research requires catalysts")
     catalysts: list[dict[str, Any]] = []
@@ -294,7 +616,7 @@ def build_focused_research_dossier(
         )
         catalyst_ids.add(catalyst_id)
 
-    chains_raw = payload.get("variant_chains")
+    chains_raw = variant_raw.get("expectation_chains")
     if not isinstance(chains_raw, list) or len(chains_raw) < int(
         policy["minimum_variant_chains"]
     ):
@@ -442,21 +764,59 @@ def build_focused_research_dossier(
     if not required_categories.issubset(categories):
         raise ValueError("variant chains do not cover every required metric category")
 
-    scenario = _scenario_analysis(payload.get("scenario_analysis"), current_price=current_price)
-    recommendation = payload.get("recommendation")
-    if recommendation not in {"buy", "watch", "avoid", "no_view"}:
-        raise ValueError("focused research recommendation is invalid")
+    earnings = _earnings_model(payload.get("earnings_model"), registry=sources)
+    valuation = _valuation(
+        payload.get("valuation"),
+        current_price=current_price,
+        earnings=earnings,
+        policy=policy,
+        registry=sources,
+    )
+    risk_evidence = _risk_evidence(
+        payload.get("risk_disconfirming_evidence"), registry=sources, policy=policy
+    )
+    position = _position_construction(
+        payload.get("position_construction"),
+        policy=policy,
+        recommendation=recommendation,
+    )
+    score = _score_summary(payload.get("score_summary"))
     if (
         recommendation == "buy"
         and policy["buy_requires_positive_expected_return"]
-        and scenario["probability_weighted_return"] <= 0
+        and valuation["probability_weighted_return"] <= 0
     ):
         raise ValueError("buy recommendation requires positive expected return")
     if recommendation == "buy" and not any(
         chain["difference"]["variant_direction"] == "bullish" for chain in chains
     ):
         raise ValueError("buy recommendation requires a bullish variant chain")
+    if recommendation == "buy" and (
+        valuation["reward_to_risk"] is None
+        or valuation["reward_to_risk"] < float(policy["minimum_reward_to_risk"])
+    ):
+        raise ValueError("buy recommendation has insufficient reward-to-risk")
 
+    research_sections = {
+        "investment_thesis": investment_thesis,
+        "variant_view": {
+            "market_expectation_summary": _bounded_text(
+                variant_raw.get("market_expectation_summary"),
+                field="variant_view.market_expectation_summary",
+            ),
+            "our_variant_summary": _bounded_text(
+                variant_raw.get("our_variant_summary"),
+                field="variant_view.our_variant_summary",
+            ),
+            "expectation_chains": sorted(chains, key=lambda item: item["metric_id"]),
+        },
+        "earnings_model": earnings,
+        "valuation": valuation,
+        "catalyst_path": sorted(catalysts, key=lambda item: (item["window_start"], item["catalyst_id"])),
+        "risk_disconfirming_evidence": risk_evidence,
+        "position_construction": position,
+        "score_summary": score,
+    }
     core = {
         "schema_version": DOSSIER_SCHEMA,
         "symbol": symbol,
@@ -468,22 +828,11 @@ def build_focused_research_dossier(
         "current_price": current_price,
         "currency": currency,
         "price_source_ids": price_source_ids,
-        "market_narrative": _bounded_text(
-            payload.get("market_narrative"), field="market_narrative"
-        ),
-        "variant_summary": _bounded_text(
-            payload.get("variant_summary"), field="variant_summary"
-        ),
         "sources": sorted(sources.values(), key=lambda item: item["source_id"]),
-        "variant_chains": sorted(chains, key=lambda item: item["metric_id"]),
-        "catalysts": sorted(catalysts, key=lambda item: item["catalyst_id"]),
-        "scenario_analysis": scenario,
-        "recommendation": recommendation,
-        "monitoring_plan": _bounded_text(
-            payload.get("monitoring_plan"), field="monitoring_plan"
-        ),
+        "research_sections": research_sections,
         "validation": {
             "state": "passed",
+            "section_order": RESEARCH_SECTION_ORDER,
             "chain_order": [
                 "market_consensus",
                 "price_implied_expectation",
@@ -492,6 +841,7 @@ def build_focused_research_dossier(
                 "catalysts",
             ],
             "point_in_time": True,
+            "score_is_summary_only": True,
             "distinct_source_organizations": len(
                 {item["organization"] for item in sources.values()}
             ),
@@ -524,6 +874,16 @@ def validate_focused_research_dossier(
         raise ValueError("unsupported focused research dossier")
     if dossier.get("validation", {}).get("state") != "passed":
         raise ValueError("focused research dossier has not passed validation")
+    sections = dossier.get("research_sections")
+    if not isinstance(sections, dict) or list(sections) != RESEARCH_SECTION_ORDER:
+        raise ValueError("focused research dossier section order is incomplete")
+    score = sections.get("score_summary", {})
+    if score.get("used_for_recommendation_gate") is not False or score.get(
+        "used_for_position_sizing"
+    ) is not False:
+        raise ValueError("focused research score attempted to control a decision")
+    if sections.get("position_construction", {}).get("execution_authorized") is not False:
+        raise ValueError("position construction attempted to authorize execution")
     if dossier.get("execution_authorized") is not False or dossier.get(
         "promotion_authorized"
     ) is not False:
@@ -560,6 +920,93 @@ def validate_focused_research_dossier(
     ]
     if dossier["validation"].get("chain_order") != required_chain:
         raise ValueError("focused research dossier chain is incomplete")
+    if dossier["validation"].get("section_order") != RESEARCH_SECTION_ORDER:
+        raise ValueError("focused research dossier section declaration is incomplete")
+
+
+def render_focused_research_memo(dossier: dict[str, Any]) -> str:
+    """Render the validated dossier in the required decision sequence, score last."""
+
+    validate_focused_research_dossier(
+        dossier,
+        as_of_date=str(dossier["as_of_date"]),
+        maximum_age_days=0,
+    )
+    sections = dossier["research_sections"]
+    thesis = sections["investment_thesis"]
+    variant = sections["variant_view"]
+    earnings = sections["earnings_model"]
+    valuation = sections["valuation"]
+    risks = sections["risk_disconfirming_evidence"]
+    position = sections["position_construction"]
+    score = sections["score_summary"]
+    earnings_cases = {item["name"]: item for item in earnings["scenarios"]}
+    lines = [
+        f"# {dossier['symbol']} Focused Research",
+        "",
+        f"As of: {dossier['as_of_date']} | Price: {dossier['currency']} {dossier['current_price']:.2f}",
+        "",
+        "## 1. Investment Thesis",
+        "",
+        thesis["statement"],
+        f"Recommendation: {thesis['recommendation']} | Horizon: {thesis['time_horizon_months']} months",
+        "",
+        *[f"- {item}" for item in thesis["pillars"]],
+        "",
+        "## 2. Variant View",
+        "",
+        f"Market expectation: {variant['market_expectation_summary']}",
+        f"Our view: {variant['our_variant_summary']}",
+        "",
+    ]
+    for chain in variant["expectation_chains"]:
+        lines.extend([
+            f"### {chain['metric_name']} ({chain['horizon']})",
+            "",
+            f"Consensus {chain['market_consensus']['value']} {chain['unit']} → price-implied {chain['price_implied_expectation']['value']} → house {chain['house_estimate']['value']}",
+            f"Gap vs price-implied: {chain['difference']['house_minus_price_implied']:+.2f} {chain['unit']} ({chain['difference']['variant_direction']})",
+            f"Why different: {chain['why_market_may_be_wrong']}",
+            f"Disconfirming test: {'; '.join(chain['falsification_criteria'])}",
+            "",
+        ])
+    lines.extend([
+        "## 3. Earnings Model",
+        "",
+        f"{earnings['forecast_period']} EPS — market-implied ${earnings['market_implied_eps_usd']:.2f}, consensus ${earnings['consensus_eps_usd']:.2f}, bear ${earnings_cases['bear']['eps_usd']:.2f}, base ${earnings_cases['base']['eps_usd']:.2f}, bull ${earnings_cases['bull']['eps_usd']:.2f}",
+        f"Base vs consensus: {earnings['base_vs_consensus_percent']:+.1f}% | Base vs price-implied: {earnings['base_vs_market_implied_percent']:+.1f}%",
+        "",
+        "## 4. Valuation",
+        "",
+        f"Probability-weighted price: ${valuation['probability_weighted_price']:.2f} | Expected return: {valuation['probability_weighted_return']:+.1%} | Bear return: {valuation['bear_case_return']:+.1%}",
+        f"Reward/risk: {valuation['reward_to_risk']:.2f}" if valuation["reward_to_risk"] is not None else "Reward/risk: not meaningful",
+        "",
+        "## 5. Catalyst Path",
+        "",
+        *[
+            f"- {item['window_start']}–{item['window_end']}: {item['event']} — {item['observable']}"
+            for item in sections["catalyst_path"]
+        ],
+        "",
+        "## 6. Risk / Disconfirming Evidence",
+        "",
+        *[f"- Risk ({item['probability']}): {item['statement']} — monitor: {item['monitor']}" for item in risks["risks"]],
+        *[f"- Contrary evidence: {item['observation']} — impact: {item['thesis_impact']}" for item in risks["contrary_evidence"]],
+        "",
+        "## 7. Position Construction",
+        "",
+        f"Initial {position['initial_weight_percent']:.2f}% → target {position['target_weight_percent']:.2f}% → maximum {position['maximum_weight_percent']:.2f}%",
+        f"Entry ${position['entry_price_low']:.2f}–${position['entry_price_high']:.2f} | risk budget {position['risk_budget_bps']:.0f} bps | earnings-event cap {position['earnings_event_weight_percent']:.2f}%",
+        position["sizing_rationale"],
+        "",
+        "## 8. Score Summary",
+        "",
+        f"Investment Conviction: {score['investment_conviction']}/100",
+        score["summary"],
+        "",
+        "Score is summary-only and is not used for recommendation gating or position sizing.",
+        "",
+    ])
+    return "\n".join(lines)
 
 
 def load_focused_research_dossiers(paths: Iterable[str | Path]) -> list[dict[str, Any]]:

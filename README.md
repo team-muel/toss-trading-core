@@ -185,3 +185,8 @@ ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙
 컨센서스 → 가격 내재 기대 → 자체 추정 → 격차 → 촉매를 모두 검증한 dossier가 있는
 종목만 연구상 `buy` 추천이 될 수 있습니다. 공급자 credential과 이용약관 gate가
 완료되기 전에는 비활성이며 어떤 결과도 주문 권한을 갖지 않습니다.
+
+집중연구 결과는 Investment Thesis → Variant View → Earnings Model → Valuation →
+Catalyst Path → Risk/Disconfirming Evidence → Position Construction 순서로 기록합니다.
+Investment Conviction 점수는 추천이나 비중 산정에 사용하지 않고 마지막 요약에만
+표시합니다.

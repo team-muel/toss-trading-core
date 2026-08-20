@@ -7,7 +7,7 @@
 2,500개를 매일 동일한 규칙으로 평가한다.
 
 정량 상위 종목은 `screening_candidates`이며 아직 매수 추천이 아니다. 실제
-`recommendations`에는 `focused-research-dossier-v1` 검증을 통과하고 결론이 `buy`인
+`recommendations`에는 `focused-research-dossier-v2` 검증을 통과하고 결론이 `buy`인
 종목만 들어간다. 둘 다 개인 맞춤 투자자문이나 주문 승인이 아니며, 결과에서 Toss
 주문 경로로 이어지는 연결은 만들지 않는다.
 
@@ -34,8 +34,11 @@ Secret Manager version이 모두 준비되기 전 `config/stock_recommendation_p
 - 상위 25개까지만 집중연구 큐에 등록
 - Variant Perception 집중연구를 통과한 종목 중 상위 10개까지만 연구상 매수 추천
 
-점수는 그날 단면의 percentile rank로 계산해 극단값의 영향을 제한한다. LLM은 종목,
-점수 또는 순위를 변경하지 않고 설명만 할 수 있다.
+정량 점수는 집중연구 대상을 고르는 screening 우선순위에만 사용한다. 실제 추천은
+Investment Thesis → Variant View → Earnings Model → Valuation → Catalyst Path →
+Risk/Disconfirming Evidence → Position Construction을 통과해야 한다. conviction 점수는
+이 판단이나 포지션 크기에 쓰지 않고 마지막 요약에만 둔다. LLM은 종목, 정량 점수 또는
+순위를 변경하지 않고 설명만 할 수 있다.
 
 ## 검증과 전달
 
@@ -44,6 +47,10 @@ Secret Manager version이 모두 준비되기 전 `config/stock_recommendation_p
 남긴다. 집중연구를 통과하지 않은 정량 후보는 매수 추천으로 승격하지 않는다. 실제
 매수 추천만 SPY 대비 5·21·63거래일 성과를 전향 추적하며, 추천 당시에는 미래 성과를
 표시하지 않는다.
+
+`stock-recommendation-run-v3`의 실제 추천은 dossier의 일곱 분석 섹션을 그대로
+전달하고 `score_summary`를 마지막에 둔다. 반면 아직 집중연구가 없는 큐 항목은
+정량 `screening_score`를 연구 우선순위로만 보존한다.
 
 매일 데이터가 실제로 전진한 경우에만 새 추천을 만들고 Gmail 연구 digest에는 다음을
 포함한다.

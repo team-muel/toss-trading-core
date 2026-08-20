@@ -19,6 +19,35 @@
 
 하나라도 빠지면 `screening_candidate` 상태에 머물며 `buy` 연구 추천이 될 수 없다.
 
+## 의사결정 메모의 고정 순서
+
+모든 `focused-research-dossier-v2`는 다음 순서를 그대로 사용한다.
+
+```text
+Investment Thesis
+  → Variant View
+  → Earnings Model
+  → Valuation
+  → Catalyst Path
+  → Risk / Disconfirming Evidence
+  → Position Construction
+  → Score Summary
+```
+
+점수는 분석 입력이 아니다. `Investment Conviction`은 마지막 압축 요약일 뿐 추천
+게이트와 포지션 크기 계산에서 읽지 않는다. 검증된 JSON과 함께 같은 순서의 Markdown
+메모를 생성하므로 JSON viewer의 키 정렬 방식에도 의존하지 않는다.
+
+핵심 숫자는 점수보다 먼저 다음처럼 직접 드러나야 한다.
+
+- 목표 연도의 시장가격 내재 EPS와 point-in-time 컨센서스 EPS
+- bear/base/bull의 EPS, 매출, gross margin, operating margin, FCF, CAPEX와 확률
+- Base EPS의 컨센서스·시장 내재 값 대비 차이
+- bear/base/bull 목표가격과 확률가중 기대수익
+- 날짜가 있는 촉매, 관측 변수, thesis 해소 방식
+- 사전 반증 조건과 현재 존재하는 contrary evidence
+- 초기·목표·최대 비중, 실적 이벤트 상한, risk budget, 증액·축소·청산 조건
+
 ## 두 단계 연구 구조
 
 | 단계 | 목적 | 가능한 결론 |
@@ -90,10 +119,11 @@ advanced packaging 기여, CAPEX가 만드는 증분 ROIC 또는 FCF를 chain으
 최소 하나의 catalyst에 연결되어야 하며, 동시에 가설이 틀렸다고 판단할 사전 조건을
 가져야 한다.
 
-bear/base/bull 가격과 확률은 모두 필수다. 확률 합은 1이어야 하고 가격은
-`bear < base < bull`이어야 한다. `buy`는 확률가중 기대수익이 양수이고, 적어도 하나의
-가격 내재 기대 대비 bullish gap이 있을 때만 허용된다. 이 결론도 주문 권한이나 전략
-승격 권한을 갖지 않는다.
+bear/base/bull 이익 모델과 가격은 모두 필수다. 두 모델의 시나리오별 확률은 같고 합은
+1이어야 하며 EPS와 가격은 각각 `bear < base < bull`이어야 한다. `buy`는 확률가중
+기대수익이 양수이고, 적어도 하나의 가격 내재 기대 대비 bullish gap이 있으며, 정책상
+최소 reward/risk를 충족할 때만 허용된다. Position Construction은 연구상 위험 예산이며
+주문 권한이나 전략 승격 권한을 갖지 않는다.
 
 ## 생성과 검증
 
@@ -107,9 +137,10 @@ python -m toss_trading.cli.research_validate_focus_dossier \
   --output-dir /home/seoje/toss-trading/stock-recommendation-runtime/focused-research/dossiers
 ```
 
-검증기는 source 시점, source type, metric 범주, 가격 재현, gap 계산, 촉매 연결,
-시나리오, 추천 조건을 확인한다. 통과 결과에는 결정적 `dossier_id`와
-`content_sha256`이 붙는다. 이후 내용이 바뀌면 추천 게이트의 hash 검사가 실패한다.
+검증기는 source 시점, source type, metric 범주, 가격 재현, gap 계산, earnings model,
+valuation, 촉매 연결, 반증 증거, 포지션 상한과 추천 조건을 확인한다. 통과 결과에는
+결정적 `dossier_id`와 `content_sha256`이 붙고 동일 ID의 `.md` 메모도 생성된다. 이후
+내용이 바뀌면 추천 게이트의 hash 검사가 실패한다.
 
 광범위 스크리닝 runner는 이 디렉터리의 dossier를 읽는다. 기준일로부터 기본 14일이
 지난 dossier는 자동으로 stale 처리되어 새 매수 추천을 만들 수 없다.

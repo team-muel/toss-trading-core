@@ -7,6 +7,7 @@ from pathlib import Path
 from toss_trading.research.variant_perception import (
     build_focused_research_dossier,
     load_focused_research_policy,
+    render_focused_research_memo,
 )
 
 
@@ -33,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     destination = Path(args.output_dir) / f"{dossier['dossier_id']}.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
-    body = (json.dumps(dossier, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode(
+    body = (json.dumps(dossier, ensure_ascii=False, indent=2) + "\n").encode(
         "utf-8"
     )
     if destination.exists() and destination.read_bytes() != body:
@@ -42,7 +43,15 @@ def main(argv: list[str] | None = None) -> int:
         temporary = destination.with_suffix(".json.tmp")
         temporary.write_bytes(body)
         temporary.replace(destination)
-    print(json.dumps(dossier, ensure_ascii=False, sort_keys=True))
+    memo_destination = destination.with_suffix(".md")
+    memo_body = render_focused_research_memo(dossier).encode("utf-8")
+    if memo_destination.exists() and memo_destination.read_bytes() != memo_body:
+        raise FileExistsError("immutable focused research memo conflict")
+    if not memo_destination.exists():
+        temporary = memo_destination.with_suffix(".md.tmp")
+        temporary.write_bytes(memo_body)
+        temporary.replace(memo_destination)
+    print(json.dumps(dossier, ensure_ascii=False))
     return 0
 
 

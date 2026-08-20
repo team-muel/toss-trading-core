@@ -1,5 +1,5 @@
 {
-  "schema_version": "focused-research-policy-v1",
+  "schema_version": "focused-research-policy-v2",
   "minimum_variant_chains": 3,
   "minimum_distinct_source_organizations": 3,
   "maximum_source_age_days": 120,
@@ -38,11 +38,27 @@
     "reverse_unit_economics",
     "reverse_segment_sum_of_parts"
   ],
+  "allowed_valuation_methods": [
+    "dcf",
+    "pe",
+    "ev_ebitda",
+    "sum_of_parts"
+  ],
+  "minimum_thesis_pillars": 2,
+  "minimum_risks": 2,
+  "minimum_contrary_evidence": 1,
+  "maximum_initial_weight_percent": 2.0,
+  "maximum_target_weight_percent": 5.0,
+  "maximum_single_name_weight_percent": 7.5,
+  "maximum_earnings_event_weight_percent": 2.0,
+  "minimum_reward_to_risk": 1.5,
   "require_price_implied_chain": true,
   "require_consensus_chain": true,
   "require_falsification": true,
   "require_bear_base_bull": true,
   "buy_requires_positive_expected_return": true,
+  "score_may_gate_recommendation": false,
+  "score_may_size_position": false,
   "execution_authorized": false,
   "promotion_authorized": false
 }
