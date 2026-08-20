@@ -8,6 +8,7 @@ from toss_trading.research.variant_perception import (
     render_focused_research_memo,
     validate_focused_research_dossier,
 )
+from tests.focused_research_fixtures import earnings_call_payload
 
 
 def earnings_quality_payload():
@@ -133,6 +134,8 @@ class VariantPerceptionTest(unittest.TestCase):
             {"source_id": "micron_guidance", "source_type": "company_guidance", "organization": "Micron", "observed_at": self.as_of, "locator": "HBM investment guidance"},
             {"source_id": "supplier_call", "source_type": "earnings_transcript", "organization": "MKS Instruments", "observed_at": self.as_of, "locator": "quarterly earnings call"},
             {"source_id": "lrcx_call", "source_type": "earnings_transcript", "organization": "Lam Research", "observed_at": self.as_of, "locator": "quarterly earnings call"},
+            {"source_id": "amat_prior_call", "source_type": "earnings_transcript", "organization": "AMAT", "observed_at": self.as_of, "locator": "prior-quarter earnings call transcript"},
+            {"source_id": "amat_current_call", "source_type": "earnings_transcript", "organization": "AMAT", "observed_at": self.as_of, "locator": "current-quarter earnings call transcript"},
         ]
         chains = []
         for metric_id, name, category, implied, consensus, house in [
@@ -325,6 +328,12 @@ class VariantPerceptionTest(unittest.TestCase):
                 "methodology": "Map numeric changes through explicit relationships and lags, count confirmation by distinct external entity and primary organization, and preserve counter-signals separately.",
                 "source_ids": ["filing", "tsmc_guidance", "micron_guidance", "supplier_call", "lrcx_call"],
             },
+            "earnings_call_diff": earnings_call_payload(
+                as_of=self.as_of,
+                prior_call_source="amat_prior_call",
+                current_call_source="amat_current_call",
+                primary_source="filing",
+            ),
             "valuation": {
                 "framework": "Scenario EPS multiplied by normalized forward P/E with a cross-check to DCF.",
                 "cases": [
@@ -423,7 +432,8 @@ class VariantPerceptionTest(unittest.TestCase):
         memo = render_focused_research_memo(dossier)
         headings = [memo.index(f"## {index}. {name}") for index, name in enumerate([
             "Investment Thesis", "Variant View", "Earnings Model", "Earnings Quality",
-            "Supply-chain Read-through", "Valuation", "Catalyst Path",
+            "Supply-chain Read-through", "Earnings Call Diff / Management Calibration",
+            "Valuation", "Catalyst Path",
             "Risk / Disconfirming Evidence", "Position Construction", "Score Summary",
         ], start=1)]
         self.assertEqual(headings, sorted(headings))
@@ -438,6 +448,9 @@ class VariantPerceptionTest(unittest.TestCase):
         self.assertIn("EPS growth attribution", memo)
         self.assertIn("Cross-company confirmation", memo)
         self.assertIn("Transmission map", memo)
+        self.assertIn("Changed language and horizons", memo)
+        self.assertIn("Eight-quarter guidance calibration", memo)
+        self.assertIn("Prior commitment follow-through", memo)
 
     def test_driver_model_calculates_eps_cash_flow_roic_and_ai_capex_sensitivity(self):
         dossier = build_focused_research_dossier(
@@ -714,6 +727,80 @@ class VariantPerceptionTest(unittest.TestCase):
                 dossier, as_of_date=self.as_of, maximum_age_days=14
             )
 
+    def test_earnings_call_diffs_language_questions_guidance_and_promises(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        call = dossier["research_sections"]["earnings_call_diff"]
+        language = call["language_diff"]
+        self.assertEqual(language["new_topic_ids"], ["advanced_packaging"])
+        self.assertEqual(language["removed_topic_ids"], ["margin_progress"])
+        capacity = next(
+            item for item in language["changed_topics"]
+            if item["topic_id"] == "capacity_constraint"
+        )
+        self.assertTrue(capacity["horizon_changed"])
+        self.assertIn("2027", capacity["added_terms"])
+        self.assertIn("2026", capacity["removed_terms"])
+        self.assertGreater(call["management_confidence"]["change"], 0)
+        questions = call["analyst_question_diff"]
+        self.assertEqual(questions["new_theme_ids"], ["growth_capex_returns"])
+        self.assertEqual(questions["newly_evaded_theme_ids"], ["growth_capex_returns"])
+        self.assertEqual(
+            [item["theme_id"] for item in questions["changed_recurring_themes"]],
+            ["backlog_conversion"],
+        )
+        eps_guidance = next(
+            item for item in call["numeric_guidance_diff"]["changes"]
+            if item["guidance_id"] == "quarterly_eps"
+        )
+        self.assertEqual(eps_guidance["range_state"], "narrowed")
+        calibration = call["management_guidance_calibration"]
+        self.assertEqual(calibration["quarter_count"], 8)
+        self.assertEqual(calibration["bias_classification"], "historically_conservative")
+        self.assertFalse(calibration["score_used"])
+        commitments = call["prior_commitment_follow_through"]
+        self.assertEqual(commitments["status_counts"]["met"], 1)
+        self.assertEqual(commitments["status_counts"]["missed"], 1)
+        self.assertEqual(commitments["status_counts"]["pending"], 1)
+        self.assertAlmostEqual(commitments["resolved_fulfillment_rate_percent"], 50)
+
+    def test_earnings_call_requires_subject_company_transcript(self):
+        invalid = copy.deepcopy(self.payload)
+        invalid["earnings_call_diff"]["prior_call"]["source_ids"] = ["filing"]
+        with self.assertRaisesRegex(ValueError, "subject company's earnings transcript"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_management_calibration_requires_exactly_eight_quarters(self):
+        invalid = copy.deepcopy(self.payload)
+        invalid["earnings_call_diff"]["guidance_history"].pop()
+        with self.assertRaisesRegex(ValueError, "exactly eight quarters"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_earnings_call_date_cannot_postdate_its_transcript_source(self):
+        invalid = copy.deepcopy(self.payload)
+        invalid["earnings_call_diff"]["current_call"]["call_date"] = "2026-08-21"
+        with self.assertRaisesRegex(ValueError, "later than its source observation"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_validator_recalculates_earnings_call_outputs(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        dossier["research_sections"]["earnings_call_diff"][
+            "management_guidance_calibration"
+        ]["mean_absolute_midpoint_error_percent"] += 1
+        with self.assertRaisesRegex(ValueError, "earnings-call.*does not reconcile"):
+            validate_focused_research_dossier(
+                dossier, as_of_date=self.as_of, maximum_age_days=14
+            )
+
     def test_conviction_score_does_not_change_decision_or_position(self):
         low = copy.deepcopy(self.payload)
         high = copy.deepcopy(self.payload)
@@ -732,6 +819,7 @@ class VariantPerceptionTest(unittest.TestCase):
             "earnings_model",
             "earnings_quality",
             "supply_chain_read_through",
+            "earnings_call_diff",
             "valuation",
             "catalyst_path",
             "risk_disconfirming_evidence",

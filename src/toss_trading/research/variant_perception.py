@@ -3,20 +3,22 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import uuid
 from datetime import date
 from pathlib import Path
 from typing import Any, Iterable
 
 
-POLICY_SCHEMA = "focused-research-policy-v6"
-DOSSIER_SCHEMA = "focused-research-dossier-v6"
+POLICY_SCHEMA = "focused-research-policy-v7"
+DOSSIER_SCHEMA = "focused-research-dossier-v7"
 RESEARCH_SECTION_ORDER = [
     "investment_thesis",
     "variant_view",
     "earnings_model",
     "earnings_quality",
     "supply_chain_read_through",
+    "earnings_call_diff",
     "valuation",
     "catalyst_path",
     "risk_disconfirming_evidence",
@@ -99,6 +101,10 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         ("minimum_supply_chain_supporting_entities", 2, 20),
         ("minimum_supply_chain_counter_signals", 1, 20),
         ("minimum_supply_chain_relationships", 2, 50),
+        ("minimum_earnings_call_topics", 2, 20),
+        ("minimum_earnings_call_questions", 1, 20),
+        ("minimum_earnings_call_commitments", 1, 20),
+        ("earnings_call_guidance_history_quarters", 8, 8),
     ):
         value = payload.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
@@ -152,6 +158,10 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "require_supply_chain_read_through",
         "require_supply_chain_primary_company_sources",
         "require_supply_chain_subject_company_signal",
+        "require_earnings_call_diff",
+        "require_guidance_range_diff",
+        "require_management_guidance_calibration",
+        "require_question_evasion_tracking",
         "buy_requires_supply_chain_confirmation",
     ):
         if payload.get(field) is not True:
@@ -194,6 +204,12 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         raise ValueError(
             "focused research maximum_driver_sensitivity_shock_percent is invalid"
         )
+    guidance_bias_threshold = _finite_number(
+        payload.get("management_guidance_bias_threshold_percent"),
+        field="management_guidance_bias_threshold_percent",
+    )
+    if not 0 < guidance_bias_threshold <= 25:
+        raise ValueError("focused research guidance bias threshold is invalid")
     if (
         int(payload["minimum_supply_chain_supporting_entities"])
         > int(payload["minimum_supply_chain_external_entities"])
@@ -2106,6 +2122,629 @@ def _supply_chain_read_through(
     }
 
 
+def _earnings_call_diff(
+    raw: Any,
+    *,
+    subject_organization: str,
+    registry: dict[str, dict[str, Any]],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("earnings_call_diff must be an object")
+
+    def subject_source_ids(
+        values: Any,
+        *,
+        field: str,
+        transcript_required: bool = False,
+    ) -> list[str]:
+        source_ids = _source_ids(values, field=field, registry=registry)
+        eligible_types = (
+            {"earnings_transcript"}
+            if transcript_required
+            else set(PRIMARY_COMPANY_SOURCE_TYPES)
+        )
+        if not any(
+            registry[source_id]["organization"] == subject_organization
+            and registry[source_id]["source_type"] in eligible_types
+            for source_id in source_ids
+        ):
+            required_label = "earnings transcript" if transcript_required else "primary source"
+            raise ValueError(f"{field} requires the subject company's {required_label}")
+        return source_ids
+
+    minimum_topics = int(policy["minimum_earnings_call_topics"])
+    minimum_questions = int(policy["minimum_earnings_call_questions"])
+    allowed_statement_types = {
+        "demand",
+        "capacity",
+        "guidance",
+        "margin",
+        "pricing",
+        "capital_allocation",
+        "operations",
+        "risk",
+        "other",
+    }
+    allowed_response_states = {"answered", "partial", "evaded"}
+    allowed_units = set(policy["allowed_units"])
+
+    def normalize_call(value: Any, *, label: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError(f"earnings call {label} must be an object")
+        source_ids = subject_source_ids(
+            value.get("source_ids"),
+            field=f"earnings_call.{label}",
+            transcript_required=True,
+        )
+        call_date = date.fromisoformat(str(value.get("call_date")))
+        latest_source_date = max(
+            date.fromisoformat(str(registry[source_id]["observed_at"]))
+            for source_id in source_ids
+        )
+        if call_date > latest_source_date:
+            raise ValueError(
+                f"earnings call {label} date is later than its source observation"
+            )
+        statements_raw = value.get("statements")
+        if (
+            not isinstance(statements_raw, list)
+            or not minimum_topics <= len(statements_raw) <= 60
+        ):
+            raise ValueError(f"earnings call {label} has too few statement topics")
+        statements: dict[str, dict[str, Any]] = {}
+        for item in statements_raw:
+            if not isinstance(item, dict):
+                raise ValueError(f"earnings call {label} statement must be an object")
+            topic_id = _bounded_text(
+                item.get("topic_id"),
+                field=f"earnings_call.{label}.topic_id",
+                maximum=100,
+            )
+            if topic_id in statements:
+                raise ValueError(f"earnings call {label} topic ids must be unique")
+            statement_type = item.get("statement_type")
+            if statement_type not in allowed_statement_types:
+                raise ValueError(
+                    f"earnings call {label} topic {topic_id} has an invalid type"
+                )
+            confidence_level = item.get("confidence_level")
+            if (
+                isinstance(confidence_level, bool)
+                or not isinstance(confidence_level, int)
+                or not 0 <= confidence_level <= 4
+            ):
+                raise ValueError(
+                    f"earnings call {label} topic {topic_id} confidence is invalid"
+                )
+            statements[topic_id] = {
+                "topic_id": topic_id,
+                "statement_type": statement_type,
+                "speaker": _bounded_text(
+                    item.get("speaker"),
+                    field=f"earnings_call.{label}.{topic_id}.speaker",
+                    maximum=160,
+                ),
+                "text": _bounded_text(
+                    item.get("text"),
+                    field=f"earnings_call.{label}.{topic_id}.text",
+                    maximum=1200,
+                ),
+                "confidence_level": confidence_level,
+                "horizon": _bounded_text(
+                    item.get("horizon"),
+                    field=f"earnings_call.{label}.{topic_id}.horizon",
+                    maximum=120,
+                ),
+            }
+        questions_raw = value.get("analyst_questions")
+        if (
+            not isinstance(questions_raw, list)
+            or not minimum_questions <= len(questions_raw) <= 60
+        ):
+            raise ValueError(f"earnings call {label} has too few analyst questions")
+        questions: dict[str, dict[str, Any]] = {}
+        for item in questions_raw:
+            if not isinstance(item, dict):
+                raise ValueError(f"earnings call {label} question must be an object")
+            theme_id = _bounded_text(
+                item.get("theme_id"),
+                field=f"earnings_call.{label}.question.theme_id",
+                maximum=100,
+            )
+            if theme_id in questions:
+                raise ValueError(f"earnings call {label} question themes must be unique")
+            response_state = item.get("response_state")
+            if response_state not in allowed_response_states:
+                raise ValueError(
+                    f"earnings call {label} question {theme_id} response is invalid"
+                )
+            questions[theme_id] = {
+                "theme_id": theme_id,
+                "analyst_organization": _bounded_text(
+                    item.get("analyst_organization"),
+                    field=f"earnings_call.{label}.{theme_id}.analyst_organization",
+                    maximum=160,
+                ),
+                "question": _bounded_text(
+                    item.get("question"),
+                    field=f"earnings_call.{label}.{theme_id}.question",
+                    maximum=1200,
+                ),
+                "response_summary": _bounded_text(
+                    item.get("response_summary"),
+                    field=f"earnings_call.{label}.{theme_id}.response_summary",
+                    maximum=1200,
+                ),
+                "response_state": response_state,
+            }
+        guidance_raw = value.get("numeric_guidance")
+        if not isinstance(guidance_raw, list) or not 1 <= len(guidance_raw) <= 30:
+            raise ValueError(f"earnings call {label} numeric guidance is missing")
+        guidance: dict[str, dict[str, Any]] = {}
+        for item in guidance_raw:
+            if not isinstance(item, dict):
+                raise ValueError(f"earnings call {label} guidance must be an object")
+            guidance_id = _bounded_text(
+                item.get("guidance_id"),
+                field=f"earnings_call.{label}.guidance_id",
+                maximum=100,
+            )
+            if guidance_id in guidance:
+                raise ValueError(f"earnings call {label} guidance ids must be unique")
+            unit = item.get("unit")
+            if unit not in allowed_units:
+                raise ValueError(
+                    f"earnings call {label} guidance {guidance_id} unit is invalid"
+                )
+            low = _finite_number(
+                item.get("low"), field=f"earnings_call.{label}.{guidance_id}.low"
+            )
+            high = _finite_number(
+                item.get("high"), field=f"earnings_call.{label}.{guidance_id}.high"
+            )
+            if high < low:
+                raise ValueError(
+                    f"earnings call {label} guidance {guidance_id} range is invalid"
+                )
+            guidance[guidance_id] = {
+                "guidance_id": guidance_id,
+                "metric": _bounded_text(
+                    item.get("metric"),
+                    field=f"earnings_call.{label}.{guidance_id}.metric",
+                    maximum=160,
+                ),
+                "period": _bounded_text(
+                    item.get("period"),
+                    field=f"earnings_call.{label}.{guidance_id}.period",
+                    maximum=80,
+                ),
+                "unit": unit,
+                "low": low,
+                "high": high,
+                "midpoint": (low + high) / 2,
+                "width": high - low,
+            }
+        return {
+            "period": _bounded_text(
+                value.get("period"), field=f"earnings_call.{label}.period", maximum=80
+            ),
+            "call_date": call_date.isoformat(),
+            "statements": sorted(statements.values(), key=lambda item: item["topic_id"]),
+            "analyst_questions": sorted(
+                questions.values(), key=lambda item: item["theme_id"]
+            ),
+            "numeric_guidance": sorted(
+                guidance.values(), key=lambda item: item["guidance_id"]
+            ),
+            "source_ids": source_ids,
+        }
+
+    prior_call = normalize_call(raw.get("prior_call"), label="prior")
+    current_call = normalize_call(raw.get("current_call"), label="current")
+    if date.fromisoformat(current_call["call_date"]) <= date.fromisoformat(
+        prior_call["call_date"]
+    ):
+        raise ValueError("earnings call periods are not chronological")
+
+    def by_id(items: list[dict[str, Any]], key: str) -> dict[str, dict[str, Any]]:
+        return {str(item[key]): item for item in items}
+
+    prior_statements = by_id(prior_call["statements"], "topic_id")
+    current_statements = by_id(current_call["statements"], "topic_id")
+    prior_topics = set(prior_statements)
+    current_topics = set(current_statements)
+
+    def terms(text: str) -> set[str]:
+        return set(re.findall(r"\w+|[%$]+", text.casefold(), flags=re.UNICODE))
+
+    changed_topics = []
+    for topic_id in sorted(prior_topics & current_topics):
+        prior = prior_statements[topic_id]
+        current = current_statements[topic_id]
+        if (
+            prior["text"] == current["text"]
+            and prior["statement_type"] == current["statement_type"]
+            and prior["confidence_level"] == current["confidence_level"]
+            and prior["horizon"] == current["horizon"]
+        ):
+            continue
+        prior_terms = terms(prior["text"])
+        current_terms = terms(current["text"])
+        changed_topics.append(
+            {
+                "topic_id": topic_id,
+                "prior_statement_type": prior["statement_type"],
+                "current_statement_type": current["statement_type"],
+                "statement_type_changed": (
+                    prior["statement_type"] != current["statement_type"]
+                ),
+                "prior_text": prior["text"],
+                "current_text": current["text"],
+                "added_terms": sorted(current_terms - prior_terms),
+                "removed_terms": sorted(prior_terms - current_terms),
+                "prior_confidence_level": prior["confidence_level"],
+                "current_confidence_level": current["confidence_level"],
+                "confidence_change": (
+                    current["confidence_level"] - prior["confidence_level"]
+                ),
+                "prior_horizon": prior["horizon"],
+                "current_horizon": current["horizon"],
+                "horizon_changed": prior["horizon"] != current["horizon"],
+            }
+        )
+    prior_confidence = sum(
+        item["confidence_level"] for item in prior_statements.values()
+    ) / len(prior_statements)
+    current_confidence = sum(
+        item["confidence_level"] for item in current_statements.values()
+    ) / len(current_statements)
+
+    prior_questions = by_id(prior_call["analyst_questions"], "theme_id")
+    current_questions = by_id(current_call["analyst_questions"], "theme_id")
+    prior_question_ids = set(prior_questions)
+    current_question_ids = set(current_questions)
+    current_evaded = {
+        theme_id
+        for theme_id, item in current_questions.items()
+        if item["response_state"] == "evaded"
+    }
+    prior_evaded = {
+        theme_id
+        for theme_id, item in prior_questions.items()
+        if item["response_state"] == "evaded"
+    }
+    changed_question_themes = []
+    for theme_id in sorted(prior_question_ids & current_question_ids):
+        prior = prior_questions[theme_id]
+        current = current_questions[theme_id]
+        if (
+            prior["question"] == current["question"]
+            and prior["response_summary"] == current["response_summary"]
+            and prior["response_state"] == current["response_state"]
+        ):
+            continue
+        prior_terms = terms(prior["question"])
+        current_terms = terms(current["question"])
+        changed_question_themes.append(
+            {
+                "theme_id": theme_id,
+                "prior_question": prior["question"],
+                "current_question": current["question"],
+                "added_question_terms": sorted(current_terms - prior_terms),
+                "removed_question_terms": sorted(prior_terms - current_terms),
+                "prior_response_summary": prior["response_summary"],
+                "current_response_summary": current["response_summary"],
+                "prior_response_state": prior["response_state"],
+                "current_response_state": current["response_state"],
+                "response_state_changed": (
+                    prior["response_state"] != current["response_state"]
+                ),
+            }
+        )
+
+    prior_guidance = by_id(prior_call["numeric_guidance"], "guidance_id")
+    current_guidance = by_id(current_call["numeric_guidance"], "guidance_id")
+    prior_guidance_ids = set(prior_guidance)
+    current_guidance_ids = set(current_guidance)
+    guidance_changes = []
+    for guidance_id in sorted(prior_guidance_ids & current_guidance_ids):
+        prior = prior_guidance[guidance_id]
+        current = current_guidance[guidance_id]
+        if prior["metric"] != current["metric"] or prior["unit"] != current["unit"]:
+            raise ValueError(
+                f"earnings call guidance {guidance_id} is not comparable across periods"
+            )
+        width_change = current["width"] - prior["width"]
+        range_state = (
+            "unchanged"
+            if math.isclose(width_change, 0.0, abs_tol=1e-12)
+            else "expanded" if width_change > 0 else "narrowed"
+        )
+        guidance_changes.append(
+            {
+                "guidance_id": guidance_id,
+                "metric": current["metric"],
+                "unit": current["unit"],
+                "prior_period": prior["period"],
+                "current_period": current["period"],
+                "prior_low": prior["low"],
+                "prior_high": prior["high"],
+                "current_low": current["low"],
+                "current_high": current["high"],
+                "low_change": current["low"] - prior["low"],
+                "high_change": current["high"] - prior["high"],
+                "midpoint_change": current["midpoint"] - prior["midpoint"],
+                "width_change": width_change,
+                "width_change_percent": (
+                    width_change / prior["width"] * 100
+                    if not math.isclose(prior["width"], 0.0, abs_tol=1e-12)
+                    else None
+                ),
+                "range_state": range_state,
+            }
+        )
+
+    history_raw = raw.get("guidance_history")
+    required_history = int(policy["earnings_call_guidance_history_quarters"])
+    if not isinstance(history_raw, list) or len(history_raw) != required_history:
+        raise ValueError("management calibration requires exactly eight quarters")
+    history = []
+    periods: set[str] = set()
+    metric_identity: tuple[str, str, str] | None = None
+    for item in history_raw:
+        if not isinstance(item, dict):
+            raise ValueError("guidance history row must be an object")
+        fiscal_period = _bounded_text(
+            item.get("fiscal_period"), field="guidance_history.fiscal_period", maximum=80
+        )
+        if fiscal_period in periods:
+            raise ValueError("guidance history periods must be unique")
+        periods.add(fiscal_period)
+        metric_id = _bounded_text(
+            item.get("metric_id"), field="guidance_history.metric_id", maximum=100
+        )
+        unit = item.get("unit")
+        if unit not in allowed_units:
+            raise ValueError("guidance history unit is invalid")
+        favorable_direction = item.get("favorable_direction")
+        if favorable_direction not in {"higher", "lower"}:
+            raise ValueError("guidance history favorable direction is invalid")
+        identity = (metric_id, str(unit), str(favorable_direction))
+        if metric_identity is None:
+            metric_identity = identity
+        elif identity != metric_identity:
+            raise ValueError("guidance history must use one comparable metric")
+        low = _finite_number(item.get("guidance_low"), field="guidance_history.low")
+        high = _finite_number(item.get("guidance_high"), field="guidance_history.high")
+        actual = _finite_number(item.get("actual"), field="guidance_history.actual")
+        if high < low:
+            raise ValueError("guidance history range is invalid")
+        midpoint = (low + high) / 2
+        if math.isclose(midpoint, 0.0, abs_tol=1e-12):
+            raise ValueError("guidance history midpoint cannot be zero")
+        signed_error = (actual / midpoint - 1) * 100
+        favorable_error = (
+            signed_error if favorable_direction == "higher" else -signed_error
+        )
+        range_result = (
+            "above_range"
+            if actual > high
+            else "below_range" if actual < low else "within_range"
+        )
+        calibration_result = (
+            "conservative_outcome"
+            if favorable_error > 0 and range_result != "within_range"
+            else "aggressive_outcome"
+            if favorable_error < 0 and range_result != "within_range"
+            else "within_range"
+        )
+        period_end = date.fromisoformat(str(item.get("period_end")))
+        history_source_ids = subject_source_ids(
+            item.get("source_ids"), field=f"guidance_history.{fiscal_period}"
+        )
+        latest_history_source_date = max(
+            date.fromisoformat(str(registry[source_id]["observed_at"]))
+            for source_id in history_source_ids
+        )
+        if period_end > latest_history_source_date:
+            raise ValueError(
+                f"guidance history {fiscal_period} ends after its source observation"
+            )
+        history.append(
+            {
+                "fiscal_period": fiscal_period,
+                "period_end": period_end.isoformat(),
+                "metric_id": metric_id,
+                "unit": unit,
+                "favorable_direction": favorable_direction,
+                "guidance_low": low,
+                "guidance_high": high,
+                "guidance_midpoint": midpoint,
+                "actual": actual,
+                "signed_midpoint_error_percent": signed_error,
+                "favorable_signed_error_percent": favorable_error,
+                "absolute_midpoint_error_percent": abs(signed_error),
+                "range_result": range_result,
+                "calibration_result": calibration_result,
+                "source_ids": history_source_ids,
+            }
+        )
+    history.sort(key=lambda item: item["period_end"])
+    if any(
+        history[index]["period_end"] >= history[index + 1]["period_end"]
+        for index in range(len(history) - 1)
+    ):
+        raise ValueError("guidance history is not chronological")
+    mean_favorable_error = sum(
+        item["favorable_signed_error_percent"] for item in history
+    ) / len(history)
+    mean_absolute_error = sum(
+        item["absolute_midpoint_error_percent"] for item in history
+    ) / len(history)
+    threshold = float(policy["management_guidance_bias_threshold_percent"])
+    bias = (
+        "historically_conservative"
+        if mean_favorable_error > threshold
+        else "historically_aggressive"
+        if mean_favorable_error < -threshold
+        else "historically_balanced"
+    )
+
+    commitments_raw = raw.get("prior_commitments")
+    minimum_commitments = int(policy["minimum_earnings_call_commitments"])
+    if (
+        not isinstance(commitments_raw, list)
+        or not minimum_commitments <= len(commitments_raw) <= 30
+    ):
+        raise ValueError("earnings call prior commitments are incomplete")
+    commitments = []
+    commitment_ids: set[str] = set()
+    status_counts = {"met": 0, "missed": 0, "changed": 0, "pending": 0}
+    for item in commitments_raw:
+        if not isinstance(item, dict):
+            raise ValueError("earnings call commitment must be an object")
+        commitment_id = _bounded_text(
+            item.get("commitment_id"),
+            field="earnings_call.commitment_id",
+            maximum=100,
+        )
+        if commitment_id in commitment_ids:
+            raise ValueError("earnings call commitment ids must be unique")
+        commitment_ids.add(commitment_id)
+        status = item.get("status")
+        if status not in status_counts:
+            raise ValueError(f"earnings call commitment {commitment_id} status is invalid")
+        status_counts[status] += 1
+        commitments.append(
+            {
+                "commitment_id": commitment_id,
+                "made_period": _bounded_text(
+                    item.get("made_period"),
+                    field=f"earnings_call.{commitment_id}.made_period",
+                    maximum=80,
+                ),
+                "due_period": _bounded_text(
+                    item.get("due_period"),
+                    field=f"earnings_call.{commitment_id}.due_period",
+                    maximum=80,
+                ),
+                "statement": _bounded_text(
+                    item.get("statement"),
+                    field=f"earnings_call.{commitment_id}.statement",
+                    maximum=1200,
+                ),
+                "status": status,
+                "evidence": _bounded_text(
+                    item.get("evidence"),
+                    field=f"earnings_call.{commitment_id}.evidence",
+                    maximum=1200,
+                ),
+                "source_ids": subject_source_ids(
+                    item.get("source_ids"), field=f"earnings_call.{commitment_id}"
+                ),
+            }
+        )
+    resolved_for_rate = status_counts["met"] + status_counts["missed"]
+    if resolved_for_rate == 0:
+        raise ValueError("earnings call commitments need a met or missed outcome")
+
+    return {
+        "prior_call": prior_call,
+        "current_call": current_call,
+        "language_diff": {
+            "new_topic_ids": sorted(current_topics - prior_topics),
+            "removed_topic_ids": sorted(prior_topics - current_topics),
+            "changed_topics": changed_topics,
+            "new_expressions": [
+                {
+                    "topic_id": topic_id,
+                    "text": current_statements[topic_id]["text"],
+                }
+                for topic_id in sorted(current_topics - prior_topics)
+            ],
+            "disappeared_expressions": [
+                {
+                    "topic_id": topic_id,
+                    "text": prior_statements[topic_id]["text"],
+                }
+                for topic_id in sorted(prior_topics - current_topics)
+            ],
+        },
+        "management_confidence": {
+            "prior_average_level": prior_confidence,
+            "current_average_level": current_confidence,
+            "change": current_confidence - prior_confidence,
+            "scale": "0_hedged_to_4_explicit_commitment",
+            "score_used": False,
+        },
+        "analyst_question_diff": {
+            "new_theme_ids": sorted(current_question_ids - prior_question_ids),
+            "removed_theme_ids": sorted(prior_question_ids - current_question_ids),
+            "recurring_theme_ids": sorted(prior_question_ids & current_question_ids),
+            "changed_recurring_themes": changed_question_themes,
+            "current_evaded_theme_ids": sorted(current_evaded),
+            "newly_evaded_theme_ids": sorted(current_evaded - prior_evaded),
+            "prior_response_state_counts": {
+                state: sum(
+                    item["response_state"] == state for item in prior_questions.values()
+                )
+                for state in sorted(allowed_response_states)
+            },
+            "current_response_state_counts": {
+                state: sum(
+                    item["response_state"] == state for item in current_questions.values()
+                )
+                for state in sorted(allowed_response_states)
+            },
+        },
+        "numeric_guidance_diff": {
+            "new_guidance_ids": sorted(current_guidance_ids - prior_guidance_ids),
+            "removed_guidance_ids": sorted(prior_guidance_ids - current_guidance_ids),
+            "changes": guidance_changes,
+        },
+        "management_guidance_calibration": {
+            "history": history,
+            "quarter_count": len(history),
+            "within_range_count": sum(
+                item["range_result"] == "within_range" for item in history
+            ),
+            "above_range_count": sum(
+                item["range_result"] == "above_range" for item in history
+            ),
+            "below_range_count": sum(
+                item["range_result"] == "below_range" for item in history
+            ),
+            "hit_rate_percent": sum(
+                item["range_result"] == "within_range" for item in history
+            )
+            / len(history)
+            * 100,
+            "mean_favorable_signed_error_percent": mean_favorable_error,
+            "mean_absolute_midpoint_error_percent": mean_absolute_error,
+            "bias_threshold_percent": threshold,
+            "bias_classification": bias,
+            "score_used": False,
+        },
+        "prior_commitment_follow_through": {
+            "commitments": sorted(
+                commitments, key=lambda item: item["commitment_id"]
+            ),
+            "status_counts": status_counts,
+            "resolved_fulfillment_rate_percent": (
+                status_counts["met"] / resolved_for_rate * 100
+            ),
+            "score_used": False,
+        },
+        "methodology": _bounded_text(
+            raw.get("methodology"), field="earnings_call.methodology", maximum=1200
+        ),
+        "source_ids": subject_source_ids(
+            raw.get("source_ids"), field="earnings_call"
+        ),
+    }
+
+
 def _valuation(
     raw: Any,
     *,
@@ -2542,6 +3181,18 @@ def build_focused_research_dossier(
         registry=sources,
         policy=policy,
     )
+    supply_entities = {
+        item["entity_id"]: item for item in supply_chain["entities"]
+    }
+    subject_organization = supply_entities[supply_chain["subject_entity_id"]][
+        "source_organization"
+    ]
+    earnings_call = _earnings_call_diff(
+        payload.get("earnings_call_diff"),
+        subject_organization=subject_organization,
+        registry=sources,
+        policy=policy,
+    )
     valuation = _valuation(
         payload.get("valuation"),
         current_price=current_price,
@@ -2594,6 +3245,7 @@ def build_focused_research_dossier(
         "earnings_model": earnings,
         "earnings_quality": earnings_quality,
         "supply_chain_read_through": supply_chain,
+        "earnings_call_diff": earnings_call,
         "valuation": valuation,
         "catalyst_path": sorted(catalysts, key=lambda item: (item["window_start"], item["catalyst_id"])),
         "risk_disconfirming_evidence": risk_evidence,
@@ -3090,6 +3742,60 @@ def validate_focused_research_dossier(
         )
     if confirmation.get("score_used") is not False:
         raise ValueError("focused research supply-chain score attempted to control a decision")
+    earnings_call = sections.get("earnings_call_diff")
+    if not isinstance(earnings_call, dict):
+        raise ValueError("focused research earnings-call diff is missing")
+    supply_entities = {
+        item["entity_id"]: item
+        for item in supply_chain.get("entities", [])
+        if isinstance(item, dict) and item.get("entity_id")
+    }
+    subject = supply_entities.get(supply_chain.get("subject_entity_id"), {})
+    try:
+        rebuilt_earnings_call = _earnings_call_diff(
+            {
+                "prior_call": earnings_call.get("prior_call"),
+                "current_call": earnings_call.get("current_call"),
+                "guidance_history": earnings_call.get(
+                    "management_guidance_calibration", {}
+                ).get("history"),
+                "prior_commitments": earnings_call.get(
+                    "prior_commitment_follow_through", {}
+                ).get("commitments"),
+                "methodology": earnings_call.get("methodology"),
+                "source_ids": earnings_call.get("source_ids"),
+            },
+            subject_organization=str(subject.get("source_organization")),
+            registry=source_registry,
+            policy={
+                "minimum_earnings_call_topics": 3,
+                "minimum_earnings_call_questions": 2,
+                "minimum_earnings_call_commitments": 2,
+                "earnings_call_guidance_history_quarters": 8,
+                "management_guidance_bias_threshold_percent": 2.0,
+                "allowed_units": [
+                    "percent",
+                    "basis_points",
+                    "usd",
+                    "usd_millions",
+                    "per_share_usd",
+                    "ratio",
+                    "multiple",
+                    "units",
+                ],
+            },
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("focused research earnings-call diff does not reconcile") from exc
+    if rebuilt_earnings_call != earnings_call:
+        raise ValueError("focused research earnings-call diff does not reconcile")
+    for field in (
+        "management_confidence",
+        "management_guidance_calibration",
+        "prior_commitment_follow_through",
+    ):
+        if earnings_call.get(field, {}).get("score_used") is not False:
+            raise ValueError("focused research earnings-call score controlled a decision")
     score = sections.get("score_summary", {})
     if score.get("used_for_recommendation_gate") is not False or score.get(
         "used_for_position_sizing"
@@ -3151,6 +3857,7 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     earnings = sections["earnings_model"]
     quality = sections["earnings_quality"]
     supply_chain = sections["supply_chain_read_through"]
+    earnings_call = sections["earnings_call_diff"]
     valuation = sections["valuation"]
     risks = sections["risk_disconfirming_evidence"]
     position = sections["position_construction"]
@@ -3169,6 +3876,10 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
         item["entity_id"]: item for item in supply_chain["entities"]
     }
     supply_confirmation = supply_chain["cross_company_confirmation"]
+    call_language = earnings_call["language_diff"]
+    call_questions = earnings_call["analyst_question_diff"]
+    call_calibration = earnings_call["management_guidance_calibration"]
+    call_commitments = earnings_call["prior_commitment_follow_through"]
 
     def formatted_change(value: float | None) -> str:
         return "not meaningful" if value is None else f"{value:+.1f}%"
@@ -3340,30 +4051,97 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
         f"Coverage: {supply_chain['coverage_rationale']}",
         f"Falsification: {'; '.join(supply_chain['hypothesis']['falsification_criteria'])}",
         "",
-        "## 6. Valuation",
+        "## 6. Earnings Call Diff / Management Calibration",
+        "",
+        f"Comparison: {earnings_call['prior_call']['period']} ({earnings_call['prior_call']['call_date']}) → {earnings_call['current_call']['period']} ({earnings_call['current_call']['call_date']})",
+        f"Management confidence: {earnings_call['management_confidence']['prior_average_level']:.2f} → {earnings_call['management_confidence']['current_average_level']:.2f} ({earnings_call['management_confidence']['change']:+.2f}) on {earnings_call['management_confidence']['scale']}",
+        f"New topics: {', '.join(call_language['new_topic_ids']) or 'none'} | Removed topics: {', '.join(call_language['removed_topic_ids']) or 'none'}",
+        "",
+        "### Changed language and horizons",
+        "",
+        "| Topic | Prior language | Current language | Added terms | Removed terms | Confidence change | Horizon change |",
+        "|---|---|---|---|---|---:|---|",
+        *[
+            f"| {item['topic_id']} | {item['prior_text']} | {item['current_text']} | {', '.join(item['added_terms']) or '—'} | {', '.join(item['removed_terms']) or '—'} | {item['confidence_change']:+d} | {item['prior_horizon']} → {item['current_horizon']} |"
+            for item in call_language["changed_topics"]
+        ],
+        "",
+        "### Analyst question and response diff",
+        "",
+        f"New question themes: {', '.join(call_questions['new_theme_ids']) or 'none'} | Removed: {', '.join(call_questions['removed_theme_ids']) or 'none'} | Recurring: {', '.join(call_questions['recurring_theme_ids']) or 'none'}",
+        f"Currently evaded: {', '.join(call_questions['current_evaded_theme_ids']) or 'none'} | Newly evaded: {', '.join(call_questions['newly_evaded_theme_ids']) or 'none'}",
+        "",
+        "| Changed recurring theme | Prior question | Current question | Prior response | Current response |",
+        "|---|---|---|---|---|",
+        *[
+            f"| {item['theme_id']} | {item['prior_question']} | {item['current_question']} | {item['prior_response_state']} | {item['current_response_state']} |"
+            for item in call_questions["changed_recurring_themes"]
+        ],
+        "",
+        "| Current theme | Analyst | Response state | Management response |",
+        "|---|---|---|---|",
+        *[
+            f"| {item['theme_id']} | {item['analyst_organization']} | {item['response_state']} | {item['response_summary']} |"
+            for item in earnings_call["current_call"]["analyst_questions"]
+        ],
+        "",
+        "### Numeric guidance range diff",
+        "",
+        f"New guidance: {', '.join(earnings_call['numeric_guidance_diff']['new_guidance_ids']) or 'none'} | Removed guidance: {', '.join(earnings_call['numeric_guidance_diff']['removed_guidance_ids']) or 'none'}",
+        "",
+        "| Metric | Prior range | Current range | Midpoint change | Width change | Range state |",
+        "|---|---:|---:|---:|---:|---|",
+        *[
+            f"| {item['metric']} | {item['prior_low']:.2f}–{item['prior_high']:.2f} {item['unit']} | {item['current_low']:.2f}–{item['current_high']:.2f} {item['unit']} | {item['midpoint_change']:+.2f} | {item['width_change']:+.2f} | {item['range_state']} |"
+            for item in earnings_call["numeric_guidance_diff"]["changes"]
+        ],
+        "",
+        "### Eight-quarter guidance calibration",
+        "",
+        f"Bias: {call_calibration['bias_classification']} | hit rate {call_calibration['hit_rate_percent']:.1f}% | mean favorable signed error {call_calibration['mean_favorable_signed_error_percent']:+.1f}% | mean absolute midpoint error {call_calibration['mean_absolute_midpoint_error_percent']:.1f}%",
+        "",
+        "| Quarter | Guidance | Actual | Range result | Calibration | Midpoint error |",
+        "|---|---:|---:|---|---|---:|",
+        *[
+            f"| {item['fiscal_period']} | {item['guidance_low']:.2f}–{item['guidance_high']:.2f} {item['unit']} | {item['actual']:.2f} | {item['range_result']} | {item['calibration_result']} | {item['signed_midpoint_error_percent']:+.1f}% |"
+            for item in call_calibration["history"]
+        ],
+        "",
+        "### Prior commitment follow-through",
+        "",
+        f"Resolved fulfillment rate: {call_commitments['resolved_fulfillment_rate_percent']:.1f}% | met {call_commitments['status_counts']['met']} | missed {call_commitments['status_counts']['missed']} | changed {call_commitments['status_counts']['changed']} | pending {call_commitments['status_counts']['pending']}",
+        "",
+        "| Commitment | Due | Status | Evidence |",
+        "|---|---|---|---|",
+        *[
+            f"| {item['statement']} | {item['due_period']} | {item['status']} | {item['evidence']} |"
+            for item in call_commitments["commitments"]
+        ],
+        "",
+        "## 7. Valuation",
         "",
         f"Probability-weighted price: ${valuation['probability_weighted_price']:.2f} | Expected return: {valuation['probability_weighted_return']:+.1%} | Bear return: {valuation['bear_case_return']:+.1%}",
         f"Reward/risk: {valuation['reward_to_risk']:.2f}" if valuation["reward_to_risk"] is not None else "Reward/risk: not meaningful",
         "",
-        "## 7. Catalyst Path",
+        "## 8. Catalyst Path",
         "",
         *[
             f"- {item['window_start']}–{item['window_end']}: {item['event']} — {item['observable']}"
             for item in sections["catalyst_path"]
         ],
         "",
-        "## 8. Risk / Disconfirming Evidence",
+        "## 9. Risk / Disconfirming Evidence",
         "",
         *[f"- Risk ({item['probability']}): {item['statement']} — monitor: {item['monitor']}" for item in risks["risks"]],
         *[f"- Contrary evidence: {item['observation']} — impact: {item['thesis_impact']}" for item in risks["contrary_evidence"]],
         "",
-        "## 9. Position Construction",
+        "## 10. Position Construction",
         "",
         f"Initial {position['initial_weight_percent']:.2f}% → target {position['target_weight_percent']:.2f}% → maximum {position['maximum_weight_percent']:.2f}%",
         f"Entry ${position['entry_price_low']:.2f}–${position['entry_price_high']:.2f} | risk budget {position['risk_budget_bps']:.0f} bps | earnings-event cap {position['earnings_event_weight_percent']:.2f}%",
         position["sizing_rationale"],
         "",
-        "## 10. Score Summary",
+        "## 11. Score Summary",
         "",
         f"Investment Conviction: {score['investment_conviction']}/100",
         score["summary"],
