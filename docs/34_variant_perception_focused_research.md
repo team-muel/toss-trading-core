@@ -21,7 +21,7 @@
 
 ## 의사결정 메모의 고정 순서
 
-모든 `focused-research-dossier-v8`는 다음 순서를 그대로 사용한다.
+모든 `focused-research-dossier-v9`는 다음 순서를 그대로 사용한다.
 
 ```text
 Investment Thesis
@@ -30,6 +30,7 @@ Investment Thesis
   → Earnings Quality
   → Supply-chain Read-through
   → Earnings Call Diff / Management Calibration
+  → Positioning Analysis
   → Valuation
   → Catalyst Path
   → Risk / Disconfirming Evidence
@@ -57,6 +58,9 @@ Investment Thesis
 - 연속 두 earnings call의 새 표현·사라진 표현, horizon·confidence와 질문·회피 변화
 - 수치 guidance 범위 변화와 같은 지표의 직전 8개 분기 guidance 대 실제 결과
 - 과거 경영진 약속의 `met`, `missed`, `changed`, `pending` 상태와 이행률
+- 13F·13D/G·Form 4, 주요 주주 집중도, passive ownership과 ETF exposure
+- short interest·days-to-cover·short-sale volume·borrow availability와 비용
+- IV term structure·percentile·realized 대비 implied·25Δ skew·OI·expected move·IV crush
 - Base EPS의 컨센서스·시장 내재 값 대비 차이
 - bear/base/bull 목표가격과 확률가중 기대수익
 - 날짜가 있는 촉매, 관측 변수, thesis 해소 방식
@@ -376,6 +380,57 @@ annotation을 남긴다. confidence는 원문에 연결된 비교용 annotation�
 아닌 뉴스 요약으로 콜을 대체하거나, 8개 분기 중 빠진 값을 추정하거나, 서로 다른
 지표를 이어 붙이면 dossier 생성이 실패한다.
 
+## Positioning Analysis
+
+소셜 sentiment와 단순 put/call ratio는 필수 입력으로 사용하지 않는다. 포지셔닝은
+기관 보유구조, 공매도, 옵션을 서로 다른 데이터 계층으로 나누고 결과를 추천 점수로
+압축하지 않는다.
+
+### 기관 보유와 SEC filing
+
+- SEC 13F를 manager별로 중복 제거한 연속 두 aggregate의 report date, snapshot
+  availability date, 기관 보유주식 수와 manager 수
+- 발행주식 수 대비 기관 보유율 변화와 현재 13F reporting lag
+- 주요 주주의 top 1·5·10 집중도와 disclosed-holder coverage
+- 데이터셋이 active/passive로 분류한 보유량과 분류 의존성 표시
+- 13D, 13D/A, 13G, 13G/A의 filer, event/filed date, 지분율 변화와 intent
+- Form 4의 transaction code, 취득·처분, direct·indirect, 수량과 가격
+- ETF별 보유주식, issuer 지분율, ETF 내 weight와 시장가치
+
+13F는 분기말 현재 보유를 나중에 보고하며 issuer-level 합계는 여러 manager filing을
+정규화한 결과이므로 단일 filing처럼 표현하지 않는다. aggregate는 원 SEC accession
+lineage와 snapshot availability date를 남기고 현재 포지션과 동일시하지 않는다.
+13D/G와 Form 4는 filing date가 연결된 SEC 원문 관측일과 일치해야 한다. Form 4의
+grant·option exercise·tax withholding은 공개시장 매수·매도와 다르므로 전체 순거래와
+transaction code `P`·`S` 수량을 별도로 표시한다. ETF 보유량은 passive ownership에
+포함될 수 있으므로 두 값을 더하지 않는다.
+
+### Short
+
+연속 settlement snapshot에서 short interest/float와 days-to-cover를 계산한다. 일별
+short-sale volume은 거래 흐름이며 미결제 short position이 아니므로 별도 기간 합계와
+비율로만 저장하고 `not_short_interest=true`를 강제한다. securities-lending 데이터가
+있으면 borrow availability, fee와 utilization을 보존하고, 없으면 `unavailable`과 이유를
+명시한다. short-interest 데이터에서 borrow cost를 역산하지 않는다.
+
+### Options
+
+최소 세 expiry의 ATM IV로 term structure를 만들고, 252개 이상 과거 ATM IV 관측치에서
+현재 percentile을 재계산한다. 최소 22개 종가의 log return으로 연환산 realized
+volatility를 계산해 nearest implied volatility와 비교한다. 25Δ put·ATM·call IV로
+put-minus-call skew와 risk reversal을 모두 표시한다.
+
+expiry·strike·call/put별 OI 원자료에서 총 OI, 주요 expiry와 상위 strike concentration을
+계산한다. OI는 opening/closing과 buyer/seller 방향을 알 수 없으므로 방향성 포지션으로
+단정하지 않는다. 최근 실적 expiry의 ATM straddle로 expected move를 계산하고, 최소
+4개 과거 실적의 직전·직후 ATM IV에서 평균·중앙 IV crush를 산출한다.
+
+CFTC futures positioning은 단일 종목 보유, short interest 또는 single-name options
+자료가 아니다. commodity·rate·index futures가 기업 thesis에 직접 전달되는 경우에만
+`context_only` macro overlay로 허용하며 `issuer_positioning_source=false`를 유지한다.
+Positioning Analysis는 연구 해석 입력이며 recommendation gate나 position sizing을
+직접 제어하지 않는다.
+
 ## 출처와 시점 규칙
 
 - 모든 출처는 `as_of_date` 이전에 관측 가능해야 한다.
@@ -433,8 +488,8 @@ earnings/cash-flow/ROIC model과 sensitivity 재계산, Earnings Quality와 EPS 
 attribution, GAAP/non-GAAP reconciliation, supply-chain graph 연결성, issuer-primary
 source 독립성, 지지·반대 신호 재계산, earnings-call 언어·질문·guidance diff,
 8개 분기 management calibration과 과거 약속 이행, estimate revision·목표가 분포·
-analyst breadth·가격 divergence, valuation, 촉매 연결, 반증 증거, 포지션 상한과
-추천 조건을 확인한다. 통과 결과에는
+analyst breadth·가격 divergence, SEC ownership filing·short·borrow·options positioning
+재계산, valuation, 촉매 연결, 반증 증거, 포지션 상한과 추천 조건을 확인한다. 통과 결과에는
 결정적 `dossier_id`와 `content_sha256`이 붙고 동일 ID의 `.md` 메모도 생성된다. 이후
 내용이 바뀌면 추천 게이트의 hash 검사가 실패한다.
 

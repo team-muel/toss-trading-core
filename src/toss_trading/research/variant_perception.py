@@ -4,14 +4,15 @@ import hashlib
 import json
 import math
 import re
+import statistics
 import uuid
 from datetime import date
 from pathlib import Path
 from typing import Any, Iterable
 
 
-POLICY_SCHEMA = "focused-research-policy-v8"
-DOSSIER_SCHEMA = "focused-research-dossier-v8"
+POLICY_SCHEMA = "focused-research-policy-v9"
+DOSSIER_SCHEMA = "focused-research-dossier-v9"
 RESEARCH_SECTION_ORDER = [
     "investment_thesis",
     "variant_view",
@@ -19,6 +20,7 @@ RESEARCH_SECTION_ORDER = [
     "earnings_quality",
     "supply_chain_read_through",
     "earnings_call_diff",
+    "positioning_analysis",
     "valuation",
     "catalyst_path",
     "risk_disconfirming_evidence",
@@ -109,6 +111,15 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         ("minimum_event_revision_metrics", 2, 10),
         ("minimum_estimate_revision_window_days", 1, 90),
         ("maximum_estimate_revision_window_days", 1, 180),
+        ("minimum_major_holders", 3, 50),
+        ("minimum_beneficial_ownership_filings", 1, 50),
+        ("minimum_form4_transactions", 1, 100),
+        ("minimum_etf_exposures", 1, 50),
+        ("minimum_iv_term_points", 2, 20),
+        ("minimum_iv_history_observations", 60, 1000),
+        ("minimum_realized_price_observations", 10, 253),
+        ("minimum_option_open_interest_rows", 4, 500),
+        ("minimum_post_earnings_iv_events", 2, 20),
     ):
         value = payload.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
@@ -171,6 +182,11 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "require_earnings_event_revision",
         "require_analyst_revision_breadth",
         "require_revision_price_divergence",
+        "require_positioning_analysis",
+        "require_institutional_ownership_analysis",
+        "require_short_positioning_analysis",
+        "require_options_positioning_analysis",
+        "require_official_positioning_sources",
         "buy_requires_supply_chain_confirmation",
     ):
         if payload.get(field) is not True:
@@ -2939,6 +2955,907 @@ def _position_construction(
     }
 
 
+def _positioning_analysis(
+    raw: Any,
+    *,
+    as_of: date,
+    current_price: float,
+    registry: dict[str, dict[str, Any]],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("positioning_analysis must be an object")
+
+    def typed_sources(
+        values: Any, *, field: str, source_type: str
+    ) -> list[str]:
+        return _source_ids(
+            values,
+            field=field,
+            registry=registry,
+            required_type=source_type,
+        )
+
+    def dated_sources(
+        values: Any,
+        *,
+        field: str,
+        source_type: str,
+        observed_date: date,
+    ) -> list[str]:
+        source_ids = typed_sources(values, field=field, source_type=source_type)
+        if not any(
+            registry[source_id]["source_type"] == source_type
+            and date.fromisoformat(str(registry[source_id]["observed_at"]))
+            == observed_date
+            for source_id in source_ids
+        ):
+            raise ValueError(f"{field} lacks a source observed on the stated date")
+        return source_ids
+
+    ownership_raw = raw.get("institutional_ownership")
+    if not isinstance(ownership_raw, dict):
+        raise ValueError("institutional ownership analysis is missing")
+    shares_outstanding = _finite_number(
+        ownership_raw.get("shares_outstanding"), field="shares_outstanding"
+    )
+    if shares_outstanding <= 0:
+        raise ValueError("positioning shares outstanding must be positive")
+
+    def thirteen_f_snapshot(value: Any, *, field: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} must be an object")
+        report_date = date.fromisoformat(str(value.get("report_date")))
+        snapshot_date = date.fromisoformat(str(value.get("snapshot_date")))
+        if report_date > snapshot_date or snapshot_date > as_of:
+            raise ValueError(f"{field} dates are invalid")
+        institutional_shares = _finite_number(
+            value.get("institutional_shares"), field=f"{field}.institutional_shares"
+        )
+        manager_count = value.get("reporting_manager_count")
+        if (
+            institutional_shares < 0
+            or institutional_shares > shares_outstanding * 1.25
+            or isinstance(manager_count, bool)
+            or not isinstance(manager_count, int)
+            or manager_count < 1
+        ):
+            raise ValueError(f"{field} values are invalid")
+        return {
+            "report_date": report_date.isoformat(),
+            "snapshot_date": snapshot_date.isoformat(),
+            "institutional_shares": institutional_shares,
+            "institutional_ownership_percent": (
+                institutional_shares / shares_outstanding * 100
+            ),
+            "reporting_manager_count": manager_count,
+            "source_ids": dated_sources(
+                value.get("source_ids"),
+                field=field,
+                source_type="ownership_dataset",
+                observed_date=snapshot_date,
+            ),
+        }
+
+    prior_13f = thirteen_f_snapshot(
+        ownership_raw.get("prior_13f"), field="positioning.prior_13f"
+    )
+    current_13f = thirteen_f_snapshot(
+        ownership_raw.get("current_13f"), field="positioning.current_13f"
+    )
+    if date.fromisoformat(current_13f["report_date"]) <= date.fromisoformat(
+        prior_13f["report_date"]
+    ):
+        raise ValueError("13F snapshots are not chronological")
+
+    holders_raw = ownership_raw.get("major_holders")
+    if (
+        not isinstance(holders_raw, list)
+        or not int(policy["minimum_major_holders"]) <= len(holders_raw) <= 50
+    ):
+        raise ValueError("major-holder coverage is incomplete")
+    holders = []
+    holder_ids: set[str] = set()
+    allowed_holder_styles = {"active", "passive", "strategic", "insider"}
+    for item in holders_raw:
+        if not isinstance(item, dict):
+            raise ValueError("major holder must be an object")
+        holder_id = _bounded_text(
+            item.get("holder_id"), field="positioning.holder_id", maximum=100
+        )
+        if holder_id in holder_ids:
+            raise ValueError("major holder ids must be unique")
+        holder_ids.add(holder_id)
+        style = item.get("style")
+        shares = _finite_number(item.get("shares"), field=f"{holder_id}.shares")
+        if style not in allowed_holder_styles or not 0 < shares <= shares_outstanding:
+            raise ValueError(f"major holder {holder_id} values are invalid")
+        holders.append(
+            {
+                "holder_id": holder_id,
+                "holder_name": _bounded_text(
+                    item.get("holder_name"), field=f"{holder_id}.name", maximum=200
+                ),
+                "style": style,
+                "shares": shares,
+                "ownership_percent": shares / shares_outstanding * 100,
+                "source_ids": typed_sources(
+                    item.get("source_ids"),
+                    field=f"major_holder.{holder_id}",
+                    source_type="ownership_dataset",
+                ),
+            }
+        )
+    holders.sort(key=lambda item: (-item["shares"], item["holder_id"]))
+    disclosed_holder_shares = sum(item["shares"] for item in holders)
+    if disclosed_holder_shares > shares_outstanding * 1.25:
+        raise ValueError("major-holder shares materially exceed shares outstanding")
+
+    beneficial_raw = ownership_raw.get("beneficial_ownership_filings")
+    if (
+        not isinstance(beneficial_raw, list)
+        or not int(policy["minimum_beneficial_ownership_filings"])
+        <= len(beneficial_raw)
+        <= 50
+    ):
+        raise ValueError("13D/13G coverage is incomplete")
+    beneficial = []
+    beneficial_ids: set[str] = set()
+    for item in beneficial_raw:
+        if not isinstance(item, dict):
+            raise ValueError("13D/13G filing must be an object")
+        filing_id = _bounded_text(
+            item.get("filing_id"), field="beneficial_ownership.filing_id", maximum=120
+        )
+        if filing_id in beneficial_ids:
+            raise ValueError("13D/13G filing ids must be unique")
+        beneficial_ids.add(filing_id)
+        form_type = item.get("form_type")
+        intent = item.get("intent")
+        filing_date = date.fromisoformat(str(item.get("filing_date")))
+        event_date = date.fromisoformat(str(item.get("event_date")))
+        ownership_percent = _percentage(
+            item.get("ownership_percent"), field=f"{filing_id}.ownership_percent"
+        )
+        if (
+            form_type not in {"13D", "13D/A", "13G", "13G/A"}
+            or intent not in {"active", "passive", "control", "other"}
+            or event_date > filing_date
+            or filing_date > as_of
+        ):
+            raise ValueError(f"beneficial ownership filing {filing_id} is invalid")
+        beneficial.append(
+            {
+                "filing_id": filing_id,
+                "form_type": form_type,
+                "filer": _bounded_text(
+                    item.get("filer"), field=f"{filing_id}.filer", maximum=200
+                ),
+                "event_date": event_date.isoformat(),
+                "filing_date": filing_date.isoformat(),
+                "ownership_percent": ownership_percent,
+                "change_percentage_points": _finite_number(
+                    item.get("change_percentage_points"),
+                    field=f"{filing_id}.change_percentage_points",
+                ),
+                "intent": intent,
+                "source_ids": dated_sources(
+                    item.get("source_ids"),
+                    field=f"beneficial_ownership.{filing_id}",
+                    source_type="regulatory_filing",
+                    observed_date=filing_date,
+                ),
+            }
+        )
+
+    form4_raw = ownership_raw.get("form4_transactions")
+    if (
+        not isinstance(form4_raw, list)
+        or not int(policy["minimum_form4_transactions"]) <= len(form4_raw) <= 100
+    ):
+        raise ValueError("Form 4 coverage is incomplete")
+    form4 = []
+    transaction_ids: set[str] = set()
+    for item in form4_raw:
+        if not isinstance(item, dict):
+            raise ValueError("Form 4 transaction must be an object")
+        transaction_id = _bounded_text(
+            item.get("transaction_id"), field="form4.transaction_id", maximum=120
+        )
+        if transaction_id in transaction_ids:
+            raise ValueError("Form 4 transaction ids must be unique")
+        transaction_ids.add(transaction_id)
+        filing_date = date.fromisoformat(str(item.get("filing_date")))
+        transaction_date = date.fromisoformat(str(item.get("transaction_date")))
+        direction = item.get("direction")
+        shares = _finite_number(item.get("shares"), field=f"{transaction_id}.shares")
+        price = _finite_number(
+            item.get("price_per_share"), field=f"{transaction_id}.price_per_share"
+        )
+        if (
+            item.get("transaction_code") not in {"P", "S", "A", "M", "G", "F"}
+            or direction not in {"acquired", "disposed"}
+            or transaction_date > filing_date
+            or filing_date > as_of
+            or shares <= 0
+            or price < 0
+        ):
+            raise ValueError(f"Form 4 transaction {transaction_id} is invalid")
+        signed_shares = shares if direction == "acquired" else -shares
+        form4.append(
+            {
+                "transaction_id": transaction_id,
+                "insider": _bounded_text(
+                    item.get("insider"), field=f"{transaction_id}.insider", maximum=200
+                ),
+                "role": _bounded_text(
+                    item.get("role"), field=f"{transaction_id}.role", maximum=160
+                ),
+                "transaction_date": transaction_date.isoformat(),
+                "filing_date": filing_date.isoformat(),
+                "transaction_code": item["transaction_code"],
+                "direction": direction,
+                "shares": shares,
+                "price_per_share": price,
+                "signed_shares": signed_shares,
+                "signed_value": signed_shares * price,
+                "ownership_nature": item.get("ownership_nature"),
+                "source_ids": dated_sources(
+                    item.get("source_ids"),
+                    field=f"form4.{transaction_id}",
+                    source_type="regulatory_filing",
+                    observed_date=filing_date,
+                ),
+            }
+        )
+        if item.get("ownership_nature") not in {"direct", "indirect"}:
+            raise ValueError(f"Form 4 transaction {transaction_id} ownership is invalid")
+
+    etf_raw = ownership_raw.get("etf_exposures")
+    if (
+        not isinstance(etf_raw, list)
+        or not int(policy["minimum_etf_exposures"]) <= len(etf_raw) <= 50
+    ):
+        raise ValueError("ETF exposure coverage is incomplete")
+    etfs = []
+    etf_ids: set[str] = set()
+    for item in etf_raw:
+        if not isinstance(item, dict):
+            raise ValueError("ETF exposure must be an object")
+        etf_id = _bounded_text(
+            item.get("etf_id"), field="positioning.etf_id", maximum=100
+        )
+        if etf_id in etf_ids:
+            raise ValueError("ETF exposure ids must be unique")
+        etf_ids.add(etf_id)
+        snapshot_date = date.fromisoformat(str(item.get("snapshot_date")))
+        shares = _finite_number(item.get("shares"), field=f"{etf_id}.shares")
+        fund_weight = _percentage(
+            item.get("fund_weight_percent"), field=f"{etf_id}.fund_weight"
+        )
+        if snapshot_date > as_of or not 0 < shares <= shares_outstanding:
+            raise ValueError(f"ETF exposure {etf_id} is invalid")
+        etfs.append(
+            {
+                "etf_id": etf_id,
+                "etf_name": _bounded_text(
+                    item.get("etf_name"), field=f"{etf_id}.name", maximum=200
+                ),
+                "snapshot_date": snapshot_date.isoformat(),
+                "shares": shares,
+                "issuer_shares_percent": shares / shares_outstanding * 100,
+                "fund_weight_percent": fund_weight,
+                "market_value_usd": shares * current_price,
+                "source_ids": dated_sources(
+                    item.get("source_ids"),
+                    field=f"etf_exposure.{etf_id}",
+                    source_type="etf_holdings_dataset",
+                    observed_date=snapshot_date,
+                ),
+            }
+        )
+
+    short_raw = raw.get("short_positioning")
+    if not isinstance(short_raw, dict):
+        raise ValueError("short positioning analysis is missing")
+
+    def short_snapshot(value: Any, *, field: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} must be an object")
+        settlement_date = date.fromisoformat(str(value.get("settlement_date")))
+        publication_date = date.fromisoformat(str(value.get("publication_date")))
+        shares_short = _finite_number(
+            value.get("shares_short"), field=f"{field}.shares_short"
+        )
+        float_shares = _finite_number(
+            value.get("float_shares"), field=f"{field}.float_shares"
+        )
+        average_volume = _finite_number(
+            value.get("average_daily_volume"), field=f"{field}.average_daily_volume"
+        )
+        if (
+            settlement_date > publication_date
+            or publication_date > as_of
+            or shares_short < 0
+            or float_shares <= 0
+            or shares_short > float_shares * 2
+            or average_volume <= 0
+        ):
+            raise ValueError(f"{field} values are invalid")
+        return {
+            "settlement_date": settlement_date.isoformat(),
+            "publication_date": publication_date.isoformat(),
+            "shares_short": shares_short,
+            "float_shares": float_shares,
+            "short_interest_percent_of_float": shares_short / float_shares * 100,
+            "average_daily_volume": average_volume,
+            "days_to_cover": shares_short / average_volume,
+            "source_ids": dated_sources(
+                value.get("source_ids"),
+                field=field,
+                source_type="short_interest_dataset",
+                observed_date=publication_date,
+            ),
+        }
+
+    prior_short = short_snapshot(short_raw.get("prior"), field="short.prior")
+    current_short = short_snapshot(short_raw.get("current"), field="short.current")
+    if date.fromisoformat(current_short["settlement_date"]) <= date.fromisoformat(
+        prior_short["settlement_date"]
+    ):
+        raise ValueError("short-interest snapshots are not chronological")
+    volume_raw = short_raw.get("short_sale_volume")
+    if not isinstance(volume_raw, dict):
+        raise ValueError("short-sale volume analysis is missing")
+    volume_start = date.fromisoformat(str(volume_raw.get("window_start")))
+    volume_end = date.fromisoformat(str(volume_raw.get("window_end")))
+    short_volume = _finite_number(
+        volume_raw.get("short_volume"), field="short_sale_volume.short_volume"
+    )
+    total_volume = _finite_number(
+        volume_raw.get("total_volume"), field="short_sale_volume.total_volume"
+    )
+    if (
+        volume_start > volume_end
+        or volume_end > as_of
+        or short_volume < 0
+        or total_volume <= 0
+        or short_volume > total_volume
+    ):
+        raise ValueError("short-sale volume values are invalid")
+    short_sale_volume = {
+        "window_start": volume_start.isoformat(),
+        "window_end": volume_end.isoformat(),
+        "short_volume": short_volume,
+        "total_volume": total_volume,
+        "short_volume_percent": short_volume / total_volume * 100,
+        "not_short_interest": True,
+        "source_ids": dated_sources(
+            volume_raw.get("source_ids"),
+            field="short_sale_volume",
+            source_type="short_sale_volume_dataset",
+            observed_date=volume_end,
+        ),
+    }
+    borrow_raw = short_raw.get("borrow")
+    if not isinstance(borrow_raw, dict):
+        raise ValueError("borrow analysis must be an object")
+    availability_state = borrow_raw.get("availability_state")
+    if availability_state == "available":
+        borrow_date = date.fromisoformat(str(borrow_raw.get("as_of_date")))
+        available_shares = _finite_number(
+            borrow_raw.get("available_shares"), field="borrow.available_shares"
+        )
+        borrow_fee = _percentage(
+            borrow_raw.get("borrow_fee_percent"),
+            field="borrow.borrow_fee_percent",
+            maximum=500,
+        )
+        utilization = _percentage(
+            borrow_raw.get("utilization_percent"), field="borrow.utilization_percent"
+        )
+        if borrow_date > as_of or available_shares < 0:
+            raise ValueError("borrow availability values are invalid")
+        borrow = {
+            "availability_state": "available",
+            "as_of_date": borrow_date.isoformat(),
+            "available_shares": available_shares,
+            "borrow_fee_percent": borrow_fee,
+            "utilization_percent": utilization,
+            "unavailable_reason": None,
+            "source_ids": dated_sources(
+                borrow_raw.get("source_ids"),
+                field="borrow",
+                source_type="securities_lending_dataset",
+                observed_date=borrow_date,
+            ),
+        }
+    elif availability_state == "unavailable":
+        borrow = {
+            "availability_state": "unavailable",
+            "as_of_date": None,
+            "available_shares": None,
+            "borrow_fee_percent": None,
+            "utilization_percent": None,
+            "unavailable_reason": _bounded_text(
+                borrow_raw.get("unavailable_reason"),
+                field="borrow.unavailable_reason",
+                maximum=500,
+            ),
+            "source_ids": [],
+        }
+    else:
+        raise ValueError("borrow availability state is invalid")
+
+    options_raw = raw.get("options_positioning")
+    if not isinstance(options_raw, dict):
+        raise ValueError("options positioning analysis is missing")
+    options_date = date.fromisoformat(str(options_raw.get("as_of_date")))
+    spot_price = _finite_number(options_raw.get("spot_price"), field="options.spot_price")
+    if options_date != as_of or not math.isclose(
+        spot_price, current_price, abs_tol=1e-9
+    ):
+        raise ValueError("options spot and date do not reconcile")
+    options_source_ids = dated_sources(
+        options_raw.get("source_ids"),
+        field="options_positioning",
+        source_type="options_market_dataset",
+        observed_date=options_date,
+    )
+    term_raw = options_raw.get("iv_term_structure")
+    if (
+        not isinstance(term_raw, list)
+        or not int(policy["minimum_iv_term_points"]) <= len(term_raw) <= 20
+    ):
+        raise ValueError("IV term structure is incomplete")
+    term = []
+    expirations: set[str] = set()
+    for item in term_raw:
+        if not isinstance(item, dict):
+            raise ValueError("IV term point must be an object")
+        expiration = date.fromisoformat(str(item.get("expiration")))
+        days_to_expiry = (expiration - as_of).days
+        if expiration.isoformat() in expirations or days_to_expiry <= 0:
+            raise ValueError("IV term expirations are invalid")
+        expirations.add(expiration.isoformat())
+        atm_iv = _percentage(
+            item.get("atm_iv_percent"),
+            field="iv_term.atm_iv",
+            maximum=500,
+            minimum_inclusive=False,
+        )
+        term.append(
+            {
+                "expiration": expiration.isoformat(),
+                "days_to_expiry": days_to_expiry,
+                "atm_iv_percent": atm_iv,
+            }
+        )
+    term.sort(key=lambda item: item["expiration"])
+    iv_history_raw = options_raw.get("atm_iv_history_percent")
+    if (
+        not isinstance(iv_history_raw, list)
+        or len(iv_history_raw) < int(policy["minimum_iv_history_observations"])
+        or len(iv_history_raw) > 1000
+    ):
+        raise ValueError("IV history is incomplete")
+    iv_history = [
+        _percentage(
+            value, field="iv_history", maximum=500, minimum_inclusive=False
+        )
+        for value in iv_history_raw
+    ]
+    current_atm_iv = term[0]["atm_iv_percent"]
+    iv_percentile = sum(value < current_atm_iv for value in iv_history) / len(
+        iv_history
+    ) * 100
+    realized_prices_raw = options_raw.get("realized_price_history")
+    if (
+        not isinstance(realized_prices_raw, list)
+        or len(realized_prices_raw)
+        < int(policy["minimum_realized_price_observations"])
+        or len(realized_prices_raw) > 253
+    ):
+        raise ValueError("realized-volatility price history is incomplete")
+    realized_prices = [
+        _finite_number(value, field="realized_price_history")
+        for value in realized_prices_raw
+    ]
+    if any(value <= 0 for value in realized_prices) or not math.isclose(
+        realized_prices[-1], current_price, abs_tol=1e-9
+    ):
+        raise ValueError("realized-volatility price history is invalid")
+    log_returns = [
+        math.log(realized_prices[index] / realized_prices[index - 1])
+        for index in range(1, len(realized_prices))
+    ]
+    realized_volatility = (
+        statistics.stdev(log_returns) * math.sqrt(252) * 100
+        if len(log_returns) >= 2
+        else 0.0
+    )
+    skew_raw = options_raw.get("skew")
+    if not isinstance(skew_raw, dict):
+        raise ValueError("options skew is missing")
+    put_iv = _percentage(
+        skew_raw.get("put_25_delta_iv_percent"),
+        field="skew.put_iv",
+        maximum=500,
+        minimum_inclusive=False,
+    )
+    skew_atm_iv = _percentage(
+        skew_raw.get("atm_iv_percent"),
+        field="skew.atm_iv",
+        maximum=500,
+        minimum_inclusive=False,
+    )
+    call_iv = _percentage(
+        skew_raw.get("call_25_delta_iv_percent"),
+        field="skew.call_iv",
+        maximum=500,
+        minimum_inclusive=False,
+    )
+    oi_raw = options_raw.get("open_interest")
+    if (
+        not isinstance(oi_raw, list)
+        or not int(policy["minimum_option_open_interest_rows"]) <= len(oi_raw) <= 500
+    ):
+        raise ValueError("options open-interest coverage is incomplete")
+    oi_rows = []
+    oi_keys: set[tuple[str, float, str]] = set()
+    for item in oi_raw:
+        if not isinstance(item, dict):
+            raise ValueError("options open-interest row must be an object")
+        expiration = date.fromisoformat(str(item.get("expiration")))
+        strike = _finite_number(item.get("strike"), field="options.strike")
+        option_type = item.get("option_type")
+        open_interest = item.get("open_interest")
+        key = (expiration.isoformat(), strike, str(option_type))
+        if (
+            expiration <= as_of
+            or strike <= 0
+            or option_type not in {"call", "put"}
+            or isinstance(open_interest, bool)
+            or not isinstance(open_interest, int)
+            or open_interest < 0
+            or key in oi_keys
+        ):
+            raise ValueError("options open-interest row is invalid")
+        oi_keys.add(key)
+        oi_rows.append(
+            {
+                "expiration": expiration.isoformat(),
+                "strike": strike,
+                "option_type": option_type,
+                "open_interest": open_interest,
+            }
+        )
+    total_oi = sum(item["open_interest"] for item in oi_rows)
+    if total_oi <= 0:
+        raise ValueError("options open interest is empty")
+    expiry_totals: dict[str, int] = {}
+    for item in oi_rows:
+        expiry_totals[item["expiration"]] = (
+            expiry_totals.get(item["expiration"], 0) + item["open_interest"]
+        )
+    expected_raw = options_raw.get("earnings_expected_move")
+    if not isinstance(expected_raw, dict):
+        raise ValueError("earnings expected move is missing")
+    event_date = date.fromisoformat(str(expected_raw.get("event_date")))
+    expiry = date.fromisoformat(str(expected_raw.get("expiration")))
+    atm_strike = _finite_number(expected_raw.get("atm_strike"), field="expected_move.strike")
+    call_price = _finite_number(expected_raw.get("call_price"), field="expected_move.call")
+    put_price = _finite_number(expected_raw.get("put_price"), field="expected_move.put")
+    if (
+        event_date < as_of
+        or expiry < event_date
+        or atm_strike <= 0
+        or call_price < 0
+        or put_price < 0
+    ):
+        raise ValueError("earnings expected move values are invalid")
+    crush_raw = options_raw.get("post_earnings_iv_crush")
+    if (
+        not isinstance(crush_raw, list)
+        or not int(policy["minimum_post_earnings_iv_events"])
+        <= len(crush_raw)
+        <= 20
+    ):
+        raise ValueError("post-earnings IV-crush history is incomplete")
+    crush_events = []
+    crush_dates: set[str] = set()
+    for item in crush_raw:
+        if not isinstance(item, dict):
+            raise ValueError("post-earnings IV-crush event must be an object")
+        historical_event_date = date.fromisoformat(str(item.get("event_date")))
+        if historical_event_date > as_of or historical_event_date.isoformat() in crush_dates:
+            raise ValueError("post-earnings IV-crush dates are invalid")
+        crush_dates.add(historical_event_date.isoformat())
+        pre_iv = _percentage(
+            item.get("pre_event_atm_iv_percent"),
+            field="iv_crush.pre",
+            maximum=500,
+            minimum_inclusive=False,
+        )
+        post_iv = _percentage(
+            item.get("post_event_atm_iv_percent"),
+            field="iv_crush.post",
+            maximum=500,
+            minimum_inclusive=False,
+        )
+        crush_events.append(
+            {
+                "event_date": historical_event_date.isoformat(),
+                "pre_event_atm_iv_percent": pre_iv,
+                "post_event_atm_iv_percent": post_iv,
+                "iv_crush_percentage_points": pre_iv - post_iv,
+                "iv_crush_percent_of_pre_event_iv": (pre_iv - post_iv) / pre_iv * 100,
+                "source_ids": typed_sources(
+                    item.get("source_ids"),
+                    field="iv_crush",
+                    source_type="options_market_dataset",
+                ),
+            }
+        )
+    crush_points = [item["iv_crush_percentage_points"] for item in crush_events]
+    macro_raw = raw.get("macro_futures_overlay")
+    if not isinstance(macro_raw, dict):
+        raise ValueError("macro futures overlay scope is missing")
+    applicability = macro_raw.get("applicability")
+    macro_positions_raw = macro_raw.get("positions")
+    if applicability == "not_applicable":
+        if macro_positions_raw not in (None, []):
+            raise ValueError("non-applicable CFTC overlay cannot contain positions")
+        macro_positions = []
+        macro_source_ids: list[str] = []
+    elif applicability == "context_only":
+        if not isinstance(macro_positions_raw, list) or not macro_positions_raw:
+            raise ValueError("CFTC context requires futures positions")
+        macro_positions = []
+        for item in macro_positions_raw:
+            if not isinstance(item, dict):
+                raise ValueError("CFTC position must be an object")
+            report_date = date.fromisoformat(str(item.get("report_date")))
+            if report_date > as_of:
+                raise ValueError("CFTC position is from the future")
+            macro_positions.append(
+                {
+                    "contract": _bounded_text(
+                        item.get("contract"), field="cftc.contract", maximum=200
+                    ),
+                    "report_date": report_date.isoformat(),
+                    "asset_manager_net_contracts": _finite_number(
+                        item.get("asset_manager_net_contracts"),
+                        field="cftc.asset_manager_net",
+                    ),
+                    "leveraged_funds_net_contracts": _finite_number(
+                        item.get("leveraged_funds_net_contracts"),
+                        field="cftc.leveraged_funds_net",
+                    ),
+                    "source_ids": typed_sources(
+                        item.get("source_ids"),
+                        field="cftc.position",
+                        source_type="cftc_dataset",
+                    ),
+                }
+            )
+        macro_source_ids = typed_sources(
+            macro_raw.get("source_ids"),
+            field="cftc.overlay",
+            source_type="cftc_dataset",
+        )
+    else:
+        raise ValueError("macro futures overlay applicability is invalid")
+
+    top1 = sum(item["shares"] for item in holders[:1]) / shares_outstanding * 100
+    top5 = sum(item["shares"] for item in holders[:5]) / shares_outstanding * 100
+    top10 = sum(item["shares"] for item in holders[:10]) / shares_outstanding * 100
+    passive_shares = sum(
+        item["shares"] for item in holders if item["style"] == "passive"
+    )
+    etf_shares = sum(item["shares"] for item in etfs)
+    return {
+        "institutional_ownership": {
+            "shares_outstanding": shares_outstanding,
+            "prior_13f": prior_13f,
+            "current_13f": current_13f,
+            "thirteen_f_change": {
+                "institutional_shares_change": (
+                    current_13f["institutional_shares"]
+                    - prior_13f["institutional_shares"]
+                ),
+                "institutional_ownership_change_percentage_points": (
+                    current_13f["institutional_ownership_percent"]
+                    - prior_13f["institutional_ownership_percent"]
+                ),
+                "reporting_manager_count_change": (
+                    current_13f["reporting_manager_count"]
+                    - prior_13f["reporting_manager_count"]
+                ),
+                "reporting_lag_days": (
+                    date.fromisoformat(current_13f["snapshot_date"])
+                    - date.fromisoformat(current_13f["report_date"])
+                ).days,
+            },
+            "major_holders": holders,
+            "holder_concentration": {
+                "top1_percent": top1,
+                "top5_percent": top5,
+                "top10_percent": top10,
+                "disclosed_holder_coverage_percent": (
+                    disclosed_holder_shares / shares_outstanding * 100
+                ),
+                "holder_hhi": sum(
+                    (item["ownership_percent"] / 100) ** 2 for item in holders
+                ),
+            },
+            "passive_ownership": {
+                "shares": passive_shares,
+                "percent_of_shares_outstanding": (
+                    passive_shares / shares_outstanding * 100
+                ),
+                "classification_is_dataset_dependent": True,
+            },
+            "beneficial_ownership_filings": sorted(
+                beneficial, key=lambda item: (item["filing_date"], item["filing_id"])
+            ),
+            "form4_transactions": sorted(
+                form4, key=lambda item: (item["transaction_date"], item["transaction_id"])
+            ),
+            "form4_summary": {
+                "net_shares": sum(item["signed_shares"] for item in form4),
+                "net_transaction_value_usd": sum(item["signed_value"] for item in form4),
+                "open_market_purchase_shares": sum(
+                    item["shares"]
+                    for item in form4
+                    if item["transaction_code"] == "P"
+                ),
+                "open_market_sale_shares": sum(
+                    item["shares"]
+                    for item in form4
+                    if item["transaction_code"] == "S"
+                ),
+            },
+            "etf_exposures": sorted(etfs, key=lambda item: (-item["shares"], item["etf_id"])),
+            "etf_exposure_summary": {
+                "aggregate_reported_etf_shares": etf_shares,
+                "aggregate_percent_of_shares_outstanding": (
+                    etf_shares / shares_outstanding * 100
+                ),
+                "not_additive_to_passive_ownership": True,
+            },
+            "methodology": _bounded_text(
+                ownership_raw.get("methodology"),
+                field="institutional_ownership.methodology",
+                maximum=1200,
+            ),
+            "source_ids": _source_ids(
+                ownership_raw.get("source_ids"),
+                field="institutional_ownership",
+                registry=registry,
+            ),
+        },
+        "short_positioning": {
+            "prior": prior_short,
+            "current": current_short,
+            "change": {
+                "shares_short_change": current_short["shares_short"] - prior_short["shares_short"],
+                "short_interest_change_percentage_points": (
+                    current_short["short_interest_percent_of_float"]
+                    - prior_short["short_interest_percent_of_float"]
+                ),
+                "days_to_cover_change": current_short["days_to_cover"] - prior_short["days_to_cover"],
+            },
+            "short_sale_volume": short_sale_volume,
+            "borrow": borrow,
+            "methodology": _bounded_text(
+                short_raw.get("methodology"), field="short_positioning.methodology", maximum=1200
+            ),
+            "source_ids": _source_ids(
+                short_raw.get("source_ids"), field="short_positioning", registry=registry
+            ),
+        },
+        "options_positioning": {
+            "as_of_date": options_date.isoformat(),
+            "spot_price": spot_price,
+            "iv_term_structure": term,
+            "iv_percentile": {
+                "current_atm_iv_percent": current_atm_iv,
+                "history_observations": len(iv_history),
+                "percentile": iv_percentile,
+                "history_values_percent": iv_history,
+            },
+            "realized_vs_implied": {
+                "realized_price_observations": realized_prices,
+                "realized_volatility_percent": realized_volatility,
+                "nearest_atm_implied_volatility_percent": current_atm_iv,
+                "implied_minus_realized_percentage_points": current_atm_iv - realized_volatility,
+            },
+            "skew": {
+                "put_25_delta_iv_percent": put_iv,
+                "atm_iv_percent": skew_atm_iv,
+                "call_25_delta_iv_percent": call_iv,
+                "put_minus_call_25_delta_skew_points": put_iv - call_iv,
+                "call_minus_put_25_delta_risk_reversal_points": call_iv - put_iv,
+                "call_to_put_iv_ratio": call_iv / put_iv,
+            },
+            "open_interest": sorted(
+                oi_rows,
+                key=lambda item: (item["expiration"], item["strike"], item["option_type"]),
+            ),
+            "open_interest_summary": {
+                "total_open_interest": total_oi,
+                "call_open_interest": sum(
+                    item["open_interest"] for item in oi_rows if item["option_type"] == "call"
+                ),
+                "put_open_interest": sum(
+                    item["open_interest"] for item in oi_rows if item["option_type"] == "put"
+                ),
+                "top_concentrations": sorted(
+                    [
+                        {
+                            **item,
+                            "percent_of_total_open_interest": item["open_interest"] / total_oi * 100,
+                        }
+                        for item in oi_rows
+                    ],
+                    key=lambda item: (-item["open_interest"], item["expiration"], item["strike"]),
+                )[:10],
+                "major_expiries": sorted(
+                    [
+                        {
+                            "expiration": expiration,
+                            "open_interest": open_interest,
+                            "percent_of_total_open_interest": open_interest / total_oi * 100,
+                        }
+                        for expiration, open_interest in expiry_totals.items()
+                    ],
+                    key=lambda item: (-item["open_interest"], item["expiration"]),
+                ),
+                "directional_interpretation_requires_trade_context": True,
+            },
+            "earnings_expected_move": {
+                "event_date": event_date.isoformat(),
+                "expiration": expiry.isoformat(),
+                "atm_strike": atm_strike,
+                "call_price": call_price,
+                "put_price": put_price,
+                "straddle_price": call_price + put_price,
+                "expected_move_percent": (call_price + put_price) / spot_price * 100,
+            },
+            "post_earnings_iv_crush": {
+                "events": sorted(crush_events, key=lambda item: item["event_date"]),
+                "average_iv_crush_percentage_points": statistics.fmean(crush_points),
+                "median_iv_crush_percentage_points": statistics.median(crush_points),
+            },
+            "methodology": _bounded_text(
+                options_raw.get("methodology"), field="options_positioning.methodology", maximum=1200
+            ),
+            "source_ids": options_source_ids,
+        },
+        "macro_futures_overlay": {
+            "applicability": applicability,
+            "issuer_positioning_source": False,
+            "positions": sorted(
+                macro_positions, key=lambda item: (item["report_date"], item["contract"])
+            ),
+            "rationale": _bounded_text(
+                macro_raw.get("rationale"), field="cftc.rationale", maximum=800
+            ),
+            "source_ids": macro_source_ids,
+        },
+        "score_used": False,
+        "recommendation_gate_used": False,
+        "position_sizing_used": False,
+        "methodology": _bounded_text(
+            raw.get("methodology"), field="positioning.methodology", maximum=1200
+        ),
+        "source_ids": _source_ids(
+            raw.get("source_ids"), field="positioning", registry=registry
+        ),
+    }
+
+
 def _estimate_revision_analysis(
     raw: Any,
     *,
@@ -3680,6 +4597,13 @@ def build_focused_research_dossier(
         registry=sources,
         policy=policy,
     )
+    positioning = _positioning_analysis(
+        payload.get("positioning_analysis"),
+        as_of=as_of,
+        current_price=current_price,
+        registry=sources,
+        policy=policy,
+    )
     valuation = _valuation(
         payload.get("valuation"),
         current_price=current_price,
@@ -3734,6 +4658,7 @@ def build_focused_research_dossier(
         "earnings_quality": earnings_quality,
         "supply_chain_read_through": supply_chain,
         "earnings_call_diff": earnings_call,
+        "positioning_analysis": positioning,
         "valuation": valuation,
         "catalyst_path": sorted(catalysts, key=lambda item: (item["window_start"], item["catalyst_id"])),
         "risk_disconfirming_evidence": risk_evidence,
@@ -4352,6 +5277,96 @@ def validate_focused_research_dossier(
     ):
         if earnings_call.get(field, {}).get("score_used") is not False:
             raise ValueError("focused research earnings-call score controlled a decision")
+    positioning = sections.get("positioning_analysis")
+    if not isinstance(positioning, dict):
+        raise ValueError("focused research positioning analysis is missing")
+    ownership = positioning.get("institutional_ownership", {})
+    short_positioning = positioning.get("short_positioning", {})
+    options_positioning = positioning.get("options_positioning", {})
+    try:
+        rebuilt_positioning = _positioning_analysis(
+            {
+                "institutional_ownership": {
+                    "shares_outstanding": ownership.get("shares_outstanding"),
+                    "prior_13f": ownership.get("prior_13f"),
+                    "current_13f": ownership.get("current_13f"),
+                    "major_holders": ownership.get("major_holders"),
+                    "beneficial_ownership_filings": ownership.get(
+                        "beneficial_ownership_filings"
+                    ),
+                    "form4_transactions": ownership.get("form4_transactions"),
+                    "etf_exposures": ownership.get("etf_exposures"),
+                    "methodology": ownership.get("methodology"),
+                    "source_ids": ownership.get("source_ids"),
+                },
+                "short_positioning": {
+                    "prior": short_positioning.get("prior"),
+                    "current": short_positioning.get("current"),
+                    "short_sale_volume": short_positioning.get(
+                        "short_sale_volume"
+                    ),
+                    "borrow": short_positioning.get("borrow"),
+                    "methodology": short_positioning.get("methodology"),
+                    "source_ids": short_positioning.get("source_ids"),
+                },
+                "options_positioning": {
+                    "as_of_date": options_positioning.get("as_of_date"),
+                    "spot_price": options_positioning.get("spot_price"),
+                    "iv_term_structure": options_positioning.get(
+                        "iv_term_structure"
+                    ),
+                    "atm_iv_history_percent": options_positioning.get(
+                        "iv_percentile", {}
+                    ).get("history_values_percent"),
+                    "realized_price_history": options_positioning.get(
+                        "realized_vs_implied", {}
+                    ).get("realized_price_observations"),
+                    "skew": options_positioning.get("skew"),
+                    "open_interest": options_positioning.get("open_interest"),
+                    "earnings_expected_move": options_positioning.get(
+                        "earnings_expected_move"
+                    ),
+                    "post_earnings_iv_crush": options_positioning.get(
+                        "post_earnings_iv_crush", {}
+                    ).get("events"),
+                    "methodology": options_positioning.get("methodology"),
+                    "source_ids": options_positioning.get("source_ids"),
+                },
+                "macro_futures_overlay": positioning.get(
+                    "macro_futures_overlay"
+                ),
+                "methodology": positioning.get("methodology"),
+                "source_ids": positioning.get("source_ids"),
+            },
+            as_of=date.fromisoformat(str(dossier.get("as_of_date"))),
+            current_price=_finite_number(
+                dossier.get("current_price"), field="current_price"
+            ),
+            registry=source_registry,
+            policy={
+                "minimum_major_holders": 5,
+                "minimum_beneficial_ownership_filings": 1,
+                "minimum_form4_transactions": 2,
+                "minimum_etf_exposures": 2,
+                "minimum_iv_term_points": 3,
+                "minimum_iv_history_observations": 252,
+                "minimum_realized_price_observations": 22,
+                "minimum_option_open_interest_rows": 6,
+                "minimum_post_earnings_iv_events": 4,
+            },
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "focused research positioning analysis does not reconcile"
+        ) from exc
+    if rebuilt_positioning != positioning:
+        raise ValueError("focused research positioning analysis does not reconcile")
+    if (
+        positioning.get("score_used") is not False
+        or positioning.get("recommendation_gate_used") is not False
+        or positioning.get("position_sizing_used") is not False
+    ):
+        raise ValueError("focused research positioning analysis controlled a decision")
     score = sections.get("score_summary", {})
     if score.get("used_for_recommendation_gate") is not False or score.get(
         "used_for_position_sizing"
@@ -4414,6 +5429,7 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     quality = sections["earnings_quality"]
     supply_chain = sections["supply_chain_read_through"]
     earnings_call = sections["earnings_call_diff"]
+    positioning = sections["positioning_analysis"]
     valuation = sections["valuation"]
     risks = sections["risk_disconfirming_evidence"]
     position = sections["position_construction"]
@@ -4440,6 +5456,9 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     target_revision = revisions["target_price_distribution_change"]
     revision_breadth = revisions["analyst_revision_breadth"]
     price_divergence = revisions["price_divergence"]
+    ownership = positioning["institutional_ownership"]
+    short_positioning = positioning["short_positioning"]
+    options_positioning = positioning["options_positioning"]
 
     def formatted_change(value: float | None) -> str:
         return "not meaningful" if value is None else f"{value:+.1f}%"
@@ -4704,30 +5723,79 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
             for item in call_commitments["commitments"]
         ],
         "",
-        "## 7. Valuation",
+        "## 7. Positioning Analysis",
+        "",
+        "### Institutional ownership and filings",
+        "",
+        f"13F institutional ownership: {ownership['prior_13f']['institutional_ownership_percent']:.1f}% → {ownership['current_13f']['institutional_ownership_percent']:.1f}% ({ownership['thirteen_f_change']['institutional_ownership_change_percentage_points']:+.1f} pp), managers {ownership['prior_13f']['reporting_manager_count']} → {ownership['current_13f']['reporting_manager_count']}; current reporting lag {ownership['thirteen_f_change']['reporting_lag_days']} days.",
+        f"Holder concentration: top 1 {ownership['holder_concentration']['top1_percent']:.1f}% | top 5 {ownership['holder_concentration']['top5_percent']:.1f}% | top 10 {ownership['holder_concentration']['top10_percent']:.1f}% | passive-classified {ownership['passive_ownership']['percent_of_shares_outstanding']:.1f}% | reported ETF shares {ownership['etf_exposure_summary']['aggregate_percent_of_shares_outstanding']:.1f}% (not additive to passive ownership).",
+        "",
+        "| 13D/G filer | Form | Filing date | Ownership | Change | Intent |",
+        "|---|---|---|---:|---:|---|",
+        *[
+            f"| {item['filer']} | {item['form_type']} | {item['filing_date']} | {item['ownership_percent']:.1f}% | {item['change_percentage_points']:+.1f} pp | {item['intent']} |"
+            for item in ownership["beneficial_ownership_filings"]
+        ],
+        "",
+        "| Form 4 insider | Role | Date | Code | Direction | Shares | Value |",
+        "|---|---|---|---|---|---:|---:|",
+        *[
+            f"| {item['insider']} | {item['role']} | {item['transaction_date']} | {item['transaction_code']} | {item['direction']} | {item['shares']:.0f} | ${item['signed_value']:+.0f} |"
+            for item in ownership["form4_transactions"]
+        ],
+        f"Form 4 net: {ownership['form4_summary']['net_shares']:+.0f} shares / ${ownership['form4_summary']['net_transaction_value_usd']:+.0f}; open-market purchases {ownership['form4_summary']['open_market_purchase_shares']:.0f}, sales {ownership['form4_summary']['open_market_sale_shares']:.0f}.",
+        "",
+        "### Short positioning",
+        "",
+        f"Short interest: {short_positioning['prior']['short_interest_percent_of_float']:.1f}% → {short_positioning['current']['short_interest_percent_of_float']:.1f}% of float ({short_positioning['change']['short_interest_change_percentage_points']:+.1f} pp); days-to-cover {short_positioning['prior']['days_to_cover']:.1f} → {short_positioning['current']['days_to_cover']:.1f}.",
+        f"Short-sale volume: {short_positioning['short_sale_volume']['short_volume_percent']:.1f}% over {short_positioning['short_sale_volume']['window_start']}–{short_positioning['short_sale_volume']['window_end']} (flow measure; not short interest).",
+        f"Borrow: {short_positioning['borrow']['availability_state']} | available shares {short_positioning['borrow']['available_shares'] if short_positioning['borrow']['available_shares'] is not None else 'not available'} | fee {formatted_change(short_positioning['borrow']['borrow_fee_percent'])} | utilization {formatted_change(short_positioning['borrow']['utilization_percent'])}.",
+        "",
+        "### Options surface and event pricing",
+        "",
+        f"Nearest ATM IV {options_positioning['iv_percentile']['current_atm_iv_percent']:.1f}% | {options_positioning['iv_percentile']['percentile']:.1f} percentile across {options_positioning['iv_percentile']['history_observations']} observations | realized volatility {options_positioning['realized_vs_implied']['realized_volatility_percent']:.1f}% | IV minus realized {options_positioning['realized_vs_implied']['implied_minus_realized_percentage_points']:+.1f} pp.",
+        f"25Δ skew: put minus call {options_positioning['skew']['put_minus_call_25_delta_skew_points']:+.1f} vol points | call/put IV ratio {options_positioning['skew']['call_to_put_iv_ratio']:.2f}.",
+        "",
+        "| Expiration | Days | ATM IV |",
+        "|---|---:|---:|",
+        *[
+            f"| {item['expiration']} | {item['days_to_expiry']} | {item['atm_iv_percent']:.1f}% |"
+            for item in options_positioning["iv_term_structure"]
+        ],
+        "",
+        "| Major OI expiry | Open interest | Share of total |",
+        "|---|---:|---:|",
+        *[
+            f"| {item['expiration']} | {item['open_interest']} | {item['percent_of_total_open_interest']:.1f}% |"
+            for item in options_positioning["open_interest_summary"]["major_expiries"]
+        ],
+        f"Earnings expected move: ±{options_positioning['earnings_expected_move']['expected_move_percent']:.1f}% from the ATM straddle expiring {options_positioning['earnings_expected_move']['expiration']} | historical post-earnings IV crush average {options_positioning['post_earnings_iv_crush']['average_iv_crush_percentage_points']:.1f} vol points.",
+        f"CFTC overlay: {positioning['macro_futures_overlay']['applicability']} — {positioning['macro_futures_overlay']['rationale']}",
+        "",
+        "## 8. Valuation",
         "",
         f"Probability-weighted price: ${valuation['probability_weighted_price']:.2f} | Expected return: {valuation['probability_weighted_return']:+.1%} | Bear return: {valuation['bear_case_return']:+.1%}",
         f"Reward/risk: {valuation['reward_to_risk']:.2f}" if valuation["reward_to_risk"] is not None else "Reward/risk: not meaningful",
         "",
-        "## 8. Catalyst Path",
+        "## 9. Catalyst Path",
         "",
         *[
             f"- {item['window_start']}–{item['window_end']}: {item['event']} — {item['observable']}"
             for item in sections["catalyst_path"]
         ],
         "",
-        "## 9. Risk / Disconfirming Evidence",
+        "## 10. Risk / Disconfirming Evidence",
         "",
         *[f"- Risk ({item['probability']}): {item['statement']} — monitor: {item['monitor']}" for item in risks["risks"]],
         *[f"- Contrary evidence: {item['observation']} — impact: {item['thesis_impact']}" for item in risks["contrary_evidence"]],
         "",
-        "## 10. Position Construction",
+        "## 11. Position Construction",
         "",
         f"Initial {position['initial_weight_percent']:.2f}% → target {position['target_weight_percent']:.2f}% → maximum {position['maximum_weight_percent']:.2f}%",
         f"Entry ${position['entry_price_low']:.2f}–${position['entry_price_high']:.2f} | risk budget {position['risk_budget_bps']:.0f} bps | earnings-event cap {position['earnings_event_weight_percent']:.2f}%",
         position["sizing_rationale"],
         "",
-        "## 11. Score Summary",
+        "## 12. Score Summary",
         "",
         f"Investment Conviction: {score['investment_conviction']}/100",
         score["summary"],

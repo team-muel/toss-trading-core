@@ -187,8 +187,9 @@ ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙
 완료되기 전에는 비활성이며 어떤 결과도 주문 권한을 갖지 않습니다.
 
 집중연구 결과는 Investment Thesis → Variant View → Earnings Model → Earnings Quality →
-Supply-chain Read-through → Earnings Call Diff / Management Calibration → Valuation →
-Catalyst Path → Risk/Disconfirming Evidence → Position Construction 순서로 기록합니다.
+Supply-chain Read-through → Earnings Call Diff / Management Calibration → Positioning
+Analysis → Valuation → Catalyst Path → Risk/Disconfirming Evidence → Position Construction
+순서로 기록합니다.
 Investment Conviction 점수는 추천이나 비중 산정에 사용하지 않고 마지막 요약에만
 표시합니다. Earnings Model의 매출·EPS·OCF·FCF는 segment driver에서 계산합니다.
 증분 경제성은 성장·유지 CAPEX, D&A, 운전자본, 인수와 기타 자본변화를 기초·기말
@@ -210,3 +211,7 @@ Earnings Call Diff는 연속 두 분기의 issuer transcript를 같은 topic·�
 비교해 새로 등장하거나 사라진 표현, horizon·confidence 변화, 질문 주제와 회피 여부,
 수치 guidance 범위의 확대·축소를 계산합니다. 또한 동일 지표의 직전 8개 분기
 guidance와 실제 결과 및 과거 약속의 이행 여부로 경영진의 보수성·공격성을 보정합니다.
+Positioning Analysis는 13F 변화와 보고 시차, 13D/G, Form 4, 주요 주주 집중도,
+passive·ETF exposure, short interest·days-to-cover·short-sale volume·borrow, IV term
+structure·percentile·realized 대비 implied·25Δ skew·OI 집중·실적 expected move와 과거
+IV crush를 각각 계산합니다. Reddit sentiment는 이 필수 계약에 포함하지 않습니다.
