@@ -57,6 +57,72 @@ class VariantPerceptionTest(unittest.TestCase):
                 "catalyst_ids": ["earnings", "industry_update"],
             })
         end = (date.fromisoformat(self.as_of) + timedelta(days=90)).isoformat()
+
+        def scenario(
+            name, probability, scale, margin_delta, fixed_opex, growth_capex
+        ):
+            drivers = []
+            for driver_id, segment_name, market_capex, share, gross_margin in [
+                ("foundry_logic", "Foundry / Logic", 60000, 30, 50),
+                ("dram", "DRAM", 30000, 25, 52),
+                ("nand", "NAND", 20000, 20, 49),
+                ("packaging_other", "Packaging / Other", 25000, 26, 54),
+            ]:
+                drivers.append({
+                    "driver_id": driver_id,
+                    "segment_name": segment_name,
+                    "economic_driver": f"{segment_name} addressable equipment CAPEX",
+                    "driver_value": market_capex * scale,
+                    "driver_unit": "usd_millions",
+                    "company_share_percent": share,
+                    "revenue_conversion_factor": 1.0,
+                    "timing_conversion_percent": 100.0,
+                    "gross_margin_percent": gross_margin + margin_delta,
+                    "source_ids": ["filing", "industry"],
+                    "methodology": "Market CAPEX multiplied by AMAT share, equipment intensity, and shipment timing.",
+                })
+            return {
+                "name": name,
+                "probability": probability,
+                "revenue_drivers": drivers,
+                "operating_expenses": {
+                    "fixed_usd_millions": fixed_opex,
+                    "variable_percent_of_revenue": 2.0,
+                    "source_ids": ["filing"],
+                    "methodology": "Fixed R&D and SG&A plus a revenue-linked expense pool.",
+                },
+                "below_the_line": {
+                    "net_interest_expense_usd_millions": 100,
+                    "other_non_operating_income_usd_millions": 0,
+                    "tax_rate_percent": 18.0,
+                    "diluted_shares_millions": 800,
+                    "source_ids": ["filing"],
+                    "methodology": "Point-in-time capital structure and normalized effective tax rate.",
+                },
+                "cash_flow": {
+                    "depreciation_amortization_usd_millions": 1500,
+                    "stock_based_compensation_usd_millions": 600,
+                    "change_in_net_working_capital_usd_millions": 500 * scale,
+                    "other_operating_cash_adjustments_usd_millions": 0,
+                    "maintenance_capex_usd_millions": 900,
+                    "growth_capex_usd_millions": growth_capex,
+                    "source_ids": ["filing"],
+                    "methodology": "Net income bridged to OCF, with maintenance and growth CAPEX separated.",
+                },
+                "capital_efficiency": {
+                    "prior_period_operating_income_usd_millions": 8000,
+                    "prior_period_invested_capital_usd_millions": 20000,
+                    "ending_invested_capital_usd_millions": 25000 + growth_capex,
+                    "source_ids": ["filing"],
+                    "methodology": "Incremental after-tax operating profit divided by incremental invested capital.",
+                },
+                "key_assumptions": [
+                    "Market CAPEX, share, intensity, and timing are modeled separately.",
+                    "Operating expenses and cash conversion follow the stated bridge.",
+                ],
+                "source_ids": ["filing", "industry"],
+                "methodology": "Driver-based segment revenue, income statement, cash flow, and capital return model.",
+            }
         return {
             "symbol": "AMAT",
             "as_of_date": self.as_of,
@@ -88,10 +154,21 @@ class VariantPerceptionTest(unittest.TestCase):
                 "consensus_eps_source_ids": ["cons"],
                 "consensus_eps_methodology": "Use the point-in-time median FY2028 consensus estimate.",
                 "scenarios": [
-                    {"name": "bear", "probability": 0.2, "revenue_usd_millions": 30000, "gross_margin_percent": 46, "operating_margin_percent": 27, "eps_usd": 7.5, "free_cash_flow_usd_millions": 5500, "capex_usd_millions": 2500, "key_assumptions": ["WFE contracts.", "Packaging mix stalls."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up segment revenue and margin bridge."},
-                    {"name": "base", "probability": 0.5, "revenue_usd_millions": 36000, "gross_margin_percent": 51, "operating_margin_percent": 32, "eps_usd": 10.64, "free_cash_flow_usd_millions": 7800, "capex_usd_millions": 2200, "key_assumptions": ["WFE grows 10%.", "Packaging mix expands."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up segment revenue and margin bridge."},
-                    {"name": "bull", "probability": 0.3, "revenue_usd_millions": 41000, "gross_margin_percent": 53, "operating_margin_percent": 35, "eps_usd": 13.0, "free_cash_flow_usd_millions": 9800, "capex_usd_millions": 2200, "key_assumptions": ["HBM demand accelerates.", "Pricing remains firm."], "source_ids": ["filing", "industry"], "methodology": "Bottom-up segment revenue and margin bridge."},
+                    scenario("bear", 0.2, 0.85, -3.0, 7000, 1800),
+                    scenario("base", 0.5, 1.0, 0.0, 7160, 1300),
+                    scenario("bull", 0.3, 1.15, 2.0, 7350, 1300),
                 ],
+                "sensitivity_cases": [{
+                    "sensitivity_id": "ai_capex_plus_10",
+                    "label": "AI-related CAPEX +10%",
+                    "driver_shocks": [
+                        {"driver_id": "foundry_logic", "shock_percent": 10.0},
+                        {"driver_id": "dram", "shock_percent": 10.0},
+                        {"driver_id": "packaging_other", "shock_percent": 10.0},
+                    ],
+                    "source_ids": ["filing", "industry"],
+                    "rationale": "Shock the AI-exposed demand pools while holding share, mix, timing, and cost assumptions constant.",
+                }],
             },
             "valuation": {
                 "framework": "Scenario EPS multiplied by normalized forward P/E with a cross-check to DCF.",
@@ -184,7 +261,10 @@ class VariantPerceptionTest(unittest.TestCase):
             self.payload, policy=self.policy, code_revision="a" * 40
         )
         earnings = dossier["research_sections"]["earnings_model"]
-        self.assertAlmostEqual(earnings["base_vs_consensus_percent"], 12.0)
+        self.assertAlmostEqual(
+            earnings["base_vs_consensus_percent"],
+            (earnings["scenarios"][1]["eps_usd"] / 9.5 - 1) * 100,
+        )
         memo = render_focused_research_memo(dossier)
         headings = [memo.index(f"## {index}. {name}") for index, name in enumerate([
             "Investment Thesis", "Variant View", "Earnings Model", "Valuation",
@@ -193,6 +273,70 @@ class VariantPerceptionTest(unittest.TestCase):
         ], start=1)]
         self.assertEqual(headings, sorted(headings))
         self.assertGreater(memo.index("Investment Conviction"), memo.index("Position Construction"))
+        self.assertIn("Base-case revenue drivers", memo)
+        self.assertIn("Maintenance CAPEX", memo)
+        self.assertIn("AI-related CAPEX +10%", memo)
+
+    def test_driver_model_calculates_eps_cash_flow_roic_and_ai_capex_sensitivity(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        earnings = dossier["research_sections"]["earnings_model"]
+        base = next(item for item in earnings["scenarios"] if item["name"] == "base")
+        self.assertAlmostEqual(
+            base["revenue_usd_millions"],
+            sum(item["revenue_usd_millions"] for item in base["revenue_drivers"]),
+        )
+        expected_opex = (
+            base["operating_expenses"]["fixed_usd_millions"]
+            + base["revenue_usd_millions"]
+            * base["operating_expenses"]["variable_percent_of_revenue"]
+            / 100
+        )
+        self.assertAlmostEqual(base["operating_expense_usd_millions"], expected_opex)
+        self.assertAlmostEqual(
+            base["capex_usd_millions"],
+            base["cash_flow"]["maintenance_capex_usd_millions"]
+            + base["cash_flow"]["growth_capex_usd_millions"],
+        )
+        self.assertAlmostEqual(
+            base["free_cash_flow_usd_millions"],
+            base["operating_cash_flow_usd_millions"] - base["capex_usd_millions"],
+        )
+        sensitivity = earnings["sensitivity_cases"][0]
+        self.assertEqual(sensitivity["label"], "AI-related CAPEX +10%")
+        self.assertGreater(sensitivity["results"]["revenue_change_percent"], 0)
+        self.assertGreater(sensitivity["results"]["eps_change_percent"], 0)
+        self.assertGreater(sensitivity["results"]["free_cash_flow_change_percent"], 0)
+        self.assertGreater(
+            sensitivity["results"]["incremental_roic_change_basis_points"], 0
+        )
+
+    def test_rejects_missing_driver_or_cash_flow_model(self):
+        no_drivers = copy.deepcopy(self.payload)
+        no_drivers["earnings_model"]["scenarios"][1].pop("revenue_drivers")
+        with self.assertRaisesRegex(ValueError, "revenue drivers"):
+            build_focused_research_dossier(
+                no_drivers, policy=self.policy, code_revision="a" * 40
+            )
+        no_cash_flow = copy.deepcopy(self.payload)
+        no_cash_flow["earnings_model"]["scenarios"][1].pop("cash_flow")
+        with self.assertRaisesRegex(ValueError, "cash_flow"):
+            build_focused_research_dossier(
+                no_cash_flow, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_validator_recalculates_driver_outputs_instead_of_trusting_them(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        dossier["research_sections"]["earnings_model"]["scenarios"][1][
+            "revenue_drivers"
+        ][0]["revenue_usd_millions"] += 1
+        with self.assertRaisesRegex(ValueError, "does not reconcile"):
+            validate_focused_research_dossier(
+                dossier, as_of_date=self.as_of, maximum_age_days=14
+            )
 
     def test_conviction_score_does_not_change_decision_or_position(self):
         low = copy.deepcopy(self.payload)

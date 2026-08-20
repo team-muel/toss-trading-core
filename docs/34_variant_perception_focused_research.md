@@ -21,7 +21,7 @@
 
 ## 의사결정 메모의 고정 순서
 
-모든 `focused-research-dossier-v2`는 다음 순서를 그대로 사용한다.
+모든 `focused-research-dossier-v3`는 다음 순서를 그대로 사용한다.
 
 ```text
 Investment Thesis
@@ -41,7 +41,9 @@ Investment Thesis
 핵심 숫자는 점수보다 먼저 다음처럼 직접 드러나야 한다.
 
 - 목표 연도의 시장가격 내재 EPS와 point-in-time 컨센서스 EPS
-- bear/base/bull의 EPS, 매출, gross margin, operating margin, FCF, CAPEX와 확률
+- bear/base/bull의 driver별 매출, gross margin, operating expense, tax, EPS,
+  OCF, 유지·성장 CAPEX, FCF, 증분 ROIC와 확률
+- 특정 경제 driver 충격이 매출·EPS·FCF·증분 ROIC에 미치는 재계산 민감도
 - Base EPS의 컨센서스·시장 내재 값 대비 차이
 - bear/base/bull 목표가격과 확률가중 기대수익
 - 날짜가 있는 촉매, 관측 변수, thesis 해소 방식
@@ -87,6 +89,93 @@ AMAT를 연구한다면 종목 고유 수치가 확보된 뒤 예를 들어 WFE 
 advanced packaging 기여, CAPEX가 만드는 증분 ROIC 또는 FCF를 chain으로 선택할 수
 있다. 단, 이 문장은 metric 선택 예시일 뿐 수치나 결론을 미리 가정하지 않는다.
 
+## Driver-based Earnings Model
+
+`earnings_model`은 매출과 EPS 결과를 사람이 입력하는 요약표가 아니다. bear, base,
+bull 모두 동일한 `driver_id` 집합을 사용하고 검증기가 다음 식으로 결과를 계산한다.
+
+```text
+각 segment revenue
+  = economic driver value
+  × company share
+  × revenue conversion factor
+  × timing conversion
+
+total revenue
+  = segment revenue의 합
+
+gross profit
+  = segment revenue × segment gross margin의 합
+
+operating income
+  = gross profit
+  - fixed operating expense
+  - revenue × variable operating expense rate
+
+EPS
+  = (operating income - net interest expense
+     + other non-operating income - tax)
+  / diluted shares
+```
+
+`revenue_conversion_factor`는 driver 단위를 회사 매출로 변환하는 명시적 계수다. AMAT의
+시장 CAPEX 모델에서는 장비 intensity 등을 이 계수에 담고 방법론과 출처를 연결한다.
+따라서 AMAT 예시는 다음과 같은 형태가 되며, Foundry/Logic, DRAM, NAND,
+Packaging/Other를 합쳐 Semiconductor Systems 매출을 만든다.
+
+```text
+시장 CAPEX × AMAT 점유율 × 장비 intensity × 출하/인식 timing
+  → segment revenue
+  → segment gross profit
+  → operating expense
+  → operating income
+  → tax / diluted shares
+  → EPS
+```
+
+현금흐름은 별도 bridge로 계산한다.
+
+```text
+net income
+  + D&A
+  + stock-based compensation
+  - change in net working capital
+  + other operating cash adjustments
+  = OCF
+
+OCF - maintenance CAPEX - growth CAPEX = FCF
+
+incremental ROIC
+  = (operating income - prior-period operating income) × (1 - tax rate)
+  / (ending invested capital - prior-period invested capital)
+```
+
+유지 CAPEX와 성장 CAPEX는 합쳐서 입력할 수 없고 각각 근거와 함께 저장한다. 증분
+투하자본이 양수가 아니면 증분 ROIC 모델로 인정하지 않는다.
+
+### Driver shock sensitivity
+
+최소 하나의 sensitivity case가 필수다. 각 case는 base scenario의 특정 driver를
+명시적으로 충격한 뒤 다른 share, conversion, timing, 비용, 세율, 주식 수 가정은
+고정하여 전체 모델을 다시 계산한다. 결과에는 다음이 포함된다.
+
+- 매출 변화율
+- gross margin과 operating margin 변화(bps)
+- operating income과 EPS 변화율
+- OCF와 FCF 변화율
+- 증분 ROIC 변화(bps)
+- 충격 전후 EPS와 FCF
+
+예를 들어 `AI-related CAPEX +10%`는 AI 노출이 있는 Foundry/Logic, DRAM,
+Packaging driver만 10% 올려 “AI가 성장한다”가 아니라 “현재 share·mix·timing과 비용
+구조에서 EPS가 몇 % 변하는가”를 답한다. 이는 다른 조건을 고정한 부분균형 민감도이며
+그 자체가 발생 확률이나 최종 목표가격은 아니다.
+
+입력자가 `revenue_usd_millions`, `eps_usd`, `free_cash_flow_usd_millions` 같은 결과를
+직접 덮어쓸 수 없다. 생성 시 계산하고, 저장된 dossier를 추천 파이프라인이 다시 읽을
+때도 driver 식으로 독립 재계산한다. segment revenue, 손익계산서, 현금흐름, 민감도 중
+하나라도 재현되지 않으면 hash 상태와 무관하게 검증이 실패한다.
+
 ## 출처와 시점 규칙
 
 - 모든 출처는 `as_of_date` 이전에 관측 가능해야 한다.
@@ -119,8 +208,9 @@ advanced packaging 기여, CAPEX가 만드는 증분 ROIC 또는 FCF를 chain으
 최소 하나의 catalyst에 연결되어야 하며, 동시에 가설이 틀렸다고 판단할 사전 조건을
 가져야 한다.
 
-bear/base/bull 이익 모델과 가격은 모두 필수다. 두 모델의 시나리오별 확률은 같고 합은
-1이어야 하며 EPS와 가격은 각각 `bear < base < bull`이어야 한다. `buy`는 확률가중
+bear/base/bull driver 모델과 가격은 모두 필수다. 세 이익 시나리오는 같은 driver
+집합을 사용해야 한다. 이익 모델과 valuation의 시나리오별 확률은 같고 합은 1이어야
+하며 계산된 EPS와 가격은 각각 `bear < base < bull`이어야 한다. `buy`는 확률가중
 기대수익이 양수이고, 적어도 하나의 가격 내재 기대 대비 bullish gap이 있으며, 정책상
 최소 reward/risk를 충족할 때만 허용된다. Position Construction은 연구상 위험 예산이며
 주문 권한이나 전략 승격 권한을 갖지 않는다.
@@ -137,8 +227,9 @@ python -m toss_trading.cli.research_validate_focus_dossier \
   --output-dir /home/seoje/toss-trading/stock-recommendation-runtime/focused-research/dossiers
 ```
 
-검증기는 source 시점, source type, metric 범주, 가격 재현, gap 계산, earnings model,
-valuation, 촉매 연결, 반증 증거, 포지션 상한과 추천 조건을 확인한다. 통과 결과에는
+검증기는 source 시점, source type, metric 범주, 가격 재현, gap 계산, driver-based
+earnings/cash-flow/ROIC model과 sensitivity 재계산, valuation, 촉매 연결, 반증 증거,
+포지션 상한과 추천 조건을 확인한다. 통과 결과에는
 결정적 `dossier_id`와 `content_sha256`이 붙고 동일 ID의 `.md` 메모도 생성된다. 이후
 내용이 바뀌면 추천 게이트의 hash 검사가 실패한다.
 

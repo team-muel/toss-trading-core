@@ -7,7 +7,7 @@
 2,500개를 매일 동일한 규칙으로 평가한다.
 
 정량 상위 종목은 `screening_candidates`이며 아직 매수 추천이 아니다. 실제
-`recommendations`에는 `focused-research-dossier-v2` 검증을 통과하고 결론이 `buy`인
+`recommendations`에는 `focused-research-dossier-v3` 검증을 통과하고 결론이 `buy`인
 종목만 들어간다. 둘 다 개인 맞춤 투자자문이나 주문 승인이 아니며, 결과에서 Toss
 주문 경로로 이어지는 연결은 만들지 않는다.
 
@@ -48,9 +48,16 @@ Risk/Disconfirming Evidence → Position Construction을 통과해야 한다. co
 매수 추천만 SPY 대비 5·21·63거래일 성과를 전향 추적하며, 추천 당시에는 미래 성과를
 표시하지 않는다.
 
-`stock-recommendation-run-v3`의 실제 추천은 dossier의 일곱 분석 섹션을 그대로
-전달하고 `score_summary`를 마지막에 둔다. 반면 아직 집중연구가 없는 큐 항목은
+`stock-recommendation-run-v4`의 실제 추천은 dossier의 일곱 분석 섹션과 전체
+driver-based earnings model을 그대로 전달한다. segment driver, 손익·현금흐름 bridge,
+유지·성장 CAPEX, 증분 ROIC, shock sensitivity를 축약하지 않으며 `score_summary`를
+마지막에 둔다. 반면 아직 집중연구가 없는 큐 항목은
 정량 `screening_score`를 연구 우선순위로만 보존한다.
+
+기존 `focused-research-dossier-v2`는 새 기준에서 매수 추천 근거로 재사용하지 않는다.
+발견 시 실행 전체를 실패시키지 않고 `focused_research_driver_model_required`로 되돌려
+v3 driver model 재작성 큐에 넣는다. 손익·현금흐름 bridge가 없는 과거 dossier를 자동
+변환하거나 결과 숫자를 역으로 가정해 채우지 않는다.
 
 매일 데이터가 실제로 전진한 경우에만 새 추천을 만들고 Gmail 연구 digest에는 다음을
 포함한다.

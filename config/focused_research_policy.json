@@ -1,5 +1,5 @@
 {
-  "schema_version": "focused-research-policy-v2",
+  "schema_version": "focused-research-policy-v3",
   "minimum_variant_chains": 3,
   "minimum_distinct_source_organizations": 3,
   "maximum_source_age_days": 120,
@@ -21,6 +21,14 @@
     "ratio",
     "multiple",
     "units"
+  ],
+  "allowed_driver_units": [
+    "usd_millions",
+    "units_millions",
+    "installed_base_units",
+    "subscribers_millions",
+    "capacity_units",
+    "other_documented_units"
   ],
   "allowed_source_types": [
     "company_filing",
@@ -47,6 +55,9 @@
   "minimum_thesis_pillars": 2,
   "minimum_risks": 2,
   "minimum_contrary_evidence": 1,
+  "minimum_revenue_drivers": 2,
+  "minimum_sensitivity_cases": 1,
+  "maximum_driver_sensitivity_shock_percent": 50.0,
   "maximum_initial_weight_percent": 2.0,
   "maximum_target_weight_percent": 5.0,
   "maximum_single_name_weight_percent": 7.5,
@@ -56,6 +67,9 @@
   "require_consensus_chain": true,
   "require_falsification": true,
   "require_bear_base_bull": true,
+  "require_driver_based_earnings_model": true,
+  "require_cash_flow_bridge": true,
+  "require_incremental_roic": true,
   "buy_requires_positive_expected_return": true,
   "score_may_gate_recommendation": false,
   "score_may_size_position": false,
