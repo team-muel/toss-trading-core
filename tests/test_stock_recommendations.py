@@ -145,6 +145,10 @@ class StockRecommendationTest(unittest.TestCase):
             {"source_id": "consensus", "source_type": "consensus_dataset", "organization": "Consensus Provider", "observed_at": as_of, "locator": "snapshot"},
             {"source_id": "filing", "source_type": "company_filing", "organization": "AAA", "observed_at": as_of, "locator": "10-Q"},
             {"source_id": "industry", "source_type": "industry_dataset", "organization": "Industry Body", "observed_at": as_of, "locator": "industry outlook"},
+            {"source_id": "customer_a", "source_type": "company_guidance", "organization": "Customer A", "observed_at": as_of, "locator": "capacity guidance"},
+            {"source_id": "customer_b", "source_type": "company_guidance", "organization": "Customer B", "observed_at": as_of, "locator": "capital plan"},
+            {"source_id": "supplier", "source_type": "earnings_transcript", "organization": "Supplier Co", "observed_at": as_of, "locator": "earnings call"},
+            {"source_id": "peer", "source_type": "earnings_transcript", "organization": "Peer Co", "observed_at": as_of, "locator": "earnings call"},
         ]
         chains = []
         for metric_id, category, consensus, implied, house in [
@@ -278,6 +282,42 @@ class StockRecommendationTest(unittest.TestCase):
                 "rationale": "Measure the EPS and FCF flow-through from the growth demand driver.",
             }]},
             "earnings_quality": earnings_quality_payload(),
+            "supply_chain_read_through": {
+                "hypothesis": {
+                    "hypothesis_id": "capacity_read_through",
+                    "statement": "Independent customer capacity plans and supplier bookings support higher subject revenue, with peer guidance retained as a counter-signal.",
+                    "subject_metric": "Growth systems revenue",
+                    "forecast_period": "FY2027",
+                    "expected_direction": "increase",
+                    "falsification_criteria": [
+                        "Customer capacity plans decline.",
+                        "Supplier bookings and subject backlog both contract.",
+                    ],
+                },
+                "entities": [
+                    {"entity_id": "aaa", "name": "AAA", "identifier": "AAA", "role": "subject_company", "source_organization": "AAA"},
+                    {"entity_id": "customer_a", "name": "Customer A", "identifier": "CUSTA", "role": "customer", "source_organization": "Customer A"},
+                    {"entity_id": "customer_b", "name": "Customer B", "identifier": "CUSTB", "role": "customer", "source_organization": "Customer B"},
+                    {"entity_id": "supplier", "name": "Supplier Co", "identifier": "SUP", "role": "supplier", "source_organization": "Supplier Co"},
+                    {"entity_id": "peer", "name": "Peer Co", "identifier": "PEER", "role": "competitor", "source_organization": "Peer Co"},
+                ],
+                "relationships": [
+                    {"relationship_id": "customer_a_to_aaa", "from_entity_id": "customer_a", "to_entity_id": "aaa", "relationship_type": "customer_of", "upstream_metric": "Capacity plan", "subject_metric": "Growth systems revenue", "expected_lag_months": 9, "mechanism": "Customer capacity investment expands the addressable equipment demand pool after procurement timing.", "source_ids": ["customer_a", "filing"]},
+                    {"relationship_id": "customer_b_to_aaa", "from_entity_id": "customer_b", "to_entity_id": "aaa", "relationship_type": "customer_of", "upstream_metric": "Capital plan", "subject_metric": "Growth systems revenue", "expected_lag_months": 12, "mechanism": "The second customer provides an independent demand-pool confirmation with a separate budget cycle.", "source_ids": ["customer_b", "filing"]},
+                    {"relationship_id": "supplier_to_aaa", "from_entity_id": "supplier", "to_entity_id": "aaa", "relationship_type": "supplier_to", "upstream_metric": "Component bookings", "subject_metric": "Shipment capacity", "expected_lag_months": 6, "mechanism": "Supplier bookings test whether demand propagates upstream from the subject company.", "source_ids": ["supplier", "filing"]},
+                    {"relationship_id": "peer_to_aaa", "from_entity_id": "peer", "to_entity_id": "aaa", "relationship_type": "competes_with", "upstream_metric": "Peer outlook", "subject_metric": "Industry demand and relative share", "expected_lag_months": 3, "mechanism": "Peer guidance distinguishes common demand from subject-specific share assumptions.", "source_ids": ["peer", "filing"]},
+                ],
+                "signals": [
+                    {"signal_id": "aaa_backlog", "entity_id": "aaa", "relationship_ids": ["customer_a_to_aaa"], "metric": "Backlog", "period": "FY2027 outlook", "unit": "usd_millions", "prior_value": 900, "current_value": 1000, "subject_metric_direction": "increase", "source_ids": ["filing"], "methodology": "Use subject-company backlog only as the non-independent anchor."},
+                    {"signal_id": "customer_a_capacity", "entity_id": "customer_a", "relationship_ids": ["customer_a_to_aaa"], "metric": "Capacity plan", "period": "FY2027 plan", "unit": "units", "prior_value": 100, "current_value": 110, "subject_metric_direction": "increase", "source_ids": ["customer_a"], "methodology": "Compare primary company capacity guidance across the same planning horizon."},
+                    {"signal_id": "customer_b_capital", "entity_id": "customer_b", "relationship_ids": ["customer_b_to_aaa"], "metric": "Capital plan", "period": "FY2027 plan", "unit": "usd_millions", "prior_value": 500, "current_value": 575, "subject_metric_direction": "increase", "source_ids": ["customer_b"], "methodology": "Use the customer's disclosed capital plan and preserve procurement lag."},
+                    {"signal_id": "supplier_bookings", "entity_id": "supplier", "relationship_ids": ["supplier_to_aaa"], "metric": "Component bookings", "period": "FY2027 run-rate", "unit": "units", "prior_value": 80, "current_value": 88, "subject_metric_direction": "increase", "source_ids": ["supplier"], "methodology": "Use supplier bookings as an independent upstream confirmation."},
+                    {"signal_id": "peer_outlook", "entity_id": "peer", "relationship_ids": ["peer_to_aaa"], "metric": "Peer revenue outlook", "period": "FY2027 outlook", "unit": "usd_millions", "prior_value": 700, "current_value": 680, "subject_metric_direction": "decrease", "source_ids": ["peer"], "methodology": "Retain weaker peer guidance as explicit counterevidence."},
+                ],
+                "coverage_rationale": "Cover two customers with separate budget cycles, one upstream supplier, one competitor, and the subject-company anchor using issuer-primary evidence.",
+                "methodology": "Map numeric issuer signals through explicit relationships and lags, count independent organizations, and preserve contradictory evidence.",
+                "source_ids": ["filing", "customer_a", "customer_b", "supplier", "peer"],
+            },
             "valuation": {"framework": "Scenario EPS and normalized P/E cross-checked against cash flow.", "cases": [
                 {"name": "bear", "probability": 0.2, "price_target": 26.0, "method": "pe", "equation": "Bear EPS times 13x.", "assumptions": ["Multiple contracts.", "No mix premium."], "source_ids": ["px", "consensus"]},
                 {"name": "base", "probability": 0.5, "price_target": 42.0, "method": "pe", "equation": "Base EPS times 13.1x.", "assumptions": ["Normal multiple.", "Partial mix premium."], "source_ids": ["px", "consensus"]},
@@ -306,7 +346,7 @@ class StockRecommendationTest(unittest.TestCase):
             source_manifest_ids=["manifest-1"],
         )
         self.assertEqual(result["universe"]["ranked_count"], 4)
-        self.assertEqual(result["schema_version"], "stock-recommendation-run-v6")
+        self.assertEqual(result["schema_version"], "stock-recommendation-run-v7")
         self.assertEqual(len(result["screening_candidates"]), 2)
         self.assertEqual(result["screening_candidates"][0]["symbol"], "AAA")
         self.assertEqual(result["recommendations"], [])
@@ -359,6 +399,11 @@ class StockRecommendationTest(unittest.TestCase):
         quality = result["recommendations"][0]["earnings_quality"]
         self.assertEqual(quality["eps_growth_attribution"]["state"], "reconciled")
         self.assertEqual(len(quality["adjustments"]), 5)
+        supply_chain = result["recommendations"][0]["supply_chain_read_through"]
+        self.assertEqual(
+            supply_chain["cross_company_confirmation"]["state"],
+            "confirmed_with_counter_signals",
+        )
         self.assertEqual(list(result["recommendations"][0])[-1], "score_summary")
 
     def test_stale_dossier_returns_to_research_queue_instead_of_failing_run(self):
@@ -452,6 +497,50 @@ class StockRecommendationTest(unittest.TestCase):
             1,
         )
         self.assertEqual(result["recommendations"], [])
+
+    def test_v5_dossier_requires_supply_chain_upgrade_without_failing_run(self):
+        as_of, rows = self.rows()
+        legacy = copy.deepcopy(self.focused_dossier(as_of))
+        legacy["schema_version"] = "focused-research-dossier-v5"
+        result = generate_stock_recommendations(
+            rows,
+            policy=self.policy,
+            as_of_date=as_of,
+            code_revision="a" * 40,
+            focused_research_dossiers=[legacy],
+        )
+        aaa = next(
+            item for item in result["screening_candidates"] if item["symbol"] == "AAA"
+        )
+        self.assertEqual(
+            aaa["focused_research_state"],
+            "focused_research_supply_chain_required",
+        )
+        self.assertEqual(
+            result["recommendation_gate"]["supply_chain_upgrade_required_count"], 1
+        )
+        self.assertEqual(result["recommendations"], [])
+
+    def test_newest_legacy_dossier_version_controls_upgrade_queue(self):
+        as_of, rows = self.rows()
+        v3 = copy.deepcopy(self.focused_dossier(as_of))
+        v3["schema_version"] = "focused-research-dossier-v3"
+        v5 = copy.deepcopy(self.focused_dossier(as_of))
+        v5["schema_version"] = "focused-research-dossier-v5"
+        result = generate_stock_recommendations(
+            rows,
+            policy=self.policy,
+            as_of_date=as_of,
+            code_revision="a" * 40,
+            focused_research_dossiers=[v3, v5],
+        )
+        aaa = next(
+            item for item in result["screening_candidates"] if item["symbol"] == "AAA"
+        )
+        self.assertEqual(
+            aaa["focused_research_state"],
+            "focused_research_supply_chain_required",
+        )
 
     def test_refuses_too_small_universe(self):
         as_of, rows = self.rows()

@@ -186,8 +186,9 @@ ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙
 종목만 연구상 `buy` 추천이 될 수 있습니다. 공급자 credential과 이용약관 gate가
 완료되기 전에는 비활성이며 어떤 결과도 주문 권한을 갖지 않습니다.
 
-집중연구 결과는 Investment Thesis → Variant View → Earnings Model → Earnings Quality → Valuation →
-Catalyst Path → Risk/Disconfirming Evidence → Position Construction 순서로 기록합니다.
+집중연구 결과는 Investment Thesis → Variant View → Earnings Model → Earnings Quality →
+Supply-chain Read-through → Valuation → Catalyst Path → Risk/Disconfirming Evidence →
+Position Construction 순서로 기록합니다.
 Investment Conviction 점수는 추천이나 비중 산정에 사용하지 않고 마지막 요약에만
 표시합니다. Earnings Model의 매출·EPS·OCF·FCF는 segment driver에서 계산합니다.
 증분 경제성은 성장·유지 CAPEX, D&A, 운전자본, 인수와 기타 자본변화를 기초·기말
@@ -197,3 +198,6 @@ spread·경제적 이익과 성장 CAPEX 생산성을 계산합니다. 비교기
 Earnings Quality는 매출채권·재고·계약부채·이연매출, accruals·현금전환·운전자본,
 SBC·구조조정·인수조정·세제효과·일회성 이익, GAAP/non-GAAP, D&A/CAPEX와 자사주 EPS
 기여도를 별도 bridge로 검증합니다.
+Supply-chain Read-through는 고객·공급업체·경쟁사의 수치 신호를 관계·전달 메커니즘·
+시차와 연결하고, 서로 다른 외부 기업의 1차 출처 세 곳 이상이 같은 가설을 확인하는지
+계산합니다. 최소 하나의 외부 반대 신호도 제거하지 않고 별도로 보존합니다.

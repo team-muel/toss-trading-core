@@ -9,13 +9,14 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-POLICY_SCHEMA = "focused-research-policy-v5"
-DOSSIER_SCHEMA = "focused-research-dossier-v5"
+POLICY_SCHEMA = "focused-research-policy-v6"
+DOSSIER_SCHEMA = "focused-research-dossier-v6"
 RESEARCH_SECTION_ORDER = [
     "investment_thesis",
     "variant_view",
     "earnings_model",
     "earnings_quality",
+    "supply_chain_read_through",
     "valuation",
     "catalyst_path",
     "risk_disconfirming_evidence",
@@ -28,6 +29,25 @@ EARNINGS_QUALITY_ADJUSTMENT_IDS = (
     "acquisition_adjustment",
     "tax_benefit",
     "one_off_gain",
+)
+SUPPLY_CHAIN_ENTITY_ROLES = (
+    "subject_company",
+    "customer",
+    "supplier",
+    "competitor",
+    "industry_peer",
+)
+SUPPLY_CHAIN_RELATIONSHIP_TYPES = (
+    "customer_of",
+    "supplier_to",
+    "competes_with",
+    "peer_of",
+)
+PRIMARY_COMPANY_SOURCE_TYPES = (
+    "company_filing",
+    "company_guidance",
+    "earnings_transcript",
+    "regulatory_filing",
 )
 
 
@@ -74,6 +94,11 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         ("minimum_contrary_evidence", 1, 20),
         ("minimum_revenue_drivers", 1, 20),
         ("minimum_sensitivity_cases", 1, 20),
+        ("minimum_supply_chain_external_entities", 2, 20),
+        ("minimum_supply_chain_external_roles", 2, 4),
+        ("minimum_supply_chain_supporting_entities", 2, 20),
+        ("minimum_supply_chain_counter_signals", 1, 20),
+        ("minimum_supply_chain_relationships", 2, 50),
     ):
         value = payload.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
@@ -124,6 +149,10 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "require_earnings_quality_analysis",
         "require_eps_growth_attribution",
         "require_gaap_non_gaap_reconciliation",
+        "require_supply_chain_read_through",
+        "require_supply_chain_primary_company_sources",
+        "require_supply_chain_subject_company_signal",
+        "buy_requires_supply_chain_confirmation",
     ):
         if payload.get(field) is not True:
             raise ValueError(f"focused research policy {field} must remain enabled")
@@ -164,6 +193,13 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
     if not 0 < maximum_shock <= 100:
         raise ValueError(
             "focused research maximum_driver_sensitivity_shock_percent is invalid"
+        )
+    if (
+        int(payload["minimum_supply_chain_supporting_entities"])
+        > int(payload["minimum_supply_chain_external_entities"])
+    ):
+        raise ValueError(
+            "focused research supply-chain support minimum exceeds coverage minimum"
         )
     return payload
 
@@ -1672,6 +1708,404 @@ def _earnings_quality(
     }
 
 
+def _supply_chain_read_through(
+    raw: Any,
+    *,
+    symbol: str,
+    registry: dict[str, dict[str, Any]],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("supply_chain_read_through must be an object")
+    hypothesis_raw = raw.get("hypothesis")
+    if not isinstance(hypothesis_raw, dict):
+        raise ValueError("supply-chain hypothesis must be an object")
+    expected_direction = hypothesis_raw.get("expected_direction")
+    if expected_direction not in {"increase", "decrease"}:
+        raise ValueError("supply-chain hypothesis direction is invalid")
+    hypothesis = {
+        "hypothesis_id": _bounded_text(
+            hypothesis_raw.get("hypothesis_id"),
+            field="supply_chain.hypothesis_id",
+            maximum=80,
+        ),
+        "statement": _bounded_text(
+            hypothesis_raw.get("statement"),
+            field="supply_chain.hypothesis.statement",
+        ),
+        "subject_metric": _bounded_text(
+            hypothesis_raw.get("subject_metric"),
+            field="supply_chain.hypothesis.subject_metric",
+            maximum=160,
+        ),
+        "forecast_period": _bounded_text(
+            hypothesis_raw.get("forecast_period"),
+            field="supply_chain.hypothesis.forecast_period",
+            maximum=80,
+        ),
+        "expected_direction": expected_direction,
+        "falsification_criteria": _text_list(
+            hypothesis_raw.get("falsification_criteria"),
+            field="supply_chain.hypothesis.falsification_criteria",
+            minimum=1,
+            maximum=8,
+        ),
+    }
+
+    entities_raw = raw.get("entities")
+    minimum_external = int(policy["minimum_supply_chain_external_entities"])
+    if (
+        not isinstance(entities_raw, list)
+        or not minimum_external + 1 <= len(entities_raw) <= 30
+    ):
+        raise ValueError("supply-chain entity coverage is incomplete")
+    known_organizations = {item["organization"] for item in registry.values()}
+    entities: dict[str, dict[str, Any]] = {}
+    for item in entities_raw:
+        if not isinstance(item, dict):
+            raise ValueError("supply-chain entity must be an object")
+        entity_id = _bounded_text(
+            item.get("entity_id"), field="supply_chain.entity_id", maximum=80
+        )
+        if entity_id in entities:
+            raise ValueError("supply-chain entity ids must be unique")
+        role = item.get("role")
+        if role not in SUPPLY_CHAIN_ENTITY_ROLES:
+            raise ValueError(f"supply-chain entity {entity_id} has an invalid role")
+        source_organization = _bounded_text(
+            item.get("source_organization"),
+            field=f"supply_chain.{entity_id}.source_organization",
+            maximum=160,
+        )
+        if source_organization not in known_organizations:
+            raise ValueError(
+                f"supply-chain entity {entity_id} has no registered source organization"
+            )
+        entities[entity_id] = {
+            "entity_id": entity_id,
+            "name": _bounded_text(
+                item.get("name"), field=f"supply_chain.{entity_id}.name", maximum=160
+            ),
+            "identifier": _bounded_text(
+                item.get("identifier"),
+                field=f"supply_chain.{entity_id}.identifier",
+                maximum=40,
+            ).upper(),
+            "role": role,
+            "source_organization": source_organization,
+        }
+    subject_entities = [
+        item for item in entities.values() if item["role"] == "subject_company"
+    ]
+    if (
+        len(subject_entities) != 1
+        or subject_entities[0]["identifier"] != symbol
+    ):
+        raise ValueError("supply-chain graph requires exactly one matching subject company")
+    subject_id = subject_entities[0]["entity_id"]
+    external_ids = set(entities) - {subject_id}
+    if len(external_ids) < minimum_external:
+        raise ValueError("supply-chain graph has too few external entities")
+    external_roles = {entities[item]["role"] for item in external_ids}
+    if len(external_roles) < int(policy["minimum_supply_chain_external_roles"]):
+        raise ValueError("supply-chain graph has too little role coverage")
+
+    relationships_raw = raw.get("relationships")
+    minimum_relationships = int(policy["minimum_supply_chain_relationships"])
+    if (
+        not isinstance(relationships_raw, list)
+        or not minimum_relationships <= len(relationships_raw) <= 60
+    ):
+        raise ValueError("supply-chain relationships are incomplete")
+    relationships: dict[str, dict[str, Any]] = {}
+    adjacency = {entity_id: set() for entity_id in entities}
+    for item in relationships_raw:
+        if not isinstance(item, dict):
+            raise ValueError("supply-chain relationship must be an object")
+        relationship_id = _bounded_text(
+            item.get("relationship_id"),
+            field="supply_chain.relationship_id",
+            maximum=80,
+        )
+        if relationship_id in relationships:
+            raise ValueError("supply-chain relationship ids must be unique")
+        from_entity = item.get("from_entity_id")
+        to_entity = item.get("to_entity_id")
+        if (
+            from_entity not in entities
+            or to_entity not in entities
+            or from_entity == to_entity
+        ):
+            raise ValueError(f"supply-chain relationship {relationship_id} is invalid")
+        relationship_type = item.get("relationship_type")
+        if relationship_type not in SUPPLY_CHAIN_RELATIONSHIP_TYPES:
+            raise ValueError(
+                f"supply-chain relationship {relationship_id} has an invalid type"
+            )
+        required_from_role = {
+            "customer_of": "customer",
+            "supplier_to": "supplier",
+            "competes_with": "competitor",
+            "peer_of": "industry_peer",
+        }[relationship_type]
+        if (
+            entities[from_entity]["role"] != required_from_role
+            or entities[to_entity]["role"] != "subject_company"
+        ):
+            raise ValueError(
+                f"supply-chain relationship {relationship_id} conflicts with entity roles"
+            )
+        expected_lag_months = item.get("expected_lag_months")
+        if (
+            isinstance(expected_lag_months, bool)
+            or not isinstance(expected_lag_months, int)
+            or not 0 <= expected_lag_months <= 60
+        ):
+            raise ValueError(
+                f"supply-chain relationship {relationship_id} has an invalid lag"
+            )
+        relationships[relationship_id] = {
+            "relationship_id": relationship_id,
+            "from_entity_id": from_entity,
+            "to_entity_id": to_entity,
+            "relationship_type": relationship_type,
+            "upstream_metric": _bounded_text(
+                item.get("upstream_metric"),
+                field=f"supply_chain.{relationship_id}.upstream_metric",
+                maximum=160,
+            ),
+            "subject_metric": _bounded_text(
+                item.get("subject_metric"),
+                field=f"supply_chain.{relationship_id}.subject_metric",
+                maximum=160,
+            ),
+            "expected_lag_months": expected_lag_months,
+            "mechanism": _bounded_text(
+                item.get("mechanism"),
+                field=f"supply_chain.{relationship_id}.mechanism",
+                maximum=800,
+            ),
+            "source_ids": _source_ids(
+                item.get("source_ids"),
+                field=f"supply_chain relationship {relationship_id}",
+                registry=registry,
+            ),
+        }
+        adjacency[from_entity].add(to_entity)
+        adjacency[to_entity].add(from_entity)
+    reachable = {subject_id}
+    frontier = [subject_id]
+    while frontier:
+        current = frontier.pop()
+        for connected in adjacency[current] - reachable:
+            reachable.add(connected)
+            frontier.append(connected)
+    if reachable != set(entities):
+        raise ValueError("supply-chain graph contains entities disconnected from subject")
+
+    signals_raw = raw.get("signals")
+    if not isinstance(signals_raw, list) or not minimum_external + 1 <= len(
+        signals_raw
+    ) <= 100:
+        raise ValueError("supply-chain signals are incomplete")
+    allowed_units = set(policy["allowed_units"])
+    signals: list[dict[str, Any]] = []
+    signal_ids: set[str] = set()
+    entities_with_signals: set[str] = set()
+    primary_organizations: set[str] = set()
+    supporting_entities: set[str] = set()
+    supporting_organizations: set[str] = set()
+    contradicting_entities: set[str] = set()
+    classification_counts = {
+        "supporting": 0,
+        "contradicting": 0,
+        "inconclusive": 0,
+    }
+    external_classification_counts = {
+        "supporting": 0,
+        "contradicting": 0,
+        "inconclusive": 0,
+    }
+    for item in signals_raw:
+        if not isinstance(item, dict):
+            raise ValueError("supply-chain signal must be an object")
+        signal_id = _bounded_text(
+            item.get("signal_id"), field="supply_chain.signal_id", maximum=100
+        )
+        if signal_id in signal_ids:
+            raise ValueError("supply-chain signal ids must be unique")
+        signal_ids.add(signal_id)
+        entity_id = item.get("entity_id")
+        if entity_id not in entities:
+            raise ValueError(f"supply-chain signal {signal_id} has an invalid entity")
+        relationship_ids = item.get("relationship_ids")
+        if (
+            not isinstance(relationship_ids, list)
+            or not relationship_ids
+            or len(relationship_ids) != len(set(relationship_ids))
+            or any(value not in relationships for value in relationship_ids)
+        ):
+            raise ValueError(
+                f"supply-chain signal {signal_id} has invalid relationship links"
+            )
+        if not any(
+            entity_id
+            in {
+                relationships[value]["from_entity_id"],
+                relationships[value]["to_entity_id"],
+            }
+            for value in relationship_ids
+        ):
+            raise ValueError(
+                f"supply-chain signal {signal_id} is not linked to its entity"
+            )
+        unit = item.get("unit")
+        if unit not in allowed_units:
+            raise ValueError(f"supply-chain signal {signal_id} has an invalid unit")
+        prior_value = _finite_number(
+            item.get("prior_value"), field=f"supply_chain.{signal_id}.prior_value"
+        )
+        current_value = _finite_number(
+            item.get("current_value"),
+            field=f"supply_chain.{signal_id}.current_value",
+        )
+        absolute_change = current_value - prior_value
+        reported_direction = (
+            "flat"
+            if math.isclose(absolute_change, 0.0, abs_tol=1e-12)
+            else "increase" if absolute_change > 0 else "decrease"
+        )
+        subject_direction = item.get("subject_metric_direction")
+        if subject_direction not in {"increase", "decrease", "flat", "mixed"}:
+            raise ValueError(
+                f"supply-chain signal {signal_id} has an invalid subject direction"
+            )
+        if subject_direction == expected_direction:
+            classification = "supporting"
+        elif {subject_direction, expected_direction} == {"increase", "decrease"}:
+            classification = "contradicting"
+        else:
+            classification = "inconclusive"
+        if entity_id == subject_id and subject_direction != reported_direction:
+            raise ValueError(
+                f"supply-chain subject signal {signal_id} direction does not reconcile"
+            )
+        source_ids = _source_ids(
+            item.get("source_ids"),
+            field=f"supply_chain signal {signal_id}",
+            registry=registry,
+        )
+        entity_organization = entities[entity_id]["source_organization"]
+        primary_source_ids = [
+            source_id
+            for source_id in source_ids
+            if registry[source_id]["organization"] == entity_organization
+            and registry[source_id]["source_type"] in PRIMARY_COMPANY_SOURCE_TYPES
+        ]
+        if not primary_source_ids:
+            raise ValueError(
+                f"supply-chain signal {signal_id} lacks its entity's primary source"
+            )
+        entities_with_signals.add(entity_id)
+        if entity_id != subject_id:
+            primary_organizations.add(entity_organization)
+            external_classification_counts[classification] += 1
+            if classification == "supporting":
+                supporting_entities.add(entity_id)
+                supporting_organizations.add(entity_organization)
+            elif classification == "contradicting":
+                contradicting_entities.add(entity_id)
+        classification_counts[classification] += 1
+        signals.append(
+            {
+                "signal_id": signal_id,
+                "entity_id": entity_id,
+                "relationship_ids": sorted(relationship_ids),
+                "metric": _bounded_text(
+                    item.get("metric"),
+                    field=f"supply_chain.{signal_id}.metric",
+                    maximum=160,
+                ),
+                "period": _bounded_text(
+                    item.get("period"),
+                    field=f"supply_chain.{signal_id}.period",
+                    maximum=80,
+                ),
+                "unit": unit,
+                "prior_value": prior_value,
+                "current_value": current_value,
+                "absolute_change": absolute_change,
+                "change_percent": _growth_percent(current_value, prior_value),
+                "reported_direction": reported_direction,
+                "subject_metric_direction": subject_direction,
+                "classification": classification,
+                "primary_source_ids": sorted(primary_source_ids),
+                "source_ids": source_ids,
+                "methodology": _bounded_text(
+                    item.get("methodology"),
+                    field=f"supply_chain.{signal_id}.methodology",
+                    maximum=800,
+                ),
+            }
+        )
+    if external_ids - entities_with_signals:
+        raise ValueError("every external supply-chain entity requires a signal")
+    if subject_id not in entities_with_signals:
+        raise ValueError("supply-chain analysis requires a subject-company signal")
+    if len(primary_organizations) < minimum_external:
+        raise ValueError("supply-chain evidence has too few independent primary sources")
+    if external_classification_counts["contradicting"] < int(
+        policy["minimum_supply_chain_counter_signals"]
+    ):
+        raise ValueError("supply-chain analysis requires an external counter-signal")
+    minimum_supporting = int(policy["minimum_supply_chain_supporting_entities"])
+    confirmed = (
+        len(supporting_entities) >= minimum_supporting
+        and len(supporting_organizations) >= minimum_supporting
+    )
+    confirmation_state = (
+        "confirmed_with_counter_signals"
+        if confirmed and contradicting_entities
+        else "confirmed"
+        if confirmed
+        else "not_confirmed_with_counter_signals"
+        if contradicting_entities
+        else "not_confirmed"
+    )
+    return {
+        "hypothesis": hypothesis,
+        "subject_entity_id": subject_id,
+        "entities": sorted(entities.values(), key=lambda item: item["entity_id"]),
+        "relationships": sorted(
+            relationships.values(), key=lambda item: item["relationship_id"]
+        ),
+        "signals": sorted(signals, key=lambda item: item["signal_id"]),
+        "cross_company_confirmation": {
+            "state": confirmation_state,
+            "external_entity_count": len(external_ids),
+            "external_role_count": len(external_roles),
+            "independent_primary_organization_count": len(primary_organizations),
+            "supporting_external_entity_ids": sorted(supporting_entities),
+            "supporting_primary_organizations": sorted(supporting_organizations),
+            "contradicting_external_entity_ids": sorted(contradicting_entities),
+            "signal_counts": classification_counts,
+            "external_signal_counts": external_classification_counts,
+            "score_used": False,
+        },
+        "coverage_rationale": _bounded_text(
+            raw.get("coverage_rationale"),
+            field="supply_chain.coverage_rationale",
+            maximum=1200,
+        ),
+        "methodology": _bounded_text(
+            raw.get("methodology"), field="supply_chain.methodology", maximum=1200
+        ),
+        "source_ids": _source_ids(
+            raw.get("source_ids"), field="supply_chain", registry=registry
+        ),
+    }
+
+
 def _valuation(
     raw: Any,
     *,
@@ -2102,6 +2536,12 @@ def build_focused_research_dossier(
     earnings_quality = _earnings_quality(
         payload.get("earnings_quality"), registry=sources, policy=policy
     )
+    supply_chain = _supply_chain_read_through(
+        payload.get("supply_chain_read_through"),
+        symbol=symbol,
+        registry=sources,
+        policy=policy,
+    )
     valuation = _valuation(
         payload.get("valuation"),
         current_price=current_price,
@@ -2133,6 +2573,10 @@ def build_focused_research_dossier(
         or valuation["reward_to_risk"] < float(policy["minimum_reward_to_risk"])
     ):
         raise ValueError("buy recommendation has insufficient reward-to-risk")
+    if recommendation == "buy" and not supply_chain[
+        "cross_company_confirmation"
+    ]["state"].startswith("confirmed"):
+        raise ValueError("buy recommendation requires cross-company confirmation")
 
     research_sections = {
         "investment_thesis": investment_thesis,
@@ -2149,6 +2593,7 @@ def build_focused_research_dossier(
         },
         "earnings_model": earnings,
         "earnings_quality": earnings_quality,
+        "supply_chain_read_through": supply_chain,
         "valuation": valuation,
         "catalyst_path": sorted(catalysts, key=lambda item: (item["window_start"], item["catalyst_id"])),
         "risk_disconfirming_evidence": risk_evidence,
@@ -2600,6 +3045,51 @@ def validate_focused_research_dossier(
         ) from exc
     if rebuilt_quality != quality:
         raise ValueError("focused research earnings quality analysis does not reconcile")
+    supply_chain = sections.get("supply_chain_read_through")
+    if not isinstance(supply_chain, dict):
+        raise ValueError("focused research supply-chain read-through is missing")
+    confirmation = supply_chain.get("cross_company_confirmation", {})
+    try:
+        rebuilt_supply_chain = _supply_chain_read_through(
+            {
+                "hypothesis": supply_chain.get("hypothesis"),
+                "entities": supply_chain.get("entities"),
+                "relationships": supply_chain.get("relationships"),
+                "signals": supply_chain.get("signals"),
+                "coverage_rationale": supply_chain.get("coverage_rationale"),
+                "methodology": supply_chain.get("methodology"),
+                "source_ids": supply_chain.get("source_ids"),
+            },
+            symbol=str(dossier.get("symbol")),
+            registry=source_registry,
+            policy={
+                "minimum_supply_chain_external_entities": 3,
+                "minimum_supply_chain_external_roles": 2,
+                "minimum_supply_chain_supporting_entities": 3,
+                "minimum_supply_chain_counter_signals": 1,
+                "minimum_supply_chain_relationships": 3,
+                "allowed_units": [
+                    "percent",
+                    "basis_points",
+                    "usd",
+                    "usd_millions",
+                    "per_share_usd",
+                    "ratio",
+                    "multiple",
+                    "units",
+                ],
+            },
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "focused research supply-chain read-through does not reconcile"
+        ) from exc
+    if rebuilt_supply_chain != supply_chain:
+        raise ValueError(
+            "focused research supply-chain read-through does not reconcile"
+        )
+    if confirmation.get("score_used") is not False:
+        raise ValueError("focused research supply-chain score attempted to control a decision")
     score = sections.get("score_summary", {})
     if score.get("used_for_recommendation_gate") is not False or score.get(
         "used_for_position_sizing"
@@ -2660,6 +3150,7 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     variant = sections["variant_view"]
     earnings = sections["earnings_model"]
     quality = sections["earnings_quality"]
+    supply_chain = sections["supply_chain_read_through"]
     valuation = sections["valuation"]
     risks = sections["risk_disconfirming_evidence"]
     position = sections["position_construction"]
@@ -2674,6 +3165,10 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     attribution_by_id = {
         item["driver_id"]: item for item in quality_eps["components"]
     }
+    supply_entities = {
+        item["entity_id"]: item for item in supply_chain["entities"]
+    }
+    supply_confirmation = supply_chain["cross_company_confirmation"]
 
     def formatted_change(value: float | None) -> str:
         return "not meaningful" if value is None else f"{value:+.1f}%"
@@ -2818,30 +3313,57 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
         "",
         f"Share-repurchase contribution: {formatted_points(quality_eps['share_repurchase_contribution_percentage_points'])} ({formatted_change(quality_eps['share_repurchase_share_of_eps_growth_percent'])} of total EPS growth)",
         "",
-        "## 5. Valuation",
+        "## 5. Supply-chain Read-through",
+        "",
+        f"Hypothesis: {supply_chain['hypothesis']['statement']}",
+        f"Subject metric: {supply_chain['hypothesis']['subject_metric']} | expected direction: {supply_chain['hypothesis']['expected_direction']} | period: {supply_chain['hypothesis']['forecast_period']}",
+        f"Cross-company confirmation: {supply_confirmation['state']} | external entities {supply_confirmation['external_entity_count']} | independent primary organizations {supply_confirmation['independent_primary_organization_count']} | supporting entities {len(supply_confirmation['supporting_external_entity_ids'])} | external contradicting signals {supply_confirmation['external_signal_counts']['contradicting']}",
+        "",
+        "### Transmission map",
+        "",
+        "| From | Relationship | To | Upstream metric | Subject metric | Lag | Mechanism |",
+        "|---|---|---|---|---|---:|---|",
+        *[
+            f"| {supply_entities[item['from_entity_id']]['name']} | {item['relationship_type']} | {supply_entities[item['to_entity_id']]['name']} | {item['upstream_metric']} | {item['subject_metric']} | {item['expected_lag_months']}m | {item['mechanism']} |"
+            for item in supply_chain["relationships"]
+        ],
+        "",
+        "### Cross-company signals",
+        "",
+        "| Entity | Role | Metric / period | Prior | Current | Change | Read-through | Classification |",
+        "|---|---|---|---:|---:|---:|---|---|",
+        *[
+            f"| {supply_entities[item['entity_id']]['name']} | {supply_entities[item['entity_id']]['role']} | {item['metric']} / {item['period']} | {item['prior_value']:.2f} {item['unit']} | {item['current_value']:.2f} {item['unit']} | {formatted_change(item['change_percent'])} | {item['subject_metric_direction']} | {item['classification']} |"
+            for item in supply_chain["signals"]
+        ],
+        "",
+        f"Coverage: {supply_chain['coverage_rationale']}",
+        f"Falsification: {'; '.join(supply_chain['hypothesis']['falsification_criteria'])}",
+        "",
+        "## 6. Valuation",
         "",
         f"Probability-weighted price: ${valuation['probability_weighted_price']:.2f} | Expected return: {valuation['probability_weighted_return']:+.1%} | Bear return: {valuation['bear_case_return']:+.1%}",
         f"Reward/risk: {valuation['reward_to_risk']:.2f}" if valuation["reward_to_risk"] is not None else "Reward/risk: not meaningful",
         "",
-        "## 6. Catalyst Path",
+        "## 7. Catalyst Path",
         "",
         *[
             f"- {item['window_start']}–{item['window_end']}: {item['event']} — {item['observable']}"
             for item in sections["catalyst_path"]
         ],
         "",
-        "## 7. Risk / Disconfirming Evidence",
+        "## 8. Risk / Disconfirming Evidence",
         "",
         *[f"- Risk ({item['probability']}): {item['statement']} — monitor: {item['monitor']}" for item in risks["risks"]],
         *[f"- Contrary evidence: {item['observation']} — impact: {item['thesis_impact']}" for item in risks["contrary_evidence"]],
         "",
-        "## 8. Position Construction",
+        "## 9. Position Construction",
         "",
         f"Initial {position['initial_weight_percent']:.2f}% → target {position['target_weight_percent']:.2f}% → maximum {position['maximum_weight_percent']:.2f}%",
         f"Entry ${position['entry_price_low']:.2f}–${position['entry_price_high']:.2f} | risk budget {position['risk_budget_bps']:.0f} bps | earnings-event cap {position['earnings_event_weight_percent']:.2f}%",
         position["sizing_rationale"],
         "",
-        "## 9. Score Summary",
+        "## 10. Score Summary",
         "",
         f"Investment Conviction: {score['investment_conviction']}/100",
         score["summary"],
