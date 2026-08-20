@@ -22,6 +22,7 @@ ReadWritePaths=/home/seoje/toss-trading/stock-recommendation-runtime
 EnvironmentFile=-/etc/toss-trading/research.env
 Environment=GCP_PROJECT_ID=toss-trading-core-lab
 Environment=STOCK_RECOMMENDATION_RUNTIME_ROOT=/home/seoje/toss-trading/stock-recommendation-runtime
+Environment=CLOUDSDK_CONFIG=/home/seoje/toss-trading/stock-recommendation-runtime/gcloud
 Environment=MASSIVE_API_KEY_SECRET=massive-api-key
 Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:/snap/google-cloud-cli/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python

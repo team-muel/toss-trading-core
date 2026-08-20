@@ -23,6 +23,7 @@ ReadWritePaths=/home/seoje/toss-trading/paper-runtime
 Environment=GCP_PROJECT_ID=toss-trading-core-lab
 Environment=RESEARCH_RUNTIME_ROOT=/home/seoje/toss-trading/research-runtime
 Environment=PAPER_RUNTIME_ROOT=/home/seoje/toss-trading/paper-runtime
+Environment=CLOUDSDK_CONFIG=/home/seoje/toss-trading/paper-runtime/gcloud
 Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:/snap/google-cloud-cli/current/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=PYTHON_BIN=/home/seoje/toss-trading/current/.venv/bin/python
 ExecStart=/usr/bin/bash /home/seoje/toss-trading/current/scripts/run_paper_operation_gcp.sh

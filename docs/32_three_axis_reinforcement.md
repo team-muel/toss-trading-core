@@ -19,6 +19,9 @@
 - 비용 보정은 Foundation이 개인 식별자를 제거한 JSON만 별도 Secret Manager
   secret으로 발행한다.
 - paper runner는 Toss broker adapter를 import하거나 client credential을 받지 않는다.
+- research, paper, broad-stock systemd는 각각 writable한 전용 runtime의 `gcloud`
+  config를 사용하며 Foundation의 `runtime/gcloud` credential cache를 읽거나
+  갱신하지 않는다.
 - baseline의 전향 검증이 끝나기 전 paper 결과는
   `infrastructure_validation_only`이며 strategy promotion 증거가 아니다.
 - paper와 연구의 모든 정책에서 `live_orders_enabled=false`를 유지한다.
