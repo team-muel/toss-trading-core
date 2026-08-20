@@ -1,5 +1,5 @@
 {
-  "schema_version": "stock-recommendation-policy-v1",
+  "schema_version": "stock-recommendation-policy-v2",
   "enabled": false,
   "activation_gate": "massive_api_key_and_personal_terms_approval_required",
   "provider": "massive-grouped-daily",
@@ -11,7 +11,8 @@
   "minimum_price_usd": 5.0,
   "minimum_median_dollar_volume_usd": 5000000,
   "minimum_history_trading_days": 253,
-  "maximum_recommendations": 10,
+  "maximum_screening_candidates": 25,
+  "maximum_buy_recommendations": 10,
   "factor_weights": {
     "momentum_12_1": 0.35,
     "momentum_6_1": 0.25,
@@ -22,6 +23,7 @@
   "require_above_200_day_average": true,
   "prospective_horizons_trading_days": [5, 21, 63],
   "benchmark": "SPY",
+  "require_focused_research_for_buy_recommendation": true,
   "execution_authorized": false,
   "promotion_authorized": false
 }

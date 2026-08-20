@@ -3,11 +3,13 @@
 ## 목적과 분리 원칙
 
 기존 15개 ETF baseline은 전향 검증 규칙과 시작일을 변경하지 않는다. 광범위 주식
-추천은 별도 파이프라인으로 운영하며, 미국 상장 보통주 중 유동성 상위 약 2,500개를
-매일 동일한 규칙으로 평가한다.
+추천 연구는 별도 파이프라인으로 운영하며, 미국 상장 보통주 중 유동성 상위 약
+2,500개를 매일 동일한 규칙으로 평가한다.
 
-여기서 “추천”은 조사 우선순위를 뜻한다. 개인 맞춤 투자자문이나 주문 승인이 아니며,
-추천 결과에서 Toss 주문 경로로 이어지는 연결은 만들지 않는다.
+정량 상위 종목은 `screening_candidates`이며 아직 매수 추천이 아니다. 실제
+`recommendations`에는 `focused-research-dossier-v1` 검증을 통과하고 결론이 `buy`인
+종목만 들어간다. 둘 다 개인 맞춤 투자자문이나 주문 승인이 아니며, 결과에서 Toss
+주문 경로로 이어지는 연결은 만들지 않는다.
 
 ## 공급자 선택
 
@@ -29,22 +31,27 @@ Secret Manager version이 모두 준비되기 전 `config/stock_recommendation_p
 - 126일 저변동성 20%
 - 200일 이동평균 대비 trend strength 20%
 - 12-1 momentum이 양수이고 200일 이동평균 위에 있는 종목만 최종 후보
-- 상위 10개까지만 연구 추천
+- 상위 25개까지만 집중연구 큐에 등록
+- Variant Perception 집중연구를 통과한 종목 중 상위 10개까지만 연구상 매수 추천
 
 점수는 그날 단면의 percentile rank로 계산해 극단값의 영향을 제한한다. LLM은 종목,
 점수 또는 순위를 변경하지 않고 설명만 할 수 있다.
 
 ## 검증과 전달
 
-각 실행은 전체 평가 수, 유동성·이력 통과 수, 추세 통과 수, 최종 추천과 factor별
-근거를 content-addressed JSON으로 남긴다. 각 추천은 SPY 대비 5·21·63거래일 성과를
-전향 추적하며, 추천 당시에는 미래 성과를 표시하지 않는다.
+각 실행은 전체 평가 수, 유동성·이력 통과 수, 추세 통과 수, 정량 screening 후보,
+집중연구 대기 큐, 최종 매수 추천과 factor별 근거를 content-addressed JSON으로
+남긴다. 집중연구를 통과하지 않은 정량 후보는 매수 추천으로 승격하지 않는다. 실제
+매수 추천만 SPY 대비 5·21·63거래일 성과를 전향 추적하며, 추천 당시에는 미래 성과를
+표시하지 않는다.
 
 매일 데이터가 실제로 전진한 경우에만 새 추천을 만들고 Gmail 연구 digest에는 다음을
 포함한다.
 
 - 기준 거래일과 실제 평가 종목 수
-- 추천 종목과 factor별 점수
+- screening 후보와 factor별 점수
+- 집중연구 dossier ID, 시장 내재 기대와 자체 추정의 격차, 연결된 촉매
+- 집중연구 미완료로 매수 추천이 보류된 종목 수
 - 유동성·가격·추세 필터 통과 사실
 - 이전 추천의 만기가 도래한 전향 성과
 - `execution_authorized=false`
@@ -57,3 +64,7 @@ Secret Manager version이 모두 준비되기 전 `config/stock_recommendation_p
 4. raw 응답과 normalized bar manifest 연결
 5. 2,000개 이상 universe QA 통과
 6. 첫 추천 run을 만들되 live·paper 주문에는 연결하지 않음
+
+집중연구의 필수 데이터 계약과 검증 명령은
+[`docs/34_variant_perception_focused_research.md`](34_variant_perception_focused_research.md)를
+따른다.

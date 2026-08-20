@@ -8,17 +8,34 @@ from toss_trading.research.stock_recommendations import (
     generate_stock_recommendations,
     load_recommendation_policy,
 )
+from toss_trading.research.variant_perception import (
+    load_focused_research_dossiers,
+    load_focused_research_policy,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate immutable research-only recommendations from broad US stock bars."
+        description=(
+            "Generate broad screening candidates and focused-research-gated buy "
+            "recommendations from US stock bars."
+        )
     )
     parser.add_argument("--input-jsonl", required=True)
     parser.add_argument("--policy", default="config/stock_recommendation_policy.json")
     parser.add_argument("--as-of-date", required=True)
     parser.add_argument("--code-revision", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--focused-research-policy",
+        default="config/focused_research_policy.json",
+    )
+    parser.add_argument(
+        "--focus-dossier",
+        action="append",
+        default=[],
+        help="Validated focused-research dossier; repeat for multiple symbols.",
+    )
     return parser
 
 
@@ -39,6 +56,14 @@ def main(argv: list[str] | None = None) -> int:
         policy=policy,
         as_of_date=args.as_of_date,
         code_revision=args.code_revision,
+        focused_research_dossiers=load_focused_research_dossiers(
+            args.focus_dossier
+        ),
+        focused_research_maximum_age_days=int(
+            load_focused_research_policy(args.focused_research_policy)[
+                "maximum_dossier_age_days"
+            ]
+        ),
     )
     destination = Path(args.output_dir) / f"{payload['recommendation_id']}.json"
     destination.parent.mkdir(parents=True, exist_ok=True)

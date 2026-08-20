@@ -10,18 +10,28 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Iterable
 
+from toss_trading.research.variant_perception import (
+    validate_focused_research_dossier,
+)
+
 
 def load_recommendation_policy(path: str | Path) -> dict[str, Any]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if payload.get("schema_version") != "stock-recommendation-policy-v1":
+    if payload.get("schema_version") != "stock-recommendation-policy-v2":
         raise ValueError("unsupported stock recommendation policy")
     minimum = int(payload["minimum_universe_size"])
     maximum = int(payload["maximum_universe_size"])
     target = int(payload["target_universe_size"])
     if not 1 <= minimum <= target <= maximum:
         raise ValueError("invalid recommendation universe bounds")
-    if not 1 <= int(payload["maximum_recommendations"]) <= 50:
-        raise ValueError("invalid maximum recommendations")
+    if not 1 <= int(payload["maximum_screening_candidates"]) <= 100:
+        raise ValueError("invalid maximum screening candidates")
+    if not 1 <= int(payload["maximum_buy_recommendations"]) <= 50:
+        raise ValueError("invalid maximum buy recommendations")
+    if int(payload["maximum_buy_recommendations"]) > int(
+        payload["maximum_screening_candidates"]
+    ):
+        raise ValueError("buy recommendation limit exceeds screening limit")
     weights = payload.get("factor_weights")
     expected = {
         "momentum_12_1",
@@ -37,6 +47,8 @@ def load_recommendation_policy(path: str | Path) -> dict[str, Any]:
         raise ValueError("stock recommendations may not authorize execution")
     if payload.get("promotion_authorized") is not False:
         raise ValueError("stock recommendations may not authorize promotion")
+    if payload.get("require_focused_research_for_buy_recommendation") is not True:
+        raise ValueError("stock buy recommendations require focused research")
     return payload
 
 
@@ -75,8 +87,10 @@ def generate_stock_recommendations(
     as_of_date: str,
     code_revision: str,
     source_manifest_ids: Iterable[str] = (),
+    focused_research_dossiers: Iterable[dict[str, Any]] = (),
+    focused_research_maximum_age_days: int = 14,
 ) -> dict[str, Any]:
-    """Rank a broad common-stock universe without granting order authority."""
+    """Screen a broad universe and gate buy recommendations on focused research."""
 
     date.fromisoformat(as_of_date)
     if not code_revision or code_revision.lower() == "unknown":
@@ -159,20 +173,86 @@ def generate_stock_recommendations(
         )
     ]
     eligible.sort(key=lambda item: (-item["composite_score"], item["symbol"]))
-    selected = eligible[: int(policy["maximum_recommendations"])]
+    selected = eligible[: int(policy["maximum_screening_candidates"])]
+    dossier_by_symbol: dict[str, dict[str, Any]] = {}
+    stale_dossier_symbols: set[str] = set()
+    for dossier in focused_research_dossiers:
+        dossier_symbol = str(dossier.get("symbol") or "").upper()
+        dossier_date = date.fromisoformat(str(dossier.get("as_of_date")))
+        current_date = date.fromisoformat(as_of_date)
+        if dossier_date > current_date:
+            raise ValueError("focused research dossier is from the future")
+        if (current_date - dossier_date).days > focused_research_maximum_age_days:
+            if dossier_symbol:
+                stale_dossier_symbols.add(dossier_symbol)
+            continue
+        validate_focused_research_dossier(
+            dossier,
+            as_of_date=as_of_date,
+            maximum_age_days=focused_research_maximum_age_days,
+        )
+        symbol = dossier_symbol
+        existing = dossier_by_symbol.get(symbol)
+        if existing is None or str(dossier["as_of_date"]) > str(existing["as_of_date"]):
+            dossier_by_symbol[symbol] = dossier
+
+    recommendations: list[dict[str, Any]] = []
+    screening_candidates: list[dict[str, Any]] = []
+    for item in selected:
+        dossier = dossier_by_symbol.get(item["symbol"])
+        focus_state = (
+            "buy_dossier_passed"
+            if dossier is not None and dossier.get("recommendation") == "buy"
+            else "focused_research_required"
+            if dossier is None and item["symbol"] not in stale_dossier_symbols
+            else "focused_research_stale"
+            if dossier is None
+            else f"focused_research_{dossier.get('recommendation', 'no_view')}"
+        )
+        screened = {
+            **item,
+            "focused_research_state": focus_state,
+            "focused_research_dossier_id": (
+                dossier.get("dossier_id") if dossier is not None else None
+            ),
+        }
+        screening_candidates.append(screened)
+        if focus_state == "buy_dossier_passed" and len(recommendations) < int(
+            policy["maximum_buy_recommendations"]
+        ):
+            recommendations.append(
+                {
+                    **screened,
+                    "variant_summary": dossier["variant_summary"],
+                    "probability_weighted_return": dossier["scenario_analysis"][
+                        "probability_weighted_return"
+                    ],
+                    "bear_case_return": dossier["scenario_analysis"][
+                        "bear_case_return"
+                    ],
+                    "catalyst_ids": [
+                        catalyst["catalyst_id"] for catalyst in dossier["catalysts"]
+                    ],
+                }
+            )
     manifests = sorted(set(source_manifest_ids))
     identity = {
         "as_of_date": as_of_date,
         "code_revision": code_revision,
         "policy": policy,
         "source_manifest_ids": manifests,
-        "recommendations": [item["symbol"] for item in selected],
+        "screening_candidates": screening_candidates,
+        "recommendations": recommendations,
+        "focused_research_dossier_ids": sorted(
+            str(item["focused_research_dossier_id"])
+            for item in recommendations
+        ),
     }
     recommendation_id = str(
         uuid.uuid5(uuid.NAMESPACE_URL, "stock-recommendation:" + _canonical_json(identity))
     )
     return {
-        "schema_version": "stock-recommendation-run-v1",
+        "schema_version": "stock-recommendation-run-v2",
         "recommendation_id": recommendation_id,
         "as_of_date": as_of_date,
         "code_revision": code_revision,
@@ -188,14 +268,55 @@ def generate_stock_recommendations(
             "ranked_count": len(universe),
             "positive_trend_eligible_count": len(eligible),
         },
-        "recommendations": selected,
+        "screening_candidates": screening_candidates,
+        "recommendations": recommendations,
+        "recommendation_gate": {
+            "focused_research_required": True,
+            "screening_candidate_count": len(screening_candidates),
+            "buy_dossier_passed_count": len(recommendations),
+            "withheld_pending_focused_research_count": sum(
+                item["focused_research_state"] == "focused_research_required"
+                for item in screening_candidates
+            ),
+            "stale_dossier_count": sum(
+                item["focused_research_state"] == "focused_research_stale"
+                for item in screening_candidates
+            ),
+            "non_buy_dossier_count": sum(
+                item["focused_research_state"]
+                in {
+                    "focused_research_watch",
+                    "focused_research_avoid",
+                    "focused_research_no_view",
+                }
+                for item in screening_candidates
+            ),
+        },
+        "focused_research_queue": [
+            {
+                "priority": index + 1,
+                "symbol": item["symbol"],
+                "screening_score": item["composite_score"],
+                "state": item["focused_research_state"],
+                "required_chain": [
+                    "market_consensus",
+                    "price_implied_expectation",
+                    "house_estimate",
+                    "difference",
+                    "catalysts",
+                ],
+            }
+            for index, item in enumerate(screening_candidates)
+            if item["focused_research_state"] != "buy_dossier_passed"
+        ],
         "prospective_tracking": {
-            "state": "registered",
+            "state": "registered" if recommendations else "awaiting_buy_dossier",
             "benchmark": policy["benchmark"],
             "horizons_trading_days": policy[
                 "prospective_horizons_trading_days"
             ],
             "performance_revealed": False,
+            "tracked_population": "buy_recommendations_only",
         },
         "promotion_authorized": False,
         "execution_authorized": False,

@@ -10,8 +10,13 @@ RUNTIME_ROOT="${STOCK_RECOMMENDATION_RUNTIME_ROOT:-/home/seoje/toss-trading/stoc
 JSON_LOG="${RUNTIME_ROOT}/stock_recommendations.jsonl"
 LOCK_PATH="${RUNTIME_ROOT}/stock_recommendations.lock"
 POLICY="${STOCK_RECOMMENDATION_POLICY:-config/stock_recommendation_policy.json}"
+FOCUSED_RESEARCH_POLICY="${FOCUSED_RESEARCH_POLICY:-config/focused_research_policy.json}"
+FOCUSED_RESEARCH_DIR="${FOCUSED_RESEARCH_DIR:-${RUNTIME_ROOT}/focused-research/dossiers}"
 MASSIVE_SECRET="${MASSIVE_API_KEY_SECRET:-massive-api-key}"
-mkdir -p "${RUNTIME_ROOT}/input/raw" "${RUNTIME_ROOT}/recommendations"
+mkdir -p \
+  "${RUNTIME_ROOT}/input/raw" \
+  "${RUNTIME_ROOT}/recommendations" \
+  "${FOCUSED_RESEARCH_DIR}"
 
 json_log() {
   printf '{"ts":"%s","event":"%s","state":"%s","reason":"%s"}\n' \
@@ -84,11 +89,17 @@ print(max(json.loads(line)["exchange_local_date"] for line in open(sys.argv[1], 
 PY
 )"
 CODE_REVISION="$(basename "$(readlink -f "${ROOT_DIR}")")"
+FOCUS_ARGS=()
+while IFS= read -r dossier; do
+  FOCUS_ARGS+=(--focus-dossier "${dossier}")
+done < <(find "${FOCUSED_RESEARCH_DIR}" -maxdepth 1 -type f -name '*.json' -print | sort)
 RESULT="$("${PYTHON_BIN}" -m toss_trading.cli.research_recommend_stocks \
   --input-jsonl "${BAR_JSONL}" \
   --policy "${POLICY}" \
   --as-of-date "${AS_OF_DATE}" \
   --code-revision "${CODE_REVISION}" \
+  --focused-research-policy "${FOCUSED_RESEARCH_POLICY}" \
+  "${FOCUS_ARGS[@]}" \
   --output-dir "${RUNTIME_ROOT}/recommendations")"
 RECOMMENDATION_ID="$("${PYTHON_BIN}" -c 'import json,sys; print(json.load(sys.stdin)["recommendation_id"])' <<<"${RESULT}")"
 ln -sfn "recommendations/${RECOMMENDATION_ID}.json" "${RUNTIME_ROOT}/latest.tmp"
