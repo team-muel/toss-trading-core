@@ -178,6 +178,14 @@ class GcpRunnerFilesTest(unittest.TestCase):
             "CLOUDSDK_CONFIG=/home/seoje/toss-trading/runtime/gcloud",
             service,
         )
+        self.assertIn(
+            'EXECUTION_COST_CALIBRATION="${RUNTIME_ROOT}/input/research_execution_cost_calibration.json"',
+            research_runner,
+        )
+        self.assertNotIn(
+            "runtime/research_execution_cost_calibration.json",
+            research_runner,
+        )
 
     def test_release_audit_and_prune_do_not_depend_on_release_mode_bits(self):
         audit = Path("scripts/audit_active_research_release.sh").read_text(
@@ -215,6 +223,10 @@ class GcpRunnerFilesTest(unittest.TestCase):
         )
         self.assertIn("Persistent=true", timer)
         self.assertIn("paper_operation_ok", runner)
+        self.assertIn(
+            'CALIBRATION_PATH="${PAPER_RUNTIME_ROOT}/input/research_execution_cost_calibration.json"',
+            runner,
+        )
 
         stock_service = Path(
             "deploy/systemd/toss-stock-recommendations.service"
