@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-POLICY_SCHEMA = "focused-research-policy-v7"
-DOSSIER_SCHEMA = "focused-research-dossier-v7"
+POLICY_SCHEMA = "focused-research-policy-v8"
+DOSSIER_SCHEMA = "focused-research-dossier-v8"
 RESEARCH_SECTION_ORDER = [
     "investment_thesis",
     "variant_view",
@@ -105,6 +105,10 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         ("minimum_earnings_call_questions", 1, 20),
         ("minimum_earnings_call_commitments", 1, 20),
         ("earnings_call_guidance_history_quarters", 8, 8),
+        ("minimum_estimate_revision_metrics", 4, 10),
+        ("minimum_event_revision_metrics", 2, 10),
+        ("minimum_estimate_revision_window_days", 1, 90),
+        ("maximum_estimate_revision_window_days", 1, 180),
     ):
         value = payload.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
@@ -162,6 +166,11 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "require_guidance_range_diff",
         "require_management_guidance_calibration",
         "require_question_evasion_tracking",
+        "require_estimate_revision_analysis",
+        "require_target_price_distribution_change",
+        "require_earnings_event_revision",
+        "require_analyst_revision_breadth",
+        "require_revision_price_divergence",
         "buy_requires_supply_chain_confirmation",
     ):
         if payload.get(field) is not True:
@@ -210,6 +219,17 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
     )
     if not 0 < guidance_bias_threshold <= 25:
         raise ValueError("focused research guidance bias threshold is invalid")
+    for field in (
+        "minimum_material_estimate_revision_percent",
+        "minimum_material_price_move_percent",
+    ):
+        threshold = _finite_number(payload.get(field), field=field)
+        if not 0 < threshold <= 25:
+            raise ValueError(f"focused research policy {field} is invalid")
+    if int(payload["minimum_estimate_revision_window_days"]) > int(
+        payload["maximum_estimate_revision_window_days"]
+    ):
+        raise ValueError("focused research estimate revision window is invalid")
     if (
         int(payload["minimum_supply_chain_supporting_entities"])
         > int(payload["minimum_supply_chain_external_entities"])
@@ -2919,6 +2939,466 @@ def _position_construction(
     }
 
 
+def _estimate_revision_analysis(
+    raw: Any,
+    *,
+    as_of: date,
+    current_price: float,
+    registry: dict[str, dict[str, Any]],
+    policy: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("variant_view.estimate_revision must be an object")
+
+    allowed_units = set(policy["allowed_units"])
+    allowed_metric_types = {
+        "fy1_eps",
+        "fy2_eps",
+        "revenue",
+        "ebitda",
+        "free_cash_flow",
+    }
+
+    def dated_source_ids(
+        values: Any,
+        *,
+        field: str,
+        source_type: str,
+        snapshot_date: date,
+    ) -> list[str]:
+        source_ids = _source_ids(
+            values,
+            field=field,
+            registry=registry,
+            required_type=source_type,
+        )
+        if not any(
+            registry[source_id]["source_type"] == source_type
+            and date.fromisoformat(str(registry[source_id]["observed_at"]))
+            == snapshot_date
+            for source_id in source_ids
+        ):
+            raise ValueError(
+                f"{field} needs a {source_type} observed on its snapshot date"
+            )
+        return source_ids
+
+    def consensus_snapshot(value: Any, *, field: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} must be an object")
+        snapshot_date = date.fromisoformat(str(value.get("snapshot_date")))
+        if snapshot_date > as_of:
+            raise ValueError(f"{field} is from the future")
+        analyst_count = value.get("analyst_count")
+        if (
+            isinstance(analyst_count, bool)
+            or not isinstance(analyst_count, int)
+            or not 1 <= analyst_count <= 500
+        ):
+            raise ValueError(f"{field} analyst_count is invalid")
+        return {
+            "snapshot_date": snapshot_date.isoformat(),
+            "value": _finite_number(value.get("value"), field=f"{field}.value"),
+            "analyst_count": analyst_count,
+            "source_ids": dated_source_ids(
+                value.get("source_ids"),
+                field=field,
+                source_type="consensus_dataset",
+                snapshot_date=snapshot_date,
+            ),
+        }
+
+    metrics_raw = raw.get("metric_revisions")
+    minimum_metrics = int(policy["minimum_estimate_revision_metrics"])
+    if (
+        not isinstance(metrics_raw, list)
+        or not minimum_metrics <= len(metrics_raw) <= 10
+    ):
+        raise ValueError("estimate revision metric coverage is incomplete")
+    metrics = []
+    metric_ids: set[str] = set()
+    metric_types: set[str] = set()
+    comparison_dates: tuple[str, str] | None = None
+    for item in metrics_raw:
+        if not isinstance(item, dict):
+            raise ValueError("estimate revision metric must be an object")
+        metric_id = _bounded_text(
+            item.get("metric_id"), field="estimate_revision.metric_id", maximum=100
+        )
+        if metric_id in metric_ids:
+            raise ValueError("estimate revision metric ids must be unique")
+        metric_ids.add(metric_id)
+        metric_type = item.get("metric_type")
+        if metric_type not in allowed_metric_types or metric_type in metric_types:
+            raise ValueError("estimate revision metric types are invalid or duplicated")
+        metric_types.add(str(metric_type))
+        unit = item.get("unit")
+        if unit not in allowed_units:
+            raise ValueError(f"estimate revision {metric_id} unit is invalid")
+        prior = consensus_snapshot(item.get("prior"), field=f"{metric_id}.prior")
+        current = consensus_snapshot(item.get("current"), field=f"{metric_id}.current")
+        prior_date = date.fromisoformat(prior["snapshot_date"])
+        current_date = date.fromisoformat(current["snapshot_date"])
+        window_days = (current_date - prior_date).days
+        if not int(policy["minimum_estimate_revision_window_days"]) <= window_days <= int(
+            policy["maximum_estimate_revision_window_days"]
+        ):
+            raise ValueError(f"estimate revision {metric_id} window is invalid")
+        dates = (prior["snapshot_date"], current["snapshot_date"])
+        if comparison_dates is None:
+            comparison_dates = dates
+        elif dates != comparison_dates:
+            raise ValueError("estimate revision metrics must use common snapshot dates")
+        absolute_change = current["value"] - prior["value"]
+        percent_change = (
+            absolute_change / abs(prior["value"]) * 100
+            if prior["value"] * current["value"] > 0
+            else None
+        )
+        metrics.append(
+            {
+                "metric_id": metric_id,
+                "metric_type": metric_type,
+                "horizon": _bounded_text(
+                    item.get("horizon"),
+                    field=f"estimate_revision.{metric_id}.horizon",
+                    maximum=80,
+                ),
+                "unit": unit,
+                "prior": prior,
+                "current": current,
+                "absolute_change": absolute_change,
+                "percent_change": percent_change,
+                "revision_direction": (
+                    "raised"
+                    if absolute_change > 0
+                    else "lowered" if absolute_change < 0 else "unchanged"
+                ),
+            }
+        )
+    if not {"fy1_eps", "fy2_eps", "revenue"}.issubset(metric_types):
+        raise ValueError("estimate revision requires FY1 EPS, FY2 EPS, and revenue")
+    if not {"ebitda", "free_cash_flow"}.intersection(metric_types):
+        raise ValueError("estimate revision requires EBITDA or free cash flow")
+    if comparison_dates is None:
+        raise ValueError("estimate revision comparison dates are missing")
+    comparison_window_days = (
+        date.fromisoformat(comparison_dates[1])
+        - date.fromisoformat(comparison_dates[0])
+    ).days
+    if raw.get("comparison_window_days") != comparison_window_days:
+        raise ValueError("estimate revision comparison window does not reconcile")
+
+    def target_distribution_snapshot(value: Any, *, field: str) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError(f"{field} must be an object")
+        snapshot_date = date.fromisoformat(str(value.get("snapshot_date")))
+        analyst_count = value.get("analyst_count")
+        if (
+            isinstance(analyst_count, bool)
+            or not isinstance(analyst_count, int)
+            or not 2 <= analyst_count <= 500
+        ):
+            raise ValueError(f"{field} analyst_count is invalid")
+        values = {
+            name: _finite_number(value.get(name), field=f"{field}.{name}")
+            for name in ("minimum", "p25", "median", "mean", "p75", "maximum")
+        }
+        if not (
+            0 < values["minimum"]
+            <= values["p25"]
+            <= values["median"]
+            <= values["p75"]
+            <= values["maximum"]
+            and values["minimum"] <= values["mean"] <= values["maximum"]
+        ):
+            raise ValueError(f"{field} target-price distribution is invalid")
+        return {
+            "snapshot_date": snapshot_date.isoformat(),
+            **values,
+            "analyst_count": analyst_count,
+            "source_ids": dated_source_ids(
+                value.get("source_ids"),
+                field=field,
+                source_type="consensus_dataset",
+                snapshot_date=snapshot_date,
+            ),
+        }
+
+    target_raw = raw.get("target_price_distribution")
+    if not isinstance(target_raw, dict) or target_raw.get("currency") != "USD":
+        raise ValueError("estimate revision target-price distribution is invalid")
+    target_prior = target_distribution_snapshot(
+        target_raw.get("prior"), field="target_price.prior"
+    )
+    target_current = target_distribution_snapshot(
+        target_raw.get("current"), field="target_price.current"
+    )
+    if (
+        target_prior["snapshot_date"],
+        target_current["snapshot_date"],
+    ) != comparison_dates:
+        raise ValueError("target-price distribution dates do not match revisions")
+
+    event_raw = raw.get("earnings_event_revision")
+    if not isinstance(event_raw, dict):
+        raise ValueError("earnings-event revision must be an object")
+    event_date = date.fromisoformat(str(event_raw.get("event_date")))
+    event_metrics_raw = event_raw.get("metrics")
+    if (
+        not isinstance(event_metrics_raw, list)
+        or not int(policy["minimum_event_revision_metrics"])
+        <= len(event_metrics_raw)
+        <= 10
+    ):
+        raise ValueError("earnings-event revision metric coverage is incomplete")
+    event_metrics = []
+    event_metric_ids: set[str] = set()
+    event_metric_types: set[str] = set()
+    event_snapshot_dates: tuple[str, str] | None = None
+    for item in event_metrics_raw:
+        if not isinstance(item, dict):
+            raise ValueError("earnings-event revision metric must be an object")
+        metric_id = _bounded_text(
+            item.get("metric_id"), field="earnings_event.metric_id", maximum=100
+        )
+        if metric_id in event_metric_ids:
+            raise ValueError("earnings-event revision metric ids must be unique")
+        event_metric_ids.add(metric_id)
+        metric_type = item.get("metric_type")
+        if metric_type not in allowed_metric_types or metric_type in event_metric_types:
+            raise ValueError("earnings-event revision metric types are invalid")
+        event_metric_types.add(str(metric_type))
+        unit = item.get("unit")
+        if unit not in allowed_units:
+            raise ValueError(f"earnings-event revision {metric_id} unit is invalid")
+        before = consensus_snapshot(
+            item.get("before_event"), field=f"earnings_event.{metric_id}.before"
+        )
+        after = consensus_snapshot(
+            item.get("after_event"), field=f"earnings_event.{metric_id}.after"
+        )
+        before_date = date.fromisoformat(before["snapshot_date"])
+        after_date = date.fromisoformat(after["snapshot_date"])
+        if not before_date < event_date < after_date <= as_of:
+            raise ValueError(f"earnings-event revision {metric_id} dates are invalid")
+        dates = (before["snapshot_date"], after["snapshot_date"])
+        if event_snapshot_dates is None:
+            event_snapshot_dates = dates
+        elif dates != event_snapshot_dates:
+            raise ValueError(
+                "earnings-event revision metrics must use common snapshot dates"
+            )
+        absolute_change = after["value"] - before["value"]
+        percent_change = (
+            absolute_change / abs(before["value"]) * 100
+            if before["value"] * after["value"] > 0
+            else None
+        )
+        event_metrics.append(
+            {
+                "metric_id": metric_id,
+                "metric_type": metric_type,
+                "horizon": _bounded_text(
+                    item.get("horizon"),
+                    field=f"earnings_event.{metric_id}.horizon",
+                    maximum=80,
+                ),
+                "unit": unit,
+                "before_event": before,
+                "after_event": after,
+                "absolute_change": absolute_change,
+                "percent_change": percent_change,
+                "revision_direction": (
+                    "raised"
+                    if absolute_change > 0
+                    else "lowered" if absolute_change < 0 else "unchanged"
+                ),
+            }
+        )
+    if not {"fy1_eps", "revenue"}.issubset(event_metric_types):
+        raise ValueError("earnings-event revision requires FY1 EPS and revenue")
+
+    breadth_raw = raw.get("analyst_revision_breadth")
+    if not isinstance(breadth_raw, dict):
+        raise ValueError("analyst revision breadth must be an object")
+    breadth_start = date.fromisoformat(str(breadth_raw.get("window_start")))
+    breadth_end = date.fromisoformat(str(breadth_raw.get("window_end")))
+    if (breadth_start.isoformat(), breadth_end.isoformat()) != comparison_dates:
+        raise ValueError("analyst revision breadth window does not match revisions")
+    breadth_counts = {}
+    for name in ("raised", "lowered", "unchanged"):
+        value = breadth_raw.get(name)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"analyst revision breadth {name} is invalid")
+        breadth_counts[name] = value
+    breadth_total = sum(breadth_counts.values())
+    if breadth_total <= 0:
+        raise ValueError("analyst revision breadth is empty")
+    breadth_source_ids = dated_source_ids(
+        breadth_raw.get("source_ids"),
+        field="analyst_revision_breadth",
+        source_type="consensus_dataset",
+        snapshot_date=breadth_end,
+    )
+
+    price_raw = raw.get("price_context")
+    if not isinstance(price_raw, dict):
+        raise ValueError("estimate revision price context must be an object")
+    prior_price_date = date.fromisoformat(str(price_raw.get("prior_date")))
+    current_price_date = date.fromisoformat(str(price_raw.get("current_date")))
+    if (
+        prior_price_date.isoformat(),
+        current_price_date.isoformat(),
+    ) != comparison_dates or current_price_date != as_of:
+        raise ValueError("estimate revision price dates do not match revision dates")
+    prior_price = _finite_number(
+        price_raw.get("prior_price"), field="estimate_revision.prior_price"
+    )
+    supplied_current_price = _finite_number(
+        price_raw.get("current_price"), field="estimate_revision.current_price"
+    )
+    if prior_price <= 0 or supplied_current_price <= 0 or not math.isclose(
+        supplied_current_price, current_price, abs_tol=1e-9
+    ):
+        raise ValueError("estimate revision price context does not reconcile")
+    price_source_ids = _source_ids(
+        price_raw.get("source_ids"),
+        field="estimate_revision.price_context",
+        registry=registry,
+        required_type="market_price",
+    )
+    for snapshot_date in (prior_price_date, current_price_date):
+        if not any(
+            registry[source_id]["source_type"] == "market_price"
+            and date.fromisoformat(str(registry[source_id]["observed_at"]))
+            == snapshot_date
+            for source_id in price_source_ids
+        ):
+            raise ValueError("estimate revision price context lacks dated market prices")
+    price_change_percent = (supplied_current_price / prior_price - 1) * 100
+    metric_by_type = {str(item["metric_type"]): item for item in metrics}
+    fy1_revision = metric_by_type["fy1_eps"]
+    fy1_percent = fy1_revision["percent_change"]
+    revision_threshold = float(
+        policy["minimum_material_estimate_revision_percent"]
+    )
+    price_threshold = float(policy["minimum_material_price_move_percent"])
+
+    def direction(value: float | None, threshold: float) -> str:
+        if value is None or abs(value) < threshold:
+            return "flat_or_not_meaningful"
+        return "up" if value > 0 else "down"
+
+    revision_direction = direction(fy1_percent, revision_threshold)
+    price_direction = direction(price_change_percent, price_threshold)
+    pair = (revision_direction, price_direction)
+    divergence_state = {
+        ("up", "down"): "positive_revision_price_decline",
+        ("down", "up"): "negative_revision_price_rally",
+        ("up", "up"): "positive_revision_price_confirmation",
+        ("down", "down"): "negative_revision_price_confirmation",
+    }.get(pair, "no_material_joint_signal")
+    divergence_detected = divergence_state in {
+        "positive_revision_price_decline",
+        "negative_revision_price_rally",
+    }
+
+    target_change = {
+        "currency": "USD",
+        "prior": target_prior,
+        "current": target_current,
+        "median_change": target_current["median"] - target_prior["median"],
+        "median_change_percent": (
+            target_current["median"] / target_prior["median"] - 1
+        )
+        * 100,
+        "mean_change": target_current["mean"] - target_prior["mean"],
+        "distribution_width_change": (
+            target_current["maximum"] - target_current["minimum"]
+        )
+        - (target_prior["maximum"] - target_prior["minimum"]),
+        "interquartile_range_change": (
+            target_current["p75"] - target_current["p25"]
+        )
+        - (target_prior["p75"] - target_prior["p25"]),
+        "analyst_count_change": (
+            target_current["analyst_count"] - target_prior["analyst_count"]
+        ),
+        "current_median_upside_percent": (
+            target_current["median"] / supplied_current_price - 1
+        )
+        * 100,
+    }
+    return {
+        "comparison_window_days": comparison_window_days,
+        "comparison_dates": {
+            "prior": comparison_dates[0],
+            "current": comparison_dates[1],
+        },
+        "metric_revisions": sorted(metrics, key=lambda item: item["metric_id"]),
+        "target_price_distribution_change": target_change,
+        "earnings_event_revision": {
+            "event_id": _bounded_text(
+                event_raw.get("event_id"),
+                field="earnings_event.event_id",
+                maximum=100,
+            ),
+            "event_date": event_date.isoformat(),
+            "event": _bounded_text(
+                event_raw.get("event"), field="earnings_event.event", maximum=300
+            ),
+            "metrics": sorted(event_metrics, key=lambda item: item["metric_id"]),
+        },
+        "analyst_revision_breadth": {
+            "metric_type": "fy1_eps",
+            "horizon": _bounded_text(
+                breadth_raw.get("horizon"),
+                field="analyst_revision_breadth.horizon",
+                maximum=80,
+            ),
+            "window_start": breadth_start.isoformat(),
+            "window_end": breadth_end.isoformat(),
+            **breadth_counts,
+            "total_analysts": breadth_total,
+            "raised_percent": breadth_counts["raised"] / breadth_total * 100,
+            "lowered_percent": breadth_counts["lowered"] / breadth_total * 100,
+            "unchanged_percent": breadth_counts["unchanged"] / breadth_total * 100,
+            "net_revision_breadth_percentage_points": (
+                breadth_counts["raised"] - breadth_counts["lowered"]
+            )
+            / breadth_total
+            * 100,
+            "source_ids": breadth_source_ids,
+        },
+        "price_divergence": {
+            "prior_date": prior_price_date.isoformat(),
+            "current_date": current_price_date.isoformat(),
+            "prior_price": prior_price,
+            "current_price": supplied_current_price,
+            "price_change_percent": price_change_percent,
+            "fy1_eps_revision_percent": fy1_percent,
+            "fy1_eps_revision_absolute": fy1_revision["absolute_change"],
+            "estimate_direction": revision_direction,
+            "price_direction": price_direction,
+            "state": divergence_state,
+            "divergence_detected": divergence_detected,
+            "research_priority_signal": divergence_detected,
+            "recommendation_gate_used": False,
+            "position_sizing_used": False,
+            "source_ids": price_source_ids,
+        },
+        "methodology": _bounded_text(
+            raw.get("methodology"),
+            field="estimate_revision.methodology",
+            maximum=1200,
+        ),
+        "source_ids": _source_ids(
+            raw.get("source_ids"), field="estimate_revision", registry=registry
+        ),
+    }
+
+
 def _score_summary(raw: Any) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise ValueError("score_summary must be an object")
@@ -3168,6 +3648,13 @@ def build_focused_research_dossier(
     categories = {item["category"] for item in chains}
     if not required_categories.issubset(categories):
         raise ValueError("variant chains do not cover every required metric category")
+    estimate_revision = _estimate_revision_analysis(
+        variant_raw.get("estimate_revision"),
+        as_of=as_of,
+        current_price=current_price,
+        registry=sources,
+        policy=policy,
+    )
 
     earnings = _earnings_model(
         payload.get("earnings_model"), registry=sources, policy=policy
@@ -3241,6 +3728,7 @@ def build_focused_research_dossier(
                 field="variant_view.our_variant_summary",
             ),
             "expectation_chains": sorted(chains, key=lambda item: item["metric_id"]),
+            "estimate_revision": estimate_revision,
         },
         "earnings_model": earnings,
         "earnings_quality": earnings_quality,
@@ -3669,6 +4157,74 @@ def validate_focused_research_dossier(
         for item in dossier.get("sources", [])
         if isinstance(item, dict) and item.get("source_id")
     }
+    variant = sections.get("variant_view", {})
+    estimate_revision = variant.get("estimate_revision")
+    if not isinstance(estimate_revision, dict):
+        raise ValueError("focused research estimate revision analysis is missing")
+    price_divergence = estimate_revision.get("price_divergence", {})
+    try:
+        rebuilt_estimate_revision = _estimate_revision_analysis(
+            {
+                "comparison_window_days": estimate_revision.get(
+                    "comparison_window_days"
+                ),
+                "metric_revisions": estimate_revision.get("metric_revisions"),
+                "target_price_distribution": estimate_revision.get(
+                    "target_price_distribution_change"
+                ),
+                "earnings_event_revision": estimate_revision.get(
+                    "earnings_event_revision"
+                ),
+                "analyst_revision_breadth": estimate_revision.get(
+                    "analyst_revision_breadth"
+                ),
+                "price_context": {
+                    "prior_date": price_divergence.get("prior_date"),
+                    "current_date": price_divergence.get("current_date"),
+                    "prior_price": price_divergence.get("prior_price"),
+                    "current_price": price_divergence.get("current_price"),
+                    "source_ids": price_divergence.get("source_ids"),
+                },
+                "methodology": estimate_revision.get("methodology"),
+                "source_ids": estimate_revision.get("source_ids"),
+            },
+            as_of=date.fromisoformat(str(dossier.get("as_of_date"))),
+            current_price=_finite_number(
+                dossier.get("current_price"), field="current_price"
+            ),
+            registry=source_registry,
+            policy={
+                "minimum_estimate_revision_metrics": 4,
+                "minimum_event_revision_metrics": 2,
+                "minimum_estimate_revision_window_days": 20,
+                "maximum_estimate_revision_window_days": 45,
+                "minimum_material_estimate_revision_percent": 1.0,
+                "minimum_material_price_move_percent": 1.0,
+                "allowed_units": [
+                    "percent",
+                    "basis_points",
+                    "usd",
+                    "usd_millions",
+                    "per_share_usd",
+                    "ratio",
+                    "multiple",
+                    "units",
+                ],
+            },
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "focused research estimate revision analysis does not reconcile"
+        ) from exc
+    if rebuilt_estimate_revision != estimate_revision:
+        raise ValueError(
+            "focused research estimate revision analysis does not reconcile"
+        )
+    if (
+        price_divergence.get("recommendation_gate_used") is not False
+        or price_divergence.get("position_sizing_used") is not False
+    ):
+        raise ValueError("focused research estimate revision controlled a decision")
     try:
         rebuilt_quality = _earnings_quality(
             {
@@ -3880,6 +4436,10 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     call_questions = earnings_call["analyst_question_diff"]
     call_calibration = earnings_call["management_guidance_calibration"]
     call_commitments = earnings_call["prior_commitment_follow_through"]
+    revisions = variant["estimate_revision"]
+    target_revision = revisions["target_price_distribution_change"]
+    revision_breadth = revisions["analyst_revision_breadth"]
+    price_divergence = revisions["price_divergence"]
 
     def formatted_change(value: float | None) -> str:
         return "not meaningful" if value is None else f"{value:+.1f}%"
@@ -3921,6 +4481,32 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
             f"Disconfirming test: {'; '.join(chain['falsification_criteria'])}",
             "",
         ])
+    lines.extend([
+        "### Estimate Revision & Price Divergence",
+        "",
+        f"Window: {revisions['comparison_dates']['prior']} → {revisions['comparison_dates']['current']} ({revisions['comparison_window_days']} days)",
+        f"Price/estimate state: {price_divergence['state']} | FY1 EPS revision {formatted_change(price_divergence['fy1_eps_revision_percent'])} | price change {formatted_change(price_divergence['price_change_percent'])} | research-priority signal {str(price_divergence['research_priority_signal']).lower()}",
+        "",
+        "| Estimate | Horizon | Prior | Current | Absolute revision | Revision | Direction | Analyst count |",
+        "|---|---|---:|---:|---:|---:|---|---:|",
+        *[
+            f"| {item['metric_type']} | {item['horizon']} | {item['prior']['value']:.2f} {item['unit']} | {item['current']['value']:.2f} {item['unit']} | {item['absolute_change']:+.2f} | {formatted_change(item['percent_change'])} | {item['revision_direction']} | {item['prior']['analyst_count']} → {item['current']['analyst_count']} |"
+            for item in revisions["metric_revisions"]
+        ],
+        "",
+        f"Analyst breadth ({revision_breadth['horizon']}): raised {revision_breadth['raised']} ({revision_breadth['raised_percent']:.1f}%), lowered {revision_breadth['lowered']} ({revision_breadth['lowered_percent']:.1f}%), unchanged {revision_breadth['unchanged']} ({revision_breadth['unchanged_percent']:.1f}%), net {revision_breadth['net_revision_breadth_percentage_points']:+.1f} pp.",
+        f"Target-price distribution: median ${target_revision['prior']['median']:.2f} → ${target_revision['current']['median']:.2f} ({target_revision['median_change_percent']:+.1f}%), mean change ${target_revision['mean_change']:+.2f}, width change ${target_revision['distribution_width_change']:+.2f}, current median upside {target_revision['current_median_upside_percent']:+.1f}%.",
+        "",
+        f"#### Around {revisions['earnings_event_revision']['event']}",
+        "",
+        "| Estimate | Before event | After event | Revision | Direction |",
+        "|---|---:|---:|---:|---|",
+        *[
+            f"| {item['metric_type']} | {item['before_event']['value']:.2f} {item['unit']} | {item['after_event']['value']:.2f} {item['unit']} | {formatted_change(item['percent_change'])} | {item['revision_direction']} |"
+            for item in revisions["earnings_event_revision"]["metrics"]
+        ],
+        "",
+    ])
     lines.extend([
         "## 3. Earnings Model",
         "",

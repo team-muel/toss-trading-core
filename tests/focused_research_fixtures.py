@@ -1,6 +1,171 @@
 from datetime import date, timedelta
 
 
+def estimate_revision_sources(*, as_of: str, prefix: str) -> list[dict]:
+    current_date = date.fromisoformat(as_of)
+    dates = {
+        "prior": current_date - timedelta(days=30),
+        "before_event": current_date - timedelta(days=10),
+        "after_event": current_date - timedelta(days=3),
+        "current": current_date,
+    }
+    return [
+        {
+            "source_id": f"{prefix}_consensus_{name}",
+            "source_type": "consensus_dataset",
+            "organization": "Point-in-time Consensus Vendor",
+            "observed_at": observed.isoformat(),
+            "locator": f"immutable {name} estimate snapshot",
+        }
+        for name, observed in dates.items()
+    ] + [
+        {
+            "source_id": f"{prefix}_price_prior",
+            "source_type": "market_price",
+            "organization": "Primary Market Price Feed",
+            "observed_at": dates["prior"].isoformat(),
+            "locator": "official close at revision-window start",
+        },
+        {
+            "source_id": f"{prefix}_price_current",
+            "source_type": "market_price",
+            "organization": "Primary Market Price Feed",
+            "observed_at": dates["current"].isoformat(),
+            "locator": "official close at revision-window end",
+        },
+    ]
+
+
+def estimate_revision_payload(
+    *,
+    as_of: str,
+    prefix: str,
+    prior_price: float,
+    current_price: float,
+) -> dict:
+    current_date = date.fromisoformat(as_of)
+    prior_date = current_date - timedelta(days=30)
+    before_event_date = current_date - timedelta(days=10)
+    event_date = current_date - timedelta(days=7)
+    after_event_date = current_date - timedelta(days=3)
+
+    def snapshot(name: str, value: float, analyst_count: int = 20) -> dict:
+        dates = {
+            "prior": prior_date,
+            "before_event": before_event_date,
+            "after_event": after_event_date,
+            "current": current_date,
+        }
+        return {
+            "snapshot_date": dates[name].isoformat(),
+            "value": value,
+            "analyst_count": analyst_count,
+            "source_ids": [f"{prefix}_consensus_{name}"],
+        }
+
+    metric_inputs = [
+        ("fy1_eps", "fy1_eps", "FY1", "per_share_usd", 10.0, 10.7),
+        ("fy2_eps", "fy2_eps", "FY2", "per_share_usd", 11.0, 11.4),
+        ("revenue", "revenue", "FY1", "usd_millions", 30000, 31500),
+        ("ebitda", "ebitda", "FY1", "usd_millions", 10000, 10300),
+        ("free_cash_flow", "free_cash_flow", "FY1", "usd_millions", 7000, 7350),
+    ]
+    metric_revisions = [
+        {
+            "metric_id": metric_id,
+            "metric_type": metric_type,
+            "horizon": horizon,
+            "unit": unit,
+            "prior": snapshot("prior", prior_value, 19),
+            "current": snapshot("current", current_value, 20),
+        }
+        for metric_id, metric_type, horizon, unit, prior_value, current_value
+        in metric_inputs
+    ]
+    target_prior = {
+        "snapshot_date": prior_date.isoformat(),
+        "minimum": 180,
+        "p25": 220,
+        "median": 250,
+        "mean": 252,
+        "p75": 280,
+        "maximum": 320,
+        "analyst_count": 19,
+        "source_ids": [f"{prefix}_consensus_prior"],
+    }
+    target_current = {
+        "snapshot_date": current_date.isoformat(),
+        "minimum": 185,
+        "p25": 230,
+        "median": 260,
+        "mean": 263,
+        "p75": 295,
+        "maximum": 340,
+        "analyst_count": 20,
+        "source_ids": [f"{prefix}_consensus_current"],
+    }
+    return {
+        "comparison_window_days": 30,
+        "metric_revisions": metric_revisions,
+        "target_price_distribution": {
+            "currency": "USD",
+            "prior": target_prior,
+            "current": target_current,
+        },
+        "earnings_event_revision": {
+            "event_id": "latest_quarterly_earnings",
+            "event_date": event_date.isoformat(),
+            "event": "Latest quarterly earnings release",
+            "metrics": [
+                {
+                    "metric_id": "event_fy1_eps",
+                    "metric_type": "fy1_eps",
+                    "horizon": "FY1",
+                    "unit": "per_share_usd",
+                    "before_event": snapshot("before_event", 10.2, 20),
+                    "after_event": snapshot("after_event", 10.7, 20),
+                },
+                {
+                    "metric_id": "event_revenue",
+                    "metric_type": "revenue",
+                    "horizon": "FY1",
+                    "unit": "usd_millions",
+                    "before_event": snapshot("before_event", 30500, 20),
+                    "after_event": snapshot("after_event", 31500, 20),
+                },
+            ],
+        },
+        "analyst_revision_breadth": {
+            "horizon": "FY1 EPS",
+            "window_start": prior_date.isoformat(),
+            "window_end": current_date.isoformat(),
+            "raised": 12,
+            "lowered": 3,
+            "unchanged": 5,
+            "source_ids": [f"{prefix}_consensus_current"],
+        },
+        "price_context": {
+            "prior_date": prior_date.isoformat(),
+            "current_date": current_date.isoformat(),
+            "prior_price": prior_price,
+            "current_price": current_price,
+            "source_ids": [
+                f"{prefix}_price_prior",
+                f"{prefix}_price_current",
+            ],
+        },
+        "methodology": "Compare immutable point-in-time consensus snapshots, event-bracketing snapshots, analyst action breadth, and matched market closes without using the divergence as a recommendation gate.",
+        "source_ids": [
+            f"{prefix}_consensus_prior",
+            f"{prefix}_consensus_before_event",
+            f"{prefix}_consensus_after_event",
+            f"{prefix}_consensus_current",
+            f"{prefix}_price_prior",
+            f"{prefix}_price_current",
+        ],
+    }
+
+
 def earnings_call_payload(
     *,
     as_of: str,

@@ -201,6 +201,11 @@ SBC·구조조정·인수조정·세제효과·일회성 이익, GAAP/non-GAAP, 
 Supply-chain Read-through는 고객·공급업체·경쟁사의 수치 신호를 관계·전달 메커니즘·
 시차와 연결하고, 서로 다른 외부 기업의 1차 출처 세 곳 이상이 같은 가설을 확인하는지
 계산합니다. 최소 하나의 외부 반대 신호도 제거하지 않고 별도로 보존합니다.
+Variant View의 Estimate Revision은 같은 point-in-time 데이터셋에서 20~45일 전과 현재의
+FY1·FY2 EPS, revenue, EBITDA/FCF, 목표가 분포와 애널리스트 상향·하향 breadth를
+재계산합니다. 실적 발표 직전·직후 revision도 별도로 보존하며, FY1 EPS와 주가가 반대
+방향으로 움직이면 research-priority divergence로 표시하되 추천이나 비중을 자동 결정하지
+않습니다.
 Earnings Call Diff는 연속 두 분기의 issuer transcript를 같은 topic·질문·guidance ID로
 비교해 새로 등장하거나 사라진 표현, horizon·confidence 변화, 질문 주제와 회피 여부,
 수치 guidance 범위의 확대·축소를 계산합니다. 또한 동일 지표의 직전 8개 분기

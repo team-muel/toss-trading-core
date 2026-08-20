@@ -6,7 +6,11 @@ from toss_trading.research.stock_recommendations import (
     generate_stock_recommendations,
     load_recommendation_policy,
 )
-from tests.focused_research_fixtures import earnings_call_payload
+from tests.focused_research_fixtures import (
+    earnings_call_payload,
+    estimate_revision_payload,
+    estimate_revision_sources,
+)
 from toss_trading.research.variant_perception import (
     build_focused_research_dossier,
     load_focused_research_policy,
@@ -152,6 +156,7 @@ class StockRecommendationTest(unittest.TestCase):
             {"source_id": "peer", "source_type": "earnings_transcript", "organization": "Peer Co", "observed_at": as_of, "locator": "earnings call"},
             {"source_id": "aaa_prior_call", "source_type": "earnings_transcript", "organization": "AAA", "observed_at": as_of, "locator": "prior-quarter earnings call transcript"},
             {"source_id": "aaa_current_call", "source_type": "earnings_transcript", "organization": "AAA", "observed_at": as_of, "locator": "current-quarter earnings call transcript"},
+            *estimate_revision_sources(as_of=as_of, prefix="aaa_revision"),
         ]
         chains = []
         for metric_id, category, consensus, implied, house in [
@@ -262,7 +267,17 @@ class StockRecommendationTest(unittest.TestCase):
             "currency": "USD",
             "price_source_ids": ["px"],
             "investment_thesis": {"statement": "Capacity mix creates an underappreciated earnings and return uplift.", "time_horizon_months": 12, "pillars": ["Capacity mix lifts growth.", "Incremental returns exceed the implied case."], "recommendation": "buy"},
-            "variant_view": {"market_expectation_summary": "The market expects a modest cycle recovery with limited incremental returns.", "our_variant_summary": "Capacity mix should lift growth, margin, and incremental returns above price-implied levels.", "expectation_chains": chains},
+            "variant_view": {
+                "market_expectation_summary": "The market expects a modest cycle recovery with limited incremental returns.",
+                "our_variant_summary": "Capacity mix should lift growth, margin, and incremental returns above price-implied levels.",
+                "expectation_chains": chains,
+                "estimate_revision": estimate_revision_payload(
+                    as_of=as_of,
+                    prefix="aaa_revision",
+                    prior_price=32.0,
+                    current_price=30.0,
+                ),
+            },
             "sources": sources,
             "catalyst_path": [{
                 "catalyst_id": "earnings",
@@ -355,7 +370,7 @@ class StockRecommendationTest(unittest.TestCase):
             source_manifest_ids=["manifest-1"],
         )
         self.assertEqual(result["universe"]["ranked_count"], 4)
-        self.assertEqual(result["schema_version"], "stock-recommendation-run-v8")
+        self.assertEqual(result["schema_version"], "stock-recommendation-run-v9")
         self.assertEqual(len(result["screening_candidates"]), 2)
         self.assertEqual(result["screening_candidates"][0]["symbol"], "AAA")
         self.assertEqual(result["recommendations"], [])
@@ -416,6 +431,13 @@ class StockRecommendationTest(unittest.TestCase):
         earnings_call = result["recommendations"][0]["earnings_call_diff"]
         self.assertEqual(
             earnings_call["management_guidance_calibration"]["quarter_count"], 8
+        )
+        estimate_revision = result["recommendations"][0]["variant_view"][
+            "estimate_revision"
+        ]
+        self.assertEqual(
+            estimate_revision["price_divergence"]["state"],
+            "positive_revision_price_decline",
         )
         self.assertEqual(list(result["recommendations"][0])[-1], "score_summary")
 
@@ -557,6 +579,32 @@ class StockRecommendationTest(unittest.TestCase):
         )
         self.assertEqual(result["recommendations"], [])
 
+    def test_v7_dossier_requires_estimate_revision_upgrade_without_failing_run(self):
+        as_of, rows = self.rows()
+        legacy = copy.deepcopy(self.focused_dossier(as_of))
+        legacy["schema_version"] = "focused-research-dossier-v7"
+        result = generate_stock_recommendations(
+            rows,
+            policy=self.policy,
+            as_of_date=as_of,
+            code_revision="a" * 40,
+            focused_research_dossiers=[legacy],
+        )
+        aaa = next(
+            item for item in result["screening_candidates"] if item["symbol"] == "AAA"
+        )
+        self.assertEqual(
+            aaa["focused_research_state"],
+            "focused_research_estimate_revision_required",
+        )
+        self.assertEqual(
+            result["recommendation_gate"][
+                "estimate_revision_upgrade_required_count"
+            ],
+            1,
+        )
+        self.assertEqual(result["recommendations"], [])
+
     def test_newest_legacy_dossier_version_controls_upgrade_queue(self):
         as_of, rows = self.rows()
         v3 = copy.deepcopy(self.focused_dossier(as_of))
@@ -565,19 +613,21 @@ class StockRecommendationTest(unittest.TestCase):
         v5["schema_version"] = "focused-research-dossier-v5"
         v6 = copy.deepcopy(self.focused_dossier(as_of))
         v6["schema_version"] = "focused-research-dossier-v6"
+        v7 = copy.deepcopy(self.focused_dossier(as_of))
+        v7["schema_version"] = "focused-research-dossier-v7"
         result = generate_stock_recommendations(
             rows,
             policy=self.policy,
             as_of_date=as_of,
             code_revision="a" * 40,
-            focused_research_dossiers=[v3, v5, v6],
+            focused_research_dossiers=[v3, v5, v6, v7],
         )
         aaa = next(
             item for item in result["screening_candidates"] if item["symbol"] == "AAA"
         )
         self.assertEqual(
             aaa["focused_research_state"],
-            "focused_research_earnings_call_required",
+            "focused_research_estimate_revision_required",
         )
 
     def test_refuses_too_small_universe(self):

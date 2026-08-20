@@ -8,7 +8,11 @@ from toss_trading.research.variant_perception import (
     render_focused_research_memo,
     validate_focused_research_dossier,
 )
-from tests.focused_research_fixtures import earnings_call_payload
+from tests.focused_research_fixtures import (
+    earnings_call_payload,
+    estimate_revision_payload,
+    estimate_revision_sources,
+)
 
 
 def earnings_quality_payload():
@@ -136,6 +140,7 @@ class VariantPerceptionTest(unittest.TestCase):
             {"source_id": "lrcx_call", "source_type": "earnings_transcript", "organization": "Lam Research", "observed_at": self.as_of, "locator": "quarterly earnings call"},
             {"source_id": "amat_prior_call", "source_type": "earnings_transcript", "organization": "AMAT", "observed_at": self.as_of, "locator": "prior-quarter earnings call transcript"},
             {"source_id": "amat_current_call", "source_type": "earnings_transcript", "organization": "AMAT", "observed_at": self.as_of, "locator": "current-quarter earnings call transcript"},
+            *estimate_revision_sources(as_of=self.as_of, prefix="amat_revision"),
         ]
         chains = []
         for metric_id, name, category, implied, consensus, house in [
@@ -260,6 +265,12 @@ class VariantPerceptionTest(unittest.TestCase):
                 "market_expectation_summary": "The market prices a conventional WFE recovery with limited sustained mix benefit.",
                 "our_variant_summary": "Advanced packaging mix and incremental capital returns should exceed both consensus and price-implied expectations.",
                 "expectation_chains": chains,
+                "estimate_revision": estimate_revision_payload(
+                    as_of=self.as_of,
+                    prefix="amat_revision",
+                    prior_price=230.0,
+                    current_price=220.0,
+                ),
             },
             "sources": sources,
             "catalyst_path": [
@@ -451,6 +462,113 @@ class VariantPerceptionTest(unittest.TestCase):
         self.assertIn("Changed language and horizons", memo)
         self.assertIn("Eight-quarter guidance calibration", memo)
         self.assertIn("Prior commitment follow-through", memo)
+        self.assertIn("Estimate Revision & Price Divergence", memo)
+        self.assertIn("Analyst breadth", memo)
+        self.assertIn("Target-price distribution", memo)
+
+    def test_estimate_revisions_reconcile_with_price_and_analyst_breadth(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        revision = dossier["research_sections"]["variant_view"][
+            "estimate_revision"
+        ]
+        metrics = {
+            item["metric_type"]: item for item in revision["metric_revisions"]
+        }
+        self.assertAlmostEqual(metrics["fy1_eps"]["percent_change"], 7.0)
+        self.assertEqual(metrics["fy2_eps"]["revision_direction"], "raised")
+        self.assertEqual(metrics["revenue"]["absolute_change"], 1500)
+        self.assertIn("ebitda", metrics)
+        self.assertIn("free_cash_flow", metrics)
+        target = revision["target_price_distribution_change"]
+        self.assertAlmostEqual(target["median_change_percent"], 4.0)
+        breadth = revision["analyst_revision_breadth"]
+        self.assertAlmostEqual(breadth["raised_percent"], 60.0)
+        self.assertAlmostEqual(
+            breadth["net_revision_breadth_percentage_points"], 45.0
+        )
+        event_metrics = revision["earnings_event_revision"]["metrics"]
+        self.assertEqual(
+            {item["metric_type"] for item in event_metrics},
+            {"fy1_eps", "revenue"},
+        )
+        divergence = revision["price_divergence"]
+        self.assertEqual(divergence["state"], "positive_revision_price_decline")
+        self.assertTrue(divergence["research_priority_signal"])
+        self.assertFalse(divergence["recommendation_gate_used"])
+        self.assertFalse(divergence["position_sizing_used"])
+
+    def test_negative_revision_and_price_rally_are_flagged_separately(self):
+        payload = copy.deepcopy(self.payload)
+        revision = payload["variant_view"]["estimate_revision"]
+        fy1 = next(
+            item for item in revision["metric_revisions"]
+            if item["metric_type"] == "fy1_eps"
+        )
+        fy1["current"]["value"] = 9.5
+        revision["price_context"]["prior_price"] = 200.0
+        dossier = build_focused_research_dossier(
+            payload, policy=self.policy, code_revision="a" * 40
+        )
+        divergence = dossier["research_sections"]["variant_view"][
+            "estimate_revision"
+        ]["price_divergence"]
+        self.assertEqual(divergence["state"], "negative_revision_price_rally")
+        self.assertTrue(divergence["research_priority_signal"])
+
+    def test_zero_crossing_eps_revision_preserves_absolute_change_only(self):
+        payload = copy.deepcopy(self.payload)
+        fy1 = next(
+            item
+            for item in payload["variant_view"]["estimate_revision"][
+                "metric_revisions"
+            ]
+            if item["metric_type"] == "fy1_eps"
+        )
+        fy1["prior"]["value"] = -0.5
+        fy1["current"]["value"] = 0.5
+        dossier = build_focused_research_dossier(
+            payload, policy=self.policy, code_revision="a" * 40
+        )
+        normalized = next(
+            item
+            for item in dossier["research_sections"]["variant_view"][
+                "estimate_revision"
+            ]["metric_revisions"]
+            if item["metric_type"] == "fy1_eps"
+        )
+        self.assertEqual(normalized["absolute_change"], 1.0)
+        self.assertIsNone(normalized["percent_change"])
+
+    def test_estimate_revision_snapshot_requires_matching_dated_source(self):
+        invalid = copy.deepcopy(self.payload)
+        fy1 = invalid["variant_view"]["estimate_revision"]["metric_revisions"][0]
+        fy1["current"]["source_ids"] = ["amat_revision_consensus_prior"]
+        with self.assertRaisesRegex(ValueError, "observed on its snapshot date"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_estimate_revision_is_mandatory(self):
+        invalid = copy.deepcopy(self.payload)
+        invalid["variant_view"].pop("estimate_revision")
+        with self.assertRaisesRegex(ValueError, "estimate_revision"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_validator_recalculates_estimate_revision_outputs(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        dossier["research_sections"]["variant_view"]["estimate_revision"][
+            "analyst_revision_breadth"
+        ]["raised_percent"] += 1
+        with self.assertRaisesRegex(ValueError, "estimate revision.*does not reconcile"):
+            validate_focused_research_dossier(
+                dossier, as_of_date=self.as_of, maximum_age_days=14
+            )
 
     def test_driver_model_calculates_eps_cash_flow_roic_and_ai_capex_sensitivity(self):
         dossier = build_focused_research_dossier(
