@@ -169,7 +169,7 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("research_instrument_identity_ok", research_runner)
         self.assertIn("--instrument-master", research_runner)
         self.assertIn("--cost-calibration", research_runner)
-        self.assertIn("RESEARCH_EXECUTION_COST_CALIBRATION", service)
+        self.assertIn("RESEARCH_EXECUTION_COST_CALIBRATION", research_runner)
         self.assertIn(
             "CLOUDSDK_CONFIG=/home/seoje/toss-trading/research-runtime/gcloud",
             service,
@@ -178,13 +178,10 @@ class GcpRunnerFilesTest(unittest.TestCase):
             "CLOUDSDK_CONFIG=/home/seoje/toss-trading/runtime/gcloud",
             service,
         )
-        self.assertIn(
-            'EXECUTION_COST_CALIBRATION="${RUNTIME_ROOT}/input/research_execution_cost_calibration.json"',
-            research_runner,
-        )
+        self.assertIn("RESEARCH_EXECUTION_COST_CALIBRATION", research_runner)
         self.assertNotIn(
-            "runtime/research_execution_cost_calibration.json",
-            research_runner,
+            "RESEARCH_EXECUTION_COST_CALIBRATION_SECRET=research-execution-cost-calibration",
+            service,
         )
 
     def test_release_audit_and_prune_do_not_depend_on_release_mode_bits(self):
@@ -223,10 +220,7 @@ class GcpRunnerFilesTest(unittest.TestCase):
         )
         self.assertIn("Persistent=true", timer)
         self.assertIn("paper_operation_ok", runner)
-        self.assertIn(
-            'CALIBRATION_PATH="${PAPER_RUNTIME_ROOT}/input/research_execution_cost_calibration.json"',
-            runner,
-        )
+        self.assertIn('CALIBRATION_SECRET="${RESEARCH_EXECUTION_COST_CALIBRATION_SECRET:-}"', runner)
 
         stock_service = Path(
             "deploy/systemd/toss-stock-recommendations.service"

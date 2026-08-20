@@ -22,9 +22,10 @@
 - research, paper, broad-stock systemd는 각각 writable한 전용 runtime의 `gcloud`
   config를 사용하며 Foundation의 `runtime/gcloud` credential cache를 읽거나
   갱신하지 않는다.
-- research와 paper의 실행비용 calibration 사본도 각 runtime의 `input/`에만 쓰며,
-  오래된 `/etc/toss-trading/research.env`가 Foundation 경로를 지정해도 공유 경로를
-  덮어쓰지 않는다.
+- 같은 VM을 사용하는 현재 migration 단계에서는 Foundation이 만든 credential-free
+  실행비용 calibration 파일만 research와 paper가 읽기 전용으로 소비한다. research
+  service account 전용 VM으로 전환한 뒤에만 별도 Secret Manager 사본을 각 runtime에
+  refresh한다. Foundation identity에 calibration secret read 권한을 추가하지 않는다.
 - baseline의 전향 검증이 끝나기 전 paper 결과는
   `infrastructure_validation_only`이며 strategy promotion 증거가 아니다.
 - paper와 연구의 모든 정책에서 `live_orders_enabled=false`를 유지한다.
