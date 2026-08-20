@@ -21,7 +21,7 @@
 
 ## 의사결정 메모의 고정 순서
 
-모든 `focused-research-dossier-v7`는 다음 순서를 그대로 사용한다.
+모든 `focused-research-dossier-v8`는 다음 순서를 그대로 사용한다.
 
 ```text
 Investment Thesis
@@ -44,6 +44,8 @@ Investment Thesis
 핵심 숫자는 점수보다 먼저 다음처럼 직접 드러나야 한다.
 
 - 목표 연도의 시장가격 내재 EPS와 point-in-time 컨센서스 EPS
+- FY1·FY2 EPS, revenue, EBITDA/FCF revision과 가격의 같은 기간 변화
+- 목표가 분포, 실적 발표 전후 revision, 상향·하향·유지 analyst breadth
 - bear/base/bull의 driver별 매출, gross margin, operating expense, tax, EPS,
   OCF, 유지·성장 CAPEX, FCF, 증분 ROIC와 확률
 - 비교기간과 투자-성과 시차, 투하자본 bridge, 증분 매출·영업이익·NOPAT,
@@ -99,6 +101,38 @@ Investment Thesis
 AMAT를 연구한다면 종목 고유 수치가 확보된 뒤 예를 들어 WFE 성장, gross margin,
 advanced packaging 기여, CAPEX가 만드는 증분 ROIC 또는 FCF를 chain으로 선택할 수
 있다. 단, 이 문장은 metric 선택 예시일 뿐 수치나 결론을 미리 가정하지 않는다.
+
+## Estimate Revision & Price Divergence
+
+현재 컨센서스 값만으로는 시장 기대가 어느 방향으로 움직이는지 알 수 없다. 따라서
+`variant_view.estimate_revision`은 공통 snapshot 날짜로 다음 항목을 비교한다.
+
+- FY1 EPS와 FY2 EPS
+- revenue
+- EBITDA 또는 free cash flow 중 최소 하나; 데이터가 있으면 둘 다
+- 목표가의 minimum, 25분위, median, mean, 75분위, maximum과 analyst 수
+- 최근 실적 발표 직전과 직후의 FY1 EPS·revenue
+- 같은 기간 FY1 EPS를 상향·하향·유지한 analyst 수와 순 breadth
+- 같은 시작일·종료일의 실제 주가
+
+기본 비교기간은 정책상 20~45일이다. 모든 estimate metric은 같은 과거·현재 날짜를
+사용하고 각 consensus source의 실제 관측일이 snapshot 날짜와 일치해야 한다. 목표가
+분포와 가격도 같은 기간이어야 하며 현재 가격은 dossier 가격과 다시 일치해야 한다.
+EPS가 0이거나 부호를 넘는 경우 percentage revision을 억지로 만들지 않고 절대 변화와
+방향을 보존한다.
+
+FY1 EPS revision과 가격 변화가 각각 1% 이상일 때 다음처럼 분류한다.
+
+| Estimate | Price | 상태 | 해석 |
+|---|---|---|---|
+| 상승 | 하락 | `positive_revision_price_decline` | 펀더멘털 상향을 가격이 따라가지 않은 연구 후보 |
+| 하락 | 상승 | `negative_revision_price_rally` | 시장이 미래 반전이나 다른 driver를 선반영했는지 검증할 후보 |
+| 상승 | 상승 | `positive_revision_price_confirmation` | revision과 가격이 같은 방향으로 확인 |
+| 하락 | 하락 | `negative_revision_price_confirmation` | revision과 가격이 같은 방향으로 악화 |
+
+두 divergence 상태는 research-priority signal일 뿐 자동 매수·매도 신호가 아니다. 이후
+가격 내재 기대, 자체 driver model, catalyst와 반증 조건을 통해 해석해야 하며 추천
+게이트나 Position Construction의 비중 입력으로 직접 사용하지 않는다.
 
 ## Driver-based Earnings Model
 
@@ -398,7 +432,8 @@ python -m toss_trading.cli.research_validate_focus_dossier \
 earnings/cash-flow/ROIC model과 sensitivity 재계산, Earnings Quality와 EPS 성장
 attribution, GAAP/non-GAAP reconciliation, supply-chain graph 연결성, issuer-primary
 source 독립성, 지지·반대 신호 재계산, earnings-call 언어·질문·guidance diff,
-8개 분기 management calibration과 과거 약속 이행, valuation, 촉매 연결, 반증 증거, 포지션 상한과
+8개 분기 management calibration과 과거 약속 이행, estimate revision·목표가 분포·
+analyst breadth·가격 divergence, valuation, 촉매 연결, 반증 증거, 포지션 상한과
 추천 조건을 확인한다. 통과 결과에는
 결정적 `dossier_id`와 `content_sha256`이 붙고 동일 ID의 `.md` 메모도 생성된다. 이후
 내용이 바뀌면 추천 게이트의 hash 검사가 실패한다.

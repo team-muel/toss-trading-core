@@ -7,7 +7,7 @@
 2,500개를 매일 동일한 규칙으로 평가한다.
 
 정량 상위 종목은 `screening_candidates`이며 아직 매수 추천이 아니다. 실제
-`recommendations`에는 `focused-research-dossier-v7` 검증을 통과하고 결론이 `buy`인
+`recommendations`에는 `focused-research-dossier-v8` 검증을 통과하고 결론이 `buy`인
 종목만 들어간다. 둘 다 개인 맞춤 투자자문이나 주문 승인이 아니며, 결과에서 Toss
 주문 경로로 이어지는 연결은 만들지 않는다.
 
@@ -49,12 +49,14 @@ Risk/Disconfirming Evidence → Position Construction을 통과해야 한다. co
 매수 추천만 SPY 대비 5·21·63거래일 성과를 전향 추적하며, 추천 당시에는 미래 성과를
 표시하지 않는다.
 
-`stock-recommendation-run-v8`의 실제 추천은 dossier의 전체 분석 섹션과
+`stock-recommendation-run-v9`의 실제 추천은 dossier의 전체 분석 섹션과
 driver-based earnings model을 그대로 전달한다. segment driver, 손익·현금흐름 bridge,
 유지·성장 CAPEX, 투하자본 bridge, 증분 매출·영업이익·NOPAT, hurdle 대비 증분 ROIC,
 CAPEX 생산성과 shock sensitivity뿐 아니라 Earnings Quality의 balance-sheet
 growth, accruals, cash conversion, 조정항목, GAAP/non-GAAP bridge, EPS 성장 attribution을
-축약하지 않는다. 고객·공급업체·경쟁사의 관계 graph, 수치 신호, 전달 시차, 독립
+축약하지 않는다. Variant View에 포함된 FY1·FY2 EPS, revenue, EBITDA/FCF revision,
+목표가 분포, 실적 전후 revision, analyst breadth와 가격 divergence도 축약하지 않는다.
+고객·공급업체·경쟁사의 관계 graph, 수치 신호, 전달 시차, 독립
 1차 출처, 지지·반대 신호를 포함한 Supply-chain Read-through도 그대로 전달하고
 연속 두 earnings call의 표현·horizon·질문·회피·guidance 범위 diff, 8개 분기
 guidance 대 실제 결과의 경영진 calibration, 과거 약속 이행 내역도 그대로 전달한다.
@@ -85,6 +87,11 @@ CAPEX·D&A·운전자본·인수에 연결하는 증분 경제성 bridge가 없�
 management calibration이 없으므로 `focused_research_earnings_call_required`로 되돌린다.
 기존 요약문에서 과거 표현, 회피 여부, guidance 실적을 추정해 채우지 않으며 두 분기의
 issuer transcript와 각 분기의 실제 결과를 다시 확보해야 한다.
+
+기존 `focused-research-dossier-v7`에는 point-in-time Estimate Revision과 가격 divergence가
+없으므로 `focused_research_estimate_revision_required`로 되돌린다. 현재 컨센서스에서
+30일 전 값을 역산하거나 최신 데이터셋으로 과거 snapshot을 덮어쓰지 않으며, 날짜가
+고정된 과거·현재 consensus와 market-price snapshot을 다시 확보해야 한다.
 
 매일 데이터가 실제로 전진한 경우에만 새 추천을 만들고 Gmail 연구 digest에는 다음을
 포함한다.
