@@ -27,6 +27,7 @@ toss-research-evaluate-hypotheses = "toss_trading.cli.research_evaluate_hypothes
 toss-paper-operation = "toss_trading.cli.paper_operation:main"
 toss-research-recommend-stocks = "toss_trading.cli.research_recommend_stocks:main"
 toss-research-collect-massive = "toss_trading.cli.research_collect_massive:main"
+toss-research-validate-focus-dossier = "toss_trading.cli.research_validate_focus_dossier:main"
 
 [project.optional-dependencies]
 test = [
@@ -48,7 +49,7 @@ where = ["src"]
 
 [tool.setuptools.data-files]
 "share/toss-trading/schemas" = ["schemas/trading_ledger.sql"]
-"share/toss-trading/config" = ["config/default_policy.yaml", "config/data_sources.yaml", "config/fred_series.csv", "config/autonomous_research_policy.json", "config/research_validation_protocol.json", "config/stock_recommendation_policy.json"]
+"share/toss-trading/config" = ["config/default_policy.yaml", "config/data_sources.yaml", "config/fred_series.csv", "config/autonomous_research_policy.json", "config/research_validation_protocol.json", "config/stock_recommendation_policy.json", "config/focused_research_policy.json"]
 "share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv", "data/instrument_history.csv", "data/corporate_actions.csv"]
 
 [tool.pytest.ini_options]

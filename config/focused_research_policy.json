@@ -1,0 +1,48 @@
+{
+  "schema_version": "focused-research-policy-v1",
+  "minimum_variant_chains": 3,
+  "minimum_distinct_source_organizations": 3,
+  "maximum_source_age_days": 120,
+  "maximum_consensus_age_days": 45,
+  "maximum_dossier_age_days": 14,
+  "maximum_catalyst_horizon_days": 540,
+  "maximum_implied_price_reconciliation_error": 0.01,
+  "required_metric_categories": [
+    "industry_or_revenue_driver",
+    "margin_or_cash_flow",
+    "capital_efficiency_or_valuation"
+  ],
+  "allowed_units": [
+    "percent",
+    "basis_points",
+    "usd",
+    "usd_millions",
+    "per_share_usd",
+    "ratio",
+    "multiple",
+    "units"
+  ],
+  "allowed_source_types": [
+    "company_filing",
+    "company_guidance",
+    "earnings_transcript",
+    "consensus_dataset",
+    "market_price",
+    "industry_dataset",
+    "regulatory_filing",
+    "calculation_input"
+  ],
+  "allowed_implied_methods": [
+    "reverse_dcf",
+    "reverse_multiple",
+    "reverse_unit_economics",
+    "reverse_segment_sum_of_parts"
+  ],
+  "require_price_implied_chain": true,
+  "require_consensus_chain": true,
+  "require_falsification": true,
+  "require_bear_base_bull": true,
+  "buy_requires_positive_expected_return": true,
+  "execution_authorized": false,
+  "promotion_authorized": false
+}
