@@ -1,6 +1,251 @@
 from datetime import date, timedelta
 
 
+def positioning_sources(*, as_of: str, prefix: str) -> list[dict]:
+    current = date.fromisoformat(as_of)
+    rows = [
+        ("sec_13f_prior", "ownership_dataset", "SEC 13F Normalized Dataset", current - timedelta(days=100)),
+        ("sec_13f_current", "ownership_dataset", "SEC 13F Normalized Dataset", current - timedelta(days=10)),
+        ("sec_13g", "regulatory_filing", "SEC EDGAR", current - timedelta(days=20)),
+        ("sec_form4_purchase", "regulatory_filing", "SEC EDGAR", current - timedelta(days=15)),
+        ("sec_form4_sale", "regulatory_filing", "SEC EDGAR", current - timedelta(days=5)),
+        ("ownership", "ownership_dataset", "Ownership Data Vendor", current),
+        ("etf", "etf_holdings_dataset", "ETF Holdings Vendor", current),
+        ("short_prior", "short_interest_dataset", "FINRA Short Interest", current - timedelta(days=30)),
+        ("short_current", "short_interest_dataset", "FINRA Short Interest", current - timedelta(days=5)),
+        ("short_volume", "short_sale_volume_dataset", "FINRA Short Sale Volume", current),
+        ("borrow", "securities_lending_dataset", "Securities Lending Vendor", current),
+        ("options", "options_market_dataset", "Options Market Data Vendor", current),
+    ]
+    return [
+        {
+            "source_id": f"{prefix}_{source_id}",
+            "source_type": source_type,
+            "organization": organization,
+            "observed_at": observed_at.isoformat(),
+            "locator": f"immutable {source_id} positioning snapshot",
+        }
+        for source_id, source_type, organization, observed_at in rows
+    ]
+
+
+def positioning_payload(*, as_of: str, prefix: str, current_price: float) -> dict:
+    current = date.fromisoformat(as_of)
+    source = lambda suffix: f"{prefix}_{suffix}"
+    holders = [
+        ("holder_a", "Large Passive A", "passive", 120),
+        ("holder_b", "Large Passive B", "passive", 100),
+        ("holder_c", "Active Manager C", "active", 80),
+        ("holder_d", "Active Manager D", "active", 60),
+        ("holder_e", "Strategic Holder E", "strategic", 50),
+        ("holder_f", "Insider Group F", "insider", 40),
+    ]
+    realized_prices = [
+        current_price * (0.94 + index * 0.0028 + (0.002 if index % 2 else -0.001))
+        for index in range(22)
+    ]
+    realized_prices[-1] = current_price
+    first_expiry = current + timedelta(days=30)
+    second_expiry = current + timedelta(days=60)
+    strikes = [current_price * 0.9, current_price, current_price * 1.1]
+    open_interest = []
+    for expiry_index, expiration in enumerate((first_expiry, second_expiry)):
+        for strike_index, strike in enumerate(strikes):
+            for option_type in ("call", "put"):
+                open_interest.append(
+                    {
+                        "expiration": expiration.isoformat(),
+                        "strike": strike,
+                        "option_type": option_type,
+                        "open_interest": (
+                            1000
+                            + expiry_index * 300
+                            + strike_index * 250
+                            + (150 if option_type == "put" else 0)
+                        ),
+                    }
+                )
+    return {
+        "institutional_ownership": {
+            "shares_outstanding": 1000,
+            "prior_13f": {
+                "report_date": (current - timedelta(days=130)).isoformat(),
+                "snapshot_date": (current - timedelta(days=100)).isoformat(),
+                "institutional_shares": 600,
+                "reporting_manager_count": 400,
+                "source_ids": [source("sec_13f_prior")],
+            },
+            "current_13f": {
+                "report_date": (current - timedelta(days=40)).isoformat(),
+                "snapshot_date": (current - timedelta(days=10)).isoformat(),
+                "institutional_shares": 630,
+                "reporting_manager_count": 420,
+                "source_ids": [source("sec_13f_current")],
+            },
+            "major_holders": [
+                {
+                    "holder_id": holder_id,
+                    "holder_name": name,
+                    "style": style,
+                    "shares": shares,
+                    "source_ids": [source("ownership")],
+                }
+                for holder_id, name, style, shares in holders
+            ],
+            "beneficial_ownership_filings": [
+                {
+                    "filing_id": "holder_a_13g_amendment",
+                    "form_type": "13G/A",
+                    "filer": "Large Passive A",
+                    "event_date": (current - timedelta(days=25)).isoformat(),
+                    "filing_date": (current - timedelta(days=20)).isoformat(),
+                    "ownership_percent": 12.0,
+                    "change_percentage_points": 1.0,
+                    "intent": "passive",
+                    "source_ids": [source("sec_13g")],
+                }
+            ],
+            "form4_transactions": [
+                {
+                    "transaction_id": "insider_purchase",
+                    "insider": "Chief Executive Officer",
+                    "role": "CEO",
+                    "transaction_date": (current - timedelta(days=16)).isoformat(),
+                    "filing_date": (current - timedelta(days=15)).isoformat(),
+                    "transaction_code": "P",
+                    "direction": "acquired",
+                    "shares": 1000,
+                    "price_per_share": current_price * 0.95,
+                    "ownership_nature": "direct",
+                    "source_ids": [source("sec_form4_purchase")],
+                },
+                {
+                    "transaction_id": "insider_sale",
+                    "insider": "Chief Financial Officer",
+                    "role": "CFO",
+                    "transaction_date": (current - timedelta(days=6)).isoformat(),
+                    "filing_date": (current - timedelta(days=5)).isoformat(),
+                    "transaction_code": "S",
+                    "direction": "disposed",
+                    "shares": 500,
+                    "price_per_share": current_price,
+                    "ownership_nature": "direct",
+                    "source_ids": [source("sec_form4_sale")],
+                },
+            ],
+            "etf_exposures": [
+                {
+                    "etf_id": "broad_market_etf",
+                    "etf_name": "Broad Market ETF",
+                    "snapshot_date": current.isoformat(),
+                    "shares": 70,
+                    "fund_weight_percent": 1.5,
+                    "source_ids": [source("etf")],
+                },
+                {
+                    "etf_id": "sector_etf",
+                    "etf_name": "Sector ETF",
+                    "snapshot_date": current.isoformat(),
+                    "shares": 40,
+                    "fund_weight_percent": 4.0,
+                    "source_ids": [source("etf")],
+                },
+            ],
+            "methodology": "Separate lagged 13F aggregates, beneficial ownership filings, insider transactions, classified major holders, and ETF holdings without double counting ETF shares as an addition to passive ownership.",
+            "source_ids": [
+                source("sec_13f_prior"), source("sec_13f_current"),
+                source("sec_13g"), source("sec_form4_purchase"),
+                source("sec_form4_sale"), source("ownership"), source("etf"),
+            ],
+        },
+        "short_positioning": {
+            "prior": {
+                "settlement_date": (current - timedelta(days=35)).isoformat(),
+                "publication_date": (current - timedelta(days=30)).isoformat(),
+                "shares_short": 50,
+                "float_shares": 900,
+                "average_daily_volume": 14,
+                "source_ids": [source("short_prior")],
+            },
+            "current": {
+                "settlement_date": (current - timedelta(days=10)).isoformat(),
+                "publication_date": (current - timedelta(days=5)).isoformat(),
+                "shares_short": 60,
+                "float_shares": 900,
+                "average_daily_volume": 15,
+                "source_ids": [source("short_current")],
+            },
+            "short_sale_volume": {
+                "window_start": (current - timedelta(days=4)).isoformat(),
+                "window_end": current.isoformat(),
+                "short_volume": 400,
+                "total_volume": 1000,
+                "source_ids": [source("short_volume")],
+            },
+            "borrow": {
+                "availability_state": "available",
+                "as_of_date": current.isoformat(),
+                "available_shares": 25,
+                "borrow_fee_percent": 1.8,
+                "utilization_percent": 42,
+                "source_ids": [source("borrow")],
+            },
+            "methodology": "Treat settlement-date short interest, daily short-sale volume, and securities-lending availability as distinct datasets and never infer one directly from another.",
+            "source_ids": [
+                source("short_prior"), source("short_current"),
+                source("short_volume"), source("borrow"),
+            ],
+        },
+        "options_positioning": {
+            "as_of_date": current.isoformat(),
+            "spot_price": current_price,
+            "iv_term_structure": [
+                {"expiration": first_expiry.isoformat(), "atm_iv_percent": 40},
+                {"expiration": second_expiry.isoformat(), "atm_iv_percent": 38},
+                {"expiration": (current + timedelta(days=120)).isoformat(), "atm_iv_percent": 35},
+            ],
+            "atm_iv_history_percent": [20 + (index % 30) * 0.5 for index in range(252)],
+            "realized_price_history": realized_prices,
+            "skew": {
+                "put_25_delta_iv_percent": 45,
+                "atm_iv_percent": 40,
+                "call_25_delta_iv_percent": 37,
+            },
+            "open_interest": open_interest,
+            "earnings_expected_move": {
+                "event_date": (current + timedelta(days=7)).isoformat(),
+                "expiration": first_expiry.isoformat(),
+                "atm_strike": current_price,
+                "call_price": current_price * 0.04,
+                "put_price": current_price * 0.035,
+            },
+            "post_earnings_iv_crush": [
+                {
+                    "event_date": (current - timedelta(days=90 * index)).isoformat(),
+                    "pre_event_atm_iv_percent": 52 - index,
+                    "post_event_atm_iv_percent": 36 - index,
+                    "source_ids": [source("options")],
+                }
+                for index in range(1, 5)
+            ],
+            "methodology": "Recalculate IV percentile, realized volatility, 25-delta skew, OI concentrations, earnings straddle expected move, and historical IV crush from point-in-time option and price inputs.",
+            "source_ids": [source("options")],
+        },
+        "macro_futures_overlay": {
+            "applicability": "not_applicable",
+            "positions": [],
+            "rationale": "CFTC futures positioning is not issuer ownership or single-name short/options positioning and is excluded unless a documented macro-futures transmission channel is part of the thesis.",
+        },
+        "methodology": "Analyze ownership, short positioning, and options separately, retain reporting lags and dataset limitations, and prohibit positioning summaries from directly gating recommendations or sizing positions.",
+        "source_ids": [
+            source("sec_13f_prior"), source("sec_13f_current"), source("sec_13g"),
+            source("sec_form4_purchase"), source("sec_form4_sale"), source("ownership"),
+            source("etf"), source("short_prior"), source("short_current"),
+            source("short_volume"), source("borrow"), source("options"),
+        ],
+    }
+
+
 def estimate_revision_sources(*, as_of: str, prefix: str) -> list[dict]:
     current_date = date.fromisoformat(as_of)
     dates = {

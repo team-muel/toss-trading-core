@@ -12,6 +12,8 @@ from tests.focused_research_fixtures import (
     earnings_call_payload,
     estimate_revision_payload,
     estimate_revision_sources,
+    positioning_payload,
+    positioning_sources,
 )
 
 
@@ -141,6 +143,7 @@ class VariantPerceptionTest(unittest.TestCase):
             {"source_id": "amat_prior_call", "source_type": "earnings_transcript", "organization": "AMAT", "observed_at": self.as_of, "locator": "prior-quarter earnings call transcript"},
             {"source_id": "amat_current_call", "source_type": "earnings_transcript", "organization": "AMAT", "observed_at": self.as_of, "locator": "current-quarter earnings call transcript"},
             *estimate_revision_sources(as_of=self.as_of, prefix="amat_revision"),
+            *positioning_sources(as_of=self.as_of, prefix="amat_positioning"),
         ]
         chains = []
         for metric_id, name, category, implied, consensus, house in [
@@ -345,6 +348,11 @@ class VariantPerceptionTest(unittest.TestCase):
                 current_call_source="amat_current_call",
                 primary_source="filing",
             ),
+            "positioning_analysis": positioning_payload(
+                as_of=self.as_of,
+                prefix="amat_positioning",
+                current_price=220.0,
+            ),
             "valuation": {
                 "framework": "Scenario EPS multiplied by normalized forward P/E with a cross-check to DCF.",
                 "cases": [
@@ -444,7 +452,7 @@ class VariantPerceptionTest(unittest.TestCase):
         headings = [memo.index(f"## {index}. {name}") for index, name in enumerate([
             "Investment Thesis", "Variant View", "Earnings Model", "Earnings Quality",
             "Supply-chain Read-through", "Earnings Call Diff / Management Calibration",
-            "Valuation", "Catalyst Path",
+            "Positioning Analysis", "Valuation", "Catalyst Path",
             "Risk / Disconfirming Evidence", "Position Construction", "Score Summary",
         ], start=1)]
         self.assertEqual(headings, sorted(headings))
@@ -465,6 +473,88 @@ class VariantPerceptionTest(unittest.TestCase):
         self.assertIn("Estimate Revision & Price Divergence", memo)
         self.assertIn("Analyst breadth", memo)
         self.assertIn("Target-price distribution", memo)
+        self.assertIn("Institutional ownership and filings", memo)
+        self.assertIn("Short positioning", memo)
+        self.assertIn("Options surface and event pricing", memo)
+
+    def test_positioning_reconciles_ownership_short_and_options_inputs(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        positioning = dossier["research_sections"]["positioning_analysis"]
+        ownership = positioning["institutional_ownership"]
+        self.assertAlmostEqual(
+            ownership["prior_13f"]["institutional_ownership_percent"], 60.0
+        )
+        self.assertAlmostEqual(
+            ownership["thirteen_f_change"][
+                "institutional_ownership_change_percentage_points"
+            ],
+            3.0,
+        )
+        self.assertEqual(ownership["thirteen_f_change"]["reporting_lag_days"], 30)
+        self.assertAlmostEqual(ownership["holder_concentration"]["top5_percent"], 41)
+        self.assertAlmostEqual(
+            ownership["passive_ownership"]["percent_of_shares_outstanding"], 22
+        )
+        self.assertAlmostEqual(
+            ownership["etf_exposure_summary"][
+                "aggregate_percent_of_shares_outstanding"
+            ],
+            11,
+        )
+        self.assertTrue(
+            ownership["etf_exposure_summary"]["not_additive_to_passive_ownership"]
+        )
+        self.assertEqual(ownership["form4_summary"]["net_shares"], 500)
+        short = positioning["short_positioning"]
+        self.assertAlmostEqual(short["current"]["short_interest_percent_of_float"], 60 / 900 * 100)
+        self.assertAlmostEqual(short["current"]["days_to_cover"], 4.0)
+        self.assertAlmostEqual(short["short_sale_volume"]["short_volume_percent"], 40)
+        self.assertTrue(short["short_sale_volume"]["not_short_interest"])
+        self.assertEqual(short["borrow"]["availability_state"], "available")
+        options = positioning["options_positioning"]
+        self.assertEqual(options["iv_percentile"]["history_observations"], 252)
+        self.assertAlmostEqual(options["iv_percentile"]["percentile"], 100)
+        self.assertAlmostEqual(
+            options["skew"]["put_minus_call_25_delta_skew_points"], 8
+        )
+        self.assertAlmostEqual(
+            options["earnings_expected_move"]["expected_move_percent"], 7.5
+        )
+        self.assertEqual(len(options["open_interest_summary"]["major_expiries"]), 2)
+        self.assertAlmostEqual(
+            options["post_earnings_iv_crush"][
+                "average_iv_crush_percentage_points"
+            ],
+            16,
+        )
+        self.assertFalse(positioning["macro_futures_overlay"]["issuer_positioning_source"])
+        self.assertFalse(positioning["recommendation_gate_used"])
+        self.assertFalse(positioning["position_sizing_used"])
+
+    def test_short_sale_volume_cannot_be_treated_as_short_interest(self):
+        invalid = copy.deepcopy(self.payload)
+        volume = invalid["positioning_analysis"]["short_positioning"][
+            "short_sale_volume"
+        ]
+        volume["short_volume"] = volume["total_volume"] + 1
+        with self.assertRaisesRegex(ValueError, "short-sale volume values are invalid"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_validator_recalculates_positioning_outputs(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        dossier["research_sections"]["positioning_analysis"]["options_positioning"][
+            "earnings_expected_move"
+        ]["expected_move_percent"] += 1
+        with self.assertRaisesRegex(ValueError, "positioning analysis does not reconcile"):
+            validate_focused_research_dossier(
+                dossier, as_of_date=self.as_of, maximum_age_days=14
+            )
 
     def test_estimate_revisions_reconcile_with_price_and_analyst_breadth(self):
         dossier = build_focused_research_dossier(
@@ -938,6 +1028,7 @@ class VariantPerceptionTest(unittest.TestCase):
             "earnings_quality",
             "supply_chain_read_through",
             "earnings_call_diff",
+            "positioning_analysis",
             "valuation",
             "catalyst_path",
             "risk_disconfirming_evidence",
