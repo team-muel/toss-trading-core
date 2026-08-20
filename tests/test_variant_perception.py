@@ -129,6 +129,10 @@ class VariantPerceptionTest(unittest.TestCase):
             {"source_id": "cons", "source_type": "consensus_dataset", "organization": "Consensus Vendor", "observed_at": self.as_of, "locator": "point-in-time snapshot"},
             {"source_id": "filing", "source_type": "company_filing", "organization": "AMAT", "observed_at": self.as_of, "locator": "10-Q accession"},
             {"source_id": "industry", "source_type": "industry_dataset", "organization": "SEMI", "observed_at": self.as_of, "locator": "WFE dataset"},
+            {"source_id": "tsmc_guidance", "source_type": "company_guidance", "organization": "TSMC", "observed_at": self.as_of, "locator": "capital budget guidance"},
+            {"source_id": "micron_guidance", "source_type": "company_guidance", "organization": "Micron", "observed_at": self.as_of, "locator": "HBM investment guidance"},
+            {"source_id": "supplier_call", "source_type": "earnings_transcript", "organization": "MKS Instruments", "observed_at": self.as_of, "locator": "quarterly earnings call"},
+            {"source_id": "lrcx_call", "source_type": "earnings_transcript", "organization": "Lam Research", "observed_at": self.as_of, "locator": "quarterly earnings call"},
         ]
         chains = []
         for metric_id, name, category, implied, consensus, house in [
@@ -285,6 +289,42 @@ class VariantPerceptionTest(unittest.TestCase):
                 }],
             },
             "earnings_quality": earnings_quality_payload(),
+            "supply_chain_read_through": {
+                "hypothesis": {
+                    "hypothesis_id": "memory_and_foundry_capex_read_through",
+                    "statement": "Independent customer CAPEX and supplier demand signals imply higher subject-company systems revenue, while competitor evidence provides a counter-test.",
+                    "subject_metric": "Semiconductor Systems revenue",
+                    "forecast_period": "FY2028",
+                    "expected_direction": "increase",
+                    "falsification_criteria": [
+                        "Two major customers reduce the cited CAPEX programs.",
+                        "Supplier bookings and subject-company backlog both decline.",
+                    ],
+                },
+                "entities": [
+                    {"entity_id": "amat", "name": "Applied Materials", "identifier": "AMAT", "role": "subject_company", "source_organization": "AMAT"},
+                    {"entity_id": "tsmc", "name": "TSMC", "identifier": "TSM", "role": "customer", "source_organization": "TSMC"},
+                    {"entity_id": "micron", "name": "Micron", "identifier": "MU", "role": "customer", "source_organization": "Micron"},
+                    {"entity_id": "mks", "name": "MKS Instruments", "identifier": "MKSI", "role": "supplier", "source_organization": "MKS Instruments"},
+                    {"entity_id": "lrcx", "name": "Lam Research", "identifier": "LRCX", "role": "competitor", "source_organization": "Lam Research"},
+                ],
+                "relationships": [
+                    {"relationship_id": "tsmc_to_amat", "from_entity_id": "tsmc", "to_entity_id": "amat", "relationship_type": "customer_of", "upstream_metric": "Foundry CAPEX", "subject_metric": "Foundry / Logic systems revenue", "expected_lag_months": 12, "mechanism": "Customer fab investment creates addressable deposition and process-equipment demand after procurement and installation lags.", "source_ids": ["tsmc_guidance", "filing"]},
+                    {"relationship_id": "micron_to_amat", "from_entity_id": "micron", "to_entity_id": "amat", "relationship_type": "customer_of", "upstream_metric": "HBM and DRAM CAPEX", "subject_metric": "DRAM systems revenue", "expected_lag_months": 9, "mechanism": "Memory capacity and technology-node investment increases addressable process-tool orders subject to share and timing.", "source_ids": ["micron_guidance", "filing"]},
+                    {"relationship_id": "mks_to_amat", "from_entity_id": "mks", "to_entity_id": "amat", "relationship_type": "supplier_to", "upstream_metric": "Semiconductor component bookings", "subject_metric": "Equipment shipment capacity", "expected_lag_months": 6, "mechanism": "Upstream component bookings test whether equipment demand is propagating beyond the subject company's own disclosures.", "source_ids": ["supplier_call", "filing"]},
+                    {"relationship_id": "lrcx_to_amat", "from_entity_id": "lrcx", "to_entity_id": "amat", "relationship_type": "competes_with", "upstream_metric": "Peer systems outlook", "subject_metric": "Industry demand and relative share", "expected_lag_months": 3, "mechanism": "A competitor's order outlook is an independent test of common demand and a counter-test for company-specific share assumptions.", "source_ids": ["lrcx_call", "filing"]},
+                ],
+                "signals": [
+                    {"signal_id": "amat_backlog", "entity_id": "amat", "relationship_ids": ["micron_to_amat"], "metric": "Systems backlog", "period": "FY2028 outlook", "unit": "usd_millions", "prior_value": 10000, "current_value": 11000, "subject_metric_direction": "increase", "source_ids": ["filing"], "methodology": "Use the subject company's reported backlog as the non-independent anchor signal."},
+                    {"signal_id": "tsmc_capex", "entity_id": "tsmc", "relationship_ids": ["tsmc_to_amat"], "metric": "Foundry CAPEX", "period": "FY2028 plan", "unit": "usd_millions", "prior_value": 30000, "current_value": 33000, "subject_metric_direction": "increase", "source_ids": ["tsmc_guidance"], "methodology": "Compare point-in-time company capital-budget guidance and map only the equipment-addressable portion through the documented relationship."},
+                    {"signal_id": "micron_hbm_capex", "entity_id": "micron", "relationship_ids": ["micron_to_amat"], "metric": "HBM and DRAM CAPEX", "period": "FY2028 plan", "unit": "usd_millions", "prior_value": 8000, "current_value": 10000, "subject_metric_direction": "increase", "source_ids": ["micron_guidance"], "methodology": "Compare disclosed memory investment plans without treating total CAPEX as subject-company revenue."},
+                    {"signal_id": "mks_bookings", "entity_id": "mks", "relationship_ids": ["mks_to_amat"], "metric": "Semiconductor component bookings", "period": "FY2028 run-rate", "unit": "usd_millions", "prior_value": 2000, "current_value": 2200, "subject_metric_direction": "increase", "source_ids": ["supplier_call"], "methodology": "Use supplier-reported bookings as an upstream capacity and demand confirmation signal."},
+                    {"signal_id": "lrcx_outlook", "entity_id": "lrcx", "relationship_ids": ["lrcx_to_amat"], "metric": "Peer systems outlook", "period": "FY2028 outlook", "unit": "usd_millions", "prior_value": 11000, "current_value": 10500, "subject_metric_direction": "decrease", "source_ids": ["lrcx_call"], "methodology": "Retain the weaker peer outlook as counterevidence instead of averaging it away."},
+                ],
+                "coverage_rationale": "Cover two material customer demand pools, one upstream supplier, one direct competitor, and the subject-company anchor; each external signal uses that entity's primary disclosure.",
+                "methodology": "Map numeric changes through explicit relationships and lags, count confirmation by distinct external entity and primary organization, and preserve counter-signals separately.",
+                "source_ids": ["filing", "tsmc_guidance", "micron_guidance", "supplier_call", "lrcx_call"],
+            },
             "valuation": {
                 "framework": "Scenario EPS multiplied by normalized forward P/E with a cross-check to DCF.",
                 "cases": [
@@ -382,9 +422,9 @@ class VariantPerceptionTest(unittest.TestCase):
         )
         memo = render_focused_research_memo(dossier)
         headings = [memo.index(f"## {index}. {name}") for index, name in enumerate([
-            "Investment Thesis", "Variant View", "Earnings Model", "Earnings Quality", "Valuation",
-            "Catalyst Path", "Risk / Disconfirming Evidence", "Position Construction",
-            "Score Summary",
+            "Investment Thesis", "Variant View", "Earnings Model", "Earnings Quality",
+            "Supply-chain Read-through", "Valuation", "Catalyst Path",
+            "Risk / Disconfirming Evidence", "Position Construction", "Score Summary",
         ], start=1)]
         self.assertEqual(headings, sorted(headings))
         self.assertGreater(memo.index("Investment Conviction"), memo.index("Position Construction"))
@@ -396,6 +436,8 @@ class VariantPerceptionTest(unittest.TestCase):
         self.assertIn("AI-related CAPEX +10%", memo)
         self.assertIn("GAAP to non-GAAP reconciliation", memo)
         self.assertIn("EPS growth attribution", memo)
+        self.assertIn("Cross-company confirmation", memo)
+        self.assertIn("Transmission map", memo)
 
     def test_driver_model_calculates_eps_cash_flow_roic_and_ai_capex_sensitivity(self):
         dossier = build_focused_research_dossier(
@@ -605,6 +647,73 @@ class VariantPerceptionTest(unittest.TestCase):
                 dossier, as_of_date=self.as_of, maximum_age_days=14
             )
 
+    def test_supply_chain_requires_independent_primary_cross_company_confirmation(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        supply_chain = dossier["research_sections"]["supply_chain_read_through"]
+        confirmation = supply_chain["cross_company_confirmation"]
+        self.assertEqual(confirmation["state"], "confirmed_with_counter_signals")
+        self.assertEqual(confirmation["external_entity_count"], 4)
+        self.assertEqual(confirmation["independent_primary_organization_count"], 4)
+        self.assertEqual(len(confirmation["supporting_external_entity_ids"]), 3)
+        self.assertEqual(confirmation["signal_counts"]["contradicting"], 1)
+        self.assertEqual(
+            confirmation["external_signal_counts"]["contradicting"], 1
+        )
+        self.assertFalse(confirmation["score_used"])
+
+    def test_rejects_supply_chain_signal_without_entity_primary_source(self):
+        invalid = copy.deepcopy(self.payload)
+        signal = next(
+            item
+            for item in invalid["supply_chain_read_through"]["signals"]
+            if item["signal_id"] == "tsmc_capex"
+        )
+        signal["source_ids"] = ["industry"]
+        with self.assertRaisesRegex(ValueError, "lacks its entity's primary source"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_rejects_supply_chain_relationship_that_conflicts_with_entity_roles(self):
+        invalid = copy.deepcopy(self.payload)
+        relationship = next(
+            item
+            for item in invalid["supply_chain_read_through"]["relationships"]
+            if item["relationship_id"] == "tsmc_to_amat"
+        )
+        relationship["relationship_type"] = "supplier_to"
+        with self.assertRaisesRegex(ValueError, "conflicts with entity roles"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_buy_requires_three_supporting_external_entities(self):
+        invalid = copy.deepcopy(self.payload)
+        signal = next(
+            item
+            for item in invalid["supply_chain_read_through"]["signals"]
+            if item["signal_id"] == "mks_bookings"
+        )
+        signal["subject_metric_direction"] = "decrease"
+        with self.assertRaisesRegex(ValueError, "cross-company confirmation"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_validator_recalculates_supply_chain_outputs(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        dossier["research_sections"]["supply_chain_read_through"]["signals"][0][
+            "change_percent"
+        ] += 1
+        with self.assertRaisesRegex(ValueError, "supply-chain.*does not reconcile"):
+            validate_focused_research_dossier(
+                dossier, as_of_date=self.as_of, maximum_age_days=14
+            )
+
     def test_conviction_score_does_not_change_decision_or_position(self):
         low = copy.deepcopy(self.payload)
         high = copy.deepcopy(self.payload)
@@ -622,6 +731,7 @@ class VariantPerceptionTest(unittest.TestCase):
             "variant_view",
             "earnings_model",
             "earnings_quality",
+            "supply_chain_read_through",
             "valuation",
             "catalyst_path",
             "risk_disconfirming_evidence",

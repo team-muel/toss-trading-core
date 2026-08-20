@@ -7,7 +7,7 @@
 2,500개를 매일 동일한 규칙으로 평가한다.
 
 정량 상위 종목은 `screening_candidates`이며 아직 매수 추천이 아니다. 실제
-`recommendations`에는 `focused-research-dossier-v5` 검증을 통과하고 결론이 `buy`인
+`recommendations`에는 `focused-research-dossier-v6` 검증을 통과하고 결론이 `buy`인
 종목만 들어간다. 둘 다 개인 맞춤 투자자문이나 주문 승인이 아니며, 결과에서 Toss
 주문 경로로 이어지는 연결은 만들지 않는다.
 
@@ -35,8 +35,9 @@ Secret Manager version이 모두 준비되기 전 `config/stock_recommendation_p
 - Variant Perception 집중연구를 통과한 종목 중 상위 10개까지만 연구상 매수 추천
 
 정량 점수는 집중연구 대상을 고르는 screening 우선순위에만 사용한다. 실제 추천은
-Investment Thesis → Variant View → Earnings Model → Earnings Quality → Valuation → Catalyst Path →
-Risk/Disconfirming Evidence → Position Construction을 통과해야 한다. conviction 점수는
+Investment Thesis → Variant View → Earnings Model → Earnings Quality → Supply-chain
+Read-through → Valuation → Catalyst Path → Risk/Disconfirming Evidence → Position
+Construction을 통과해야 한다. conviction 점수는
 이 판단이나 포지션 크기에 쓰지 않고 마지막 요약에만 둔다. LLM은 종목, 정량 점수 또는
 순위를 변경하지 않고 설명만 할 수 있다.
 
@@ -48,12 +49,14 @@ Risk/Disconfirming Evidence → Position Construction을 통과해야 한다. co
 매수 추천만 SPY 대비 5·21·63거래일 성과를 전향 추적하며, 추천 당시에는 미래 성과를
 표시하지 않는다.
 
-`stock-recommendation-run-v6`의 실제 추천은 dossier의 전체 분석 섹션과
+`stock-recommendation-run-v7`의 실제 추천은 dossier의 전체 분석 섹션과
 driver-based earnings model을 그대로 전달한다. segment driver, 손익·현금흐름 bridge,
 유지·성장 CAPEX, 투하자본 bridge, 증분 매출·영업이익·NOPAT, hurdle 대비 증분 ROIC,
 CAPEX 생산성과 shock sensitivity뿐 아니라 Earnings Quality의 balance-sheet
 growth, accruals, cash conversion, 조정항목, GAAP/non-GAAP bridge, EPS 성장 attribution을
-축약하지 않으며 `score_summary`를 마지막에 둔다. 반면 아직 집중연구가 없는 큐 항목은
+축약하지 않는다. 고객·공급업체·경쟁사의 관계 graph, 수치 신호, 전달 시차, 독립
+1차 출처, 지지·반대 신호를 포함한 Supply-chain Read-through도 그대로 전달하고
+`score_summary`를 마지막에 둔다. 반면 아직 집중연구가 없는 큐 항목은
 정량 `screening_score`를 연구 우선순위로만 보존한다.
 
 기존 `focused-research-dossier-v2`는 새 기준에서 매수 추천 근거로 재사용하지 않는다.
@@ -70,6 +73,11 @@ v5 dossier 재작성 큐에 넣는다. 손익·현금흐름 bridge가 없는 과
 CAPEX·D&A·운전자본·인수에 연결하는 증분 경제성 bridge가 없다. 따라서
 `focused_research_incremental_economics_required`로 되돌리고, 기말 투하자본 차이를
 원인별 근거 없이 자동 분해하거나 hurdle rate를 임의 가정하지 않는다.
+
+기존 `focused-research-dossier-v5`에는 Supply-chain Read-through가 없으므로
+`focused_research_supply_chain_required`로 되돌린다. 기존 회사 모델이나 산업 데이터로
+고객·공급업체·경쟁사의 신호를 만들어 채우지 않으며 각 외부 기업의 1차 공시·가이던스·
+실적 콜을 별도로 확보해야 한다.
 
 매일 데이터가 실제로 전진한 경우에만 새 추천을 만들고 Gmail 연구 digest에는 다음을
 포함한다.

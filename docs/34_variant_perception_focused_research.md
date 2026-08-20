@@ -21,13 +21,14 @@
 
 ## 의사결정 메모의 고정 순서
 
-모든 `focused-research-dossier-v5`는 다음 순서를 그대로 사용한다.
+모든 `focused-research-dossier-v6`는 다음 순서를 그대로 사용한다.
 
 ```text
 Investment Thesis
   → Variant View
   → Earnings Model
   → Earnings Quality
+  → Supply-chain Read-through
   → Valuation
   → Catalyst Path
   → Risk / Disconfirming Evidence
@@ -49,6 +50,7 @@ Investment Thesis
 - 특정 경제 driver 충격이 매출·EPS·FCF·증분 ROIC에 미치는 재계산 민감도
 - 매출 대비 매출채권·재고·계약부채·이연매출 증가율과 현금전환·accrual 분석
 - GAAP/non-GAAP reconciliation과 EPS 성장의 영업·세율·조정·자사주 기여도
+- 고객·공급업체·경쟁사의 관계와 시차, 독립 1차 출처별 지지·반대 신호
 - Base EPS의 컨센서스·시장 내재 값 대비 차이
 - bear/base/bull 목표가격과 확률가중 기대수익
 - 날짜가 있는 촉매, 관측 변수, thesis 해소 방식
@@ -275,6 +277,39 @@ core operating income growth
 계속 보존한다. Earnings Quality 결과는 점수로 압축하거나 추천 게이트의 우회 변수로
 사용하지 않는다.
 
+## Supply-chain Read-through
+
+한 회사의 설명을 다른 문장으로 반복하는 것은 교차확인이 아니다. 모든 dossier는
+대상 회사를 중심으로 고객, 공급업체, 경쟁사 또는 산업 peer를 관계 graph로 연결하고
+각 관계에 upstream metric, 대상 회사 metric, 전달 메커니즘과 예상 시차를 명시한다.
+모든 외부 entity는 graph상 대상 회사까지 연결되어야 하며 최소 하나의 수치 신호를
+가져야 한다.
+
+각 신호에는 다음을 저장한다.
+
+- entity와 고객·공급업체·경쟁사·peer 역할
+- 비교기간, 전기 값, 당기 값, 단위와 계산된 증감률
+- 대상 회사 metric에 예상되는 증가·감소·중립 방향
+- 신호가 가설을 지지하는지, 반박하는지 또는 불명확한지의 계산 결과
+- 연결된 supply-chain relationship과 전달 시차
+- 해당 entity 자신의 filing, guidance, earnings transcript 또는 regulatory filing
+- 숫자를 대상 회사에 연결하는 방법론
+
+뉴스 요약이나 대상 회사가 인용한 고객 발언은 해당 고객의 독립 확인으로 세지 않는다.
+각 외부 신호에는 entity 이름과 source organization이 일치하는 1차 출처가 최소 하나
+있어야 한다. 같은 회사의 여러 문서는 하나의 독립 조직으로만 계산한다.
+
+기본 `buy` 기준은 최소 세 개 외부 기업, 최소 두 종류 역할, 세 개의 서로 다른 1차
+출처 조직이 가설을 같은 방향으로 지지하는 것이다. 동시에 최소 하나의 외부 반대
+신호를 반드시 보존한다. 반대 신호가 존재한다고 자동으로 매수를 금지하지는 않지만,
+지지 기업이 세 곳 미만이면 `buy` dossier는 생성되지 않는다. 확인 결과는 점수로
+축약하지 않으며 포지션 크기나 주문 권한을 직접 제어하지 않는다.
+
+AMAT 사례의 TSMC·Samsung·SK hynix·Micron·Intel CAPEX나 LRCX·KLAC 전망은 가능한
+entity와 metric의 예시일 뿐이다. 실제 dossier에서는 해당 시점의 각 기업 1차 자료를
+확보하고, 총 CAPEX 중 장비 주소가능 비중·점유율·인식 시차를 별도 방법론으로 연결해야
+한다. 여러 회사가 같은 산업 데이터 한 건을 재인용한 것은 독립 확인 세 건이 아니다.
+
 ## 출처와 시점 규칙
 
 - 모든 출처는 `as_of_date` 이전에 관측 가능해야 한다.
@@ -312,7 +347,8 @@ bear/base/bull driver 모델과 가격은 모두 필수다. 세 이익 시나리
 하며 계산된 EPS와 가격은 각각 `bear < base < bull`이어야 한다. `buy`는 확률가중
 기대수익이 양수이고, 적어도 하나의 가격 내재 기대 대비 bullish gap이 있으며, 정책상
 최소 reward/risk를 충족할 때만 허용된다. Position Construction은 연구상 위험 예산이며
-주문 권한이나 전략 승격 권한을 갖지 않는다.
+Supply-chain Read-through에서 세 개 외부 기업의 독립 1차 확인도 충족해야 한다.
+Position Construction은 주문 권한이나 전략 승격 권한을 갖지 않는다.
 
 ## 생성과 검증
 
@@ -328,8 +364,9 @@ python -m toss_trading.cli.research_validate_focus_dossier \
 
 검증기는 source 시점, source type, metric 범주, 가격 재현, gap 계산, driver-based
 earnings/cash-flow/ROIC model과 sensitivity 재계산, Earnings Quality와 EPS 성장
-attribution, GAAP/non-GAAP reconciliation, valuation, 촉매 연결, 반증 증거,
-포지션 상한과 추천 조건을 확인한다. 통과 결과에는
+attribution, GAAP/non-GAAP reconciliation, supply-chain graph 연결성, issuer-primary
+source 독립성, 지지·반대 신호 재계산, valuation, 촉매 연결, 반증 증거, 포지션 상한과
+추천 조건을 확인한다. 통과 결과에는
 결정적 `dossier_id`와 `content_sha256`이 붙고 동일 ID의 `.md` 메모도 생성된다. 이후
 내용이 바뀌면 추천 게이트의 hash 검사가 실패한다.
 
