@@ -15,11 +15,14 @@ done
 
 sudo install -d -m 0750 -o seoje -g seoje \
   /home/seoje/toss-trading/research-runtime \
+  /home/seoje/toss-trading/research-runtime/gcloud \
   /home/seoje/toss-trading/research-runtime/input \
   /home/seoje/toss-trading/paper-runtime \
+  /home/seoje/toss-trading/paper-runtime/gcloud \
   /home/seoje/toss-trading/paper-runtime/input \
   /home/seoje/toss-trading/paper-runtime/reports \
-  /home/seoje/toss-trading/stock-recommendation-runtime
+  /home/seoje/toss-trading/stock-recommendation-runtime \
+  /home/seoje/toss-trading/stock-recommendation-runtime/gcloud
 sudo install -d -m 0755 /etc/toss-trading
 if [[ ! -f /etc/toss-trading/research.env ]]; then
   sudo install -m 0600 -o root -g root \

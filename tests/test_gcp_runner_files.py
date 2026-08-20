@@ -170,6 +170,14 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("--instrument-master", research_runner)
         self.assertIn("--cost-calibration", research_runner)
         self.assertIn("RESEARCH_EXECUTION_COST_CALIBRATION", service)
+        self.assertIn(
+            "CLOUDSDK_CONFIG=/home/seoje/toss-trading/research-runtime/gcloud",
+            service,
+        )
+        self.assertNotIn(
+            "CLOUDSDK_CONFIG=/home/seoje/toss-trading/runtime/gcloud",
+            service,
+        )
 
     def test_release_audit_and_prune_do_not_depend_on_release_mode_bits(self):
         audit = Path("scripts/audit_active_research_release.sh").read_text(
@@ -201,8 +209,20 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("ReadWritePaths=/home/seoje/toss-trading/paper-runtime", service)
         self.assertNotIn("toss-client-id", service + runner)
         self.assertNotIn("TOSS_ACCOUNT_SEQ", service + runner)
+        self.assertIn(
+            "CLOUDSDK_CONFIG=/home/seoje/toss-trading/paper-runtime/gcloud",
+            service,
+        )
         self.assertIn("Persistent=true", timer)
         self.assertIn("paper_operation_ok", runner)
+
+        stock_service = Path(
+            "deploy/systemd/toss-stock-recommendations.service"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "CLOUDSDK_CONFIG=/home/seoje/toss-trading/stock-recommendation-runtime/gcloud",
+            stock_service,
+        )
 
     def test_ops_agent_collects_and_parses_foundation_jsonl(self):
         config = Path("deploy/ops-agent/toss-foundation.yaml").read_text(
