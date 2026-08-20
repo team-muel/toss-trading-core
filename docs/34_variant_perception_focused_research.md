@@ -21,12 +21,13 @@
 
 ## 의사결정 메모의 고정 순서
 
-모든 `focused-research-dossier-v3`는 다음 순서를 그대로 사용한다.
+모든 `focused-research-dossier-v4`는 다음 순서를 그대로 사용한다.
 
 ```text
 Investment Thesis
   → Variant View
   → Earnings Model
+  → Earnings Quality
   → Valuation
   → Catalyst Path
   → Risk / Disconfirming Evidence
@@ -44,6 +45,8 @@ Investment Thesis
 - bear/base/bull의 driver별 매출, gross margin, operating expense, tax, EPS,
   OCF, 유지·성장 CAPEX, FCF, 증분 ROIC와 확률
 - 특정 경제 driver 충격이 매출·EPS·FCF·증분 ROIC에 미치는 재계산 민감도
+- 매출 대비 매출채권·재고·계약부채·이연매출 증가율과 현금전환·accrual 분석
+- GAAP/non-GAAP reconciliation과 EPS 성장의 영업·세율·조정·자사주 기여도
 - Base EPS의 컨센서스·시장 내재 값 대비 차이
 - bear/base/bull 목표가격과 확률가중 기대수익
 - 날짜가 있는 촉매, 관측 변수, thesis 해소 방식
@@ -176,6 +179,71 @@ Packaging driver만 10% 올려 “AI가 성장한다”가 아니라 “현재 s
 때도 driver 식으로 독립 재계산한다. segment revenue, 손익계산서, 현금흐름, 민감도 중
 하나라도 재현되지 않으면 hash 상태와 무관하게 검증이 실패한다.
 
+## Earnings Quality
+
+`earnings_quality`는 `earnings_model`과 별도의 필수 섹션이다. 전망 EPS가 높다는 사실과
+그 EPS가 현금으로 전환되고 반복 가능한 원천에서 발생한다는 사실을 구분한다. 전기와
+당기의 공시 원자료를 사용하며 다음 항목을 하나도 생략할 수 없다.
+
+- 매출채권 증가율과 매출 증가율의 차이
+- 재고 증가율과 매출 증가율의 차이
+- contract liabilities와 deferred revenue의 증가율·절대 변화
+- `GAAP net income - OCF` accruals와 평균자산 대비 accrual ratio
+- `OCF / GAAP net income` 현금전환율
+- working-capital의 OCF 기여액과 비중
+- SBC 금액, 증가율, 매출 대비 비중
+- restructuring, acquisition adjustment, tax benefit, one-off gain
+- GAAP operating income·pretax income·net income·EPS에서 non-GAAP로의 reconciliation
+- depreciation과 CAPEX의 성장률 및 D&A/CAPEX 비율
+- 희석주식 수 변화 중 공시로 자사주매입에 귀속할 수 있는 EPS 효과
+
+조정항목은 모두 부호가 있는 GAAP 영향으로 저장한다. 비용은 음수, tax benefit과
+one-off gain은 양수다. 각 항목은 operating, non-operating, tax 중 손익계산서 위치를
+명시하며 검증기는 다음을 다시 계산한다.
+
+```text
+core pretax income
+  = core operating income + recurring non-operating income
+
+core net income
+  = core pretax income × (1 - normalized tax rate)
+
+GAAP net income
+  = core net income + signed after-tax adjustments
+
+non-GAAP net income
+  = GAAP net income - signed after-tax adjustments
+```
+
+보고된 GAAP operating income, pretax income, net income, EPS와 non-GAAP net income,
+EPS가 이 bridge에 맞지 않으면 dossier 생성이 실패한다. SBC, restructuring,
+acquisition adjustment, tax benefit, one-off gain 중 하나라도 빠져도 실패한다.
+
+### EPS growth attribution
+
+EPS 성장률은 다음 기여도의 합으로 정확히 재현한다.
+
+```text
+core operating income growth
+  + recurring non-operating change
+  + normalized tax-rate change
+  + SBC change
+  + restructuring change
+  + acquisition adjustment change
+  + tax benefit change
+  + one-off gain change
+  + share-repurchase effect
+  + other net share-count change
+  = reported GAAP EPS growth
+```
+
+자사주 효과는 단순히 전기 대비 주식 수 감소 전체로 간주하지 않는다. 공시와 계산
+방법으로 자사주에 귀속 가능한 가중평균 주식 수 감소를 입력하고, 나머지는 SBC 발행,
+인수대가 주식, 옵션 희석 등 `other_share_count_change`로 남긴다. 전기 EPS가 0이면
+증가율 기여도는 `not_meaningful_prior_eps_zero`로 표시하지만 원자료와 절대 금액 분석은
+계속 보존한다. Earnings Quality 결과는 점수로 압축하거나 추천 게이트의 우회 변수로
+사용하지 않는다.
+
 ## 출처와 시점 규칙
 
 - 모든 출처는 `as_of_date` 이전에 관측 가능해야 한다.
@@ -228,7 +296,8 @@ python -m toss_trading.cli.research_validate_focus_dossier \
 ```
 
 검증기는 source 시점, source type, metric 범주, 가격 재현, gap 계산, driver-based
-earnings/cash-flow/ROIC model과 sensitivity 재계산, valuation, 촉매 연결, 반증 증거,
+earnings/cash-flow/ROIC model과 sensitivity 재계산, Earnings Quality와 EPS 성장
+attribution, GAAP/non-GAAP reconciliation, valuation, 촉매 연결, 반증 증거,
 포지션 상한과 추천 조건을 확인한다. 통과 결과에는
 결정적 `dossier_id`와 `content_sha256`이 붙고 동일 ID의 `.md` 메모도 생성된다. 이후
 내용이 바뀌면 추천 게이트의 hash 검사가 실패한다.

@@ -10,6 +10,111 @@ from toss_trading.research.variant_perception import (
 )
 
 
+def earnings_quality_payload():
+    adjustments = [
+        ("stock_based_compensation", "Stock-based compensation", "operating", -500, -600, -400, -492),
+        ("restructuring", "Restructuring", "operating", -100, -80, -80, -65.6),
+        ("acquisition_adjustment", "Acquisition adjustment", "operating", -50, -70, -40, -57.4),
+        ("tax_benefit", "Tax benefit", "tax", 0, 0, 100, 120),
+        ("one_off_gain", "One-off gain", "non_operating", 75, 100, 60, 82),
+    ]
+    adjustment_rows = [
+        {
+            "adjustment_id": adjustment_id,
+            "label": label,
+            "income_statement_location": location,
+            "prior_pretax_impact_usd_millions": prior_pretax,
+            "current_pretax_impact_usd_millions": current_pretax,
+            "prior_after_tax_impact_usd_millions": prior_after_tax,
+            "current_after_tax_impact_usd_millions": current_after_tax,
+            "source_ids": ["filing"],
+            "methodology": "Reconcile the disclosed GAAP impact to the normalized earnings bridge.",
+        }
+        for (
+            adjustment_id,
+            label,
+            location,
+            prior_pretax,
+            current_pretax,
+            prior_after_tax,
+            current_after_tax,
+        ) in adjustments
+    ]
+
+    def bridge(period):
+        current = period == "current"
+        core_operating_income = 9000 if current else 8000
+        recurring_non_operating = -100
+        tax_rate = 18 if current else 20
+        shares = 800 if current else 840
+        prefix = "current" if current else "prior"
+        core_pretax = core_operating_income + recurring_non_operating
+        core_net_income = core_pretax * (1 - tax_rate / 100)
+        operating_adjustments = sum(
+            row[f"{prefix}_pretax_impact_usd_millions"]
+            for row in adjustment_rows
+            if row["income_statement_location"] == "operating"
+        )
+        pretax_adjustments = sum(
+            row[f"{prefix}_pretax_impact_usd_millions"]
+            for row in adjustment_rows
+            if row["income_statement_location"] in {"operating", "non_operating"}
+        )
+        after_tax_adjustments = sum(
+            row[f"{prefix}_after_tax_impact_usd_millions"]
+            for row in adjustment_rows
+        )
+        gaap_net_income = core_net_income + after_tax_adjustments
+        return {
+            "core_operating_income_usd_millions": core_operating_income,
+            "reported_gaap_operating_income_usd_millions": core_operating_income
+            + operating_adjustments,
+            "recurring_non_operating_income_usd_millions": recurring_non_operating,
+            "normalized_tax_rate_percent": tax_rate,
+            "reported_gaap_pretax_income_usd_millions": core_pretax
+            + pretax_adjustments,
+            "reported_gaap_net_income_usd_millions": gaap_net_income,
+            "reported_gaap_eps_usd": gaap_net_income / shares,
+            "reported_non_gaap_net_income_usd_millions": core_net_income,
+            "reported_non_gaap_eps_usd": core_net_income / shares,
+            "diluted_shares_millions": shares,
+            "buyback_attributable_weighted_average_share_reduction_millions": (
+                18 if current else 0
+            ),
+        }
+
+    return {
+        "periods": {"prior_period": "FY2026", "current_period": "FY2027"},
+        "balance_sheet": {
+            "prior": {"revenue_usd_millions": 30000, "accounts_receivable_usd_millions": 4000, "inventory_usd_millions": 3000, "contract_liabilities_usd_millions": 2000, "deferred_revenue_usd_millions": 1000},
+            "current": {"revenue_usd_millions": 36000, "accounts_receivable_usd_millions": 5200, "inventory_usd_millions": 3900, "contract_liabilities_usd_millions": 2600, "deferred_revenue_usd_millions": 1250},
+            "source_ids": ["filing"],
+            "methodology": "Compare reported period-end balances with the corresponding annual revenue periods.",
+        },
+        "cash_conversion": {
+            "prior": {"operating_cash_flow_usd_millions": 6500, "total_assets_usd_millions": 40000, "working_capital_contribution_usd_millions": -300},
+            "current": {"operating_cash_flow_usd_millions": 7200, "total_assets_usd_millions": 45000, "working_capital_contribution_usd_millions": -600},
+            "source_ids": ["filing"],
+            "methodology": "Use reported operating cash flow and signed working-capital cash contribution.",
+        },
+        "capital_investment": {
+            "prior": {"depreciation_amortization_usd_millions": 1300, "capex_usd_millions": 1800},
+            "current": {"depreciation_amortization_usd_millions": 1500, "capex_usd_millions": 2200},
+            "source_ids": ["filing"],
+            "methodology": "Compare reported depreciation and amortization with cash capital expenditures.",
+        },
+        "earnings_bridge": {
+            "prior": bridge("prior"),
+            "current": bridge("current"),
+            "source_ids": ["filing"],
+            "methodology": "Reconcile core operating profit, recurring below-line items, tax, adjustments, and diluted shares to EPS.",
+        },
+        "adjustments": adjustment_rows,
+        "methodology": "Analyze earnings quality independently from valuation and reconcile every reported and adjusted figure.",
+        "source_ids": ["filing"],
+    }
+
+
 class VariantPerceptionTest(unittest.TestCase):
     def setUp(self):
         self.as_of = "2026-08-20"
@@ -170,6 +275,7 @@ class VariantPerceptionTest(unittest.TestCase):
                     "rationale": "Shock the AI-exposed demand pools while holding share, mix, timing, and cost assumptions constant.",
                 }],
             },
+            "earnings_quality": earnings_quality_payload(),
             "valuation": {
                 "framework": "Scenario EPS multiplied by normalized forward P/E with a cross-check to DCF.",
                 "cases": [
@@ -267,7 +373,7 @@ class VariantPerceptionTest(unittest.TestCase):
         )
         memo = render_focused_research_memo(dossier)
         headings = [memo.index(f"## {index}. {name}") for index, name in enumerate([
-            "Investment Thesis", "Variant View", "Earnings Model", "Valuation",
+            "Investment Thesis", "Variant View", "Earnings Model", "Earnings Quality", "Valuation",
             "Catalyst Path", "Risk / Disconfirming Evidence", "Position Construction",
             "Score Summary",
         ], start=1)]
@@ -276,6 +382,8 @@ class VariantPerceptionTest(unittest.TestCase):
         self.assertIn("Base-case revenue drivers", memo)
         self.assertIn("Maintenance CAPEX", memo)
         self.assertIn("AI-related CAPEX +10%", memo)
+        self.assertIn("GAAP to non-GAAP reconciliation", memo)
+        self.assertIn("EPS growth attribution", memo)
 
     def test_driver_model_calculates_eps_cash_flow_roic_and_ai_capex_sensitivity(self):
         dossier = build_focused_research_dossier(
@@ -338,6 +446,103 @@ class VariantPerceptionTest(unittest.TestCase):
                 dossier, as_of_date=self.as_of, maximum_age_days=14
             )
 
+    def test_earnings_quality_reconciles_growth_cash_adjustments_and_buybacks(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        quality = dossier["research_sections"]["earnings_quality"]
+        growth = quality["balance_sheet_growth"]
+        self.assertAlmostEqual(growth["revenue_growth_percent"], 20.0)
+        self.assertAlmostEqual(
+            growth["accounts_receivable"][
+                "minus_revenue_growth_percentage_points"
+            ],
+            10.0,
+        )
+        self.assertAlmostEqual(
+            growth["inventory"]["minus_revenue_growth_percentage_points"],
+            10.0,
+        )
+        self.assertEqual(len(quality["adjustments"]), 5)
+        self.assertEqual(
+            {item["adjustment_id"] for item in quality["adjustments"]},
+            {
+                "stock_based_compensation",
+                "restructuring",
+                "acquisition_adjustment",
+                "tax_benefit",
+                "one_off_gain",
+            },
+        )
+        self.assertAlmostEqual(
+            quality["accruals_and_cash_conversion"][
+                "working_capital_contribution_usd_millions"
+            ],
+            -600,
+        )
+        self.assertLess(
+            quality["capital_intensity"][
+                "current_depreciation_to_capex_percent"
+            ],
+            100,
+        )
+        self.assertEqual(quality["eps_growth_attribution"]["state"], "reconciled")
+        self.assertAlmostEqual(
+            quality["eps_growth_attribution"][
+                "reconciled_total_percentage_points"
+            ],
+            quality["eps_growth_attribution"]["reported_eps_growth_percent"],
+        )
+        self.assertGreater(
+            quality["eps_growth_attribution"][
+                "share_repurchase_contribution_percentage_points"
+            ],
+            0,
+        )
+
+    def test_rejects_unreconciled_gaap_non_gaap_bridge(self):
+        invalid = copy.deepcopy(self.payload)
+        invalid["earnings_quality"]["earnings_bridge"]["current"][
+            "reported_gaap_net_income_usd_millions"
+        ] += 1
+        with self.assertRaisesRegex(ValueError, "does not reconcile"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
+    def test_rejects_each_missing_required_earnings_quality_adjustment(self):
+        for adjustment_id in (
+            "stock_based_compensation",
+            "restructuring",
+            "acquisition_adjustment",
+            "tax_benefit",
+            "one_off_gain",
+        ):
+            invalid = copy.deepcopy(self.payload)
+            invalid["earnings_quality"]["adjustments"] = [
+                item
+                for item in invalid["earnings_quality"]["adjustments"]
+                if item["adjustment_id"] != adjustment_id
+            ]
+            with self.subTest(adjustment_id=adjustment_id), self.assertRaisesRegex(
+                ValueError, "adjustments are incomplete"
+            ):
+                build_focused_research_dossier(
+                    invalid, policy=self.policy, code_revision="a" * 40
+                )
+
+    def test_validator_recalculates_earnings_quality_outputs(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        dossier["research_sections"]["earnings_quality"][
+            "accruals_and_cash_conversion"
+        ]["cash_conversion_percent"] += 1
+        with self.assertRaisesRegex(ValueError, "earnings quality.*does not reconcile"):
+            validate_focused_research_dossier(
+                dossier, as_of_date=self.as_of, maximum_age_days=14
+            )
+
     def test_conviction_score_does_not_change_decision_or_position(self):
         low = copy.deepcopy(self.payload)
         high = copy.deepcopy(self.payload)
@@ -354,6 +559,7 @@ class VariantPerceptionTest(unittest.TestCase):
             "investment_thesis",
             "variant_view",
             "earnings_model",
+            "earnings_quality",
             "valuation",
             "catalyst_path",
             "risk_disconfirming_evidence",

@@ -12,6 +12,88 @@ from toss_trading.research.variant_perception import (
 )
 
 
+def earnings_quality_payload():
+    adjustments = [
+        ("stock_based_compensation", "Stock-based compensation", "operating", -500, -600, -400, -492),
+        ("restructuring", "Restructuring", "operating", -100, -80, -80, -65.6),
+        ("acquisition_adjustment", "Acquisition adjustment", "operating", -50, -70, -40, -57.4),
+        ("tax_benefit", "Tax benefit", "tax", 0, 0, 100, 120),
+        ("one_off_gain", "One-off gain", "non_operating", 75, 100, 60, 82),
+    ]
+    adjustment_rows = [
+        {
+            "adjustment_id": adjustment_id,
+            "label": label,
+            "income_statement_location": location,
+            "prior_pretax_impact_usd_millions": prior_pretax,
+            "current_pretax_impact_usd_millions": current_pretax,
+            "prior_after_tax_impact_usd_millions": prior_after_tax,
+            "current_after_tax_impact_usd_millions": current_after_tax,
+            "source_ids": ["filing"],
+            "methodology": "Reconcile the disclosed GAAP impact to the normalized earnings bridge.",
+        }
+        for adjustment_id, label, location, prior_pretax, current_pretax, prior_after_tax, current_after_tax in adjustments
+    ]
+
+    def bridge(period):
+        current = period == "current"
+        core_operating_income = 9000 if current else 8000
+        recurring_non_operating = -100
+        tax_rate = 18 if current else 20
+        shares = 800 if current else 840
+        prefix = "current" if current else "prior"
+        core_pretax = core_operating_income + recurring_non_operating
+        core_net_income = core_pretax * (1 - tax_rate / 100)
+        operating_adjustments = sum(row[f"{prefix}_pretax_impact_usd_millions"] for row in adjustment_rows if row["income_statement_location"] == "operating")
+        pretax_adjustments = sum(row[f"{prefix}_pretax_impact_usd_millions"] for row in adjustment_rows if row["income_statement_location"] in {"operating", "non_operating"})
+        after_tax_adjustments = sum(row[f"{prefix}_after_tax_impact_usd_millions"] for row in adjustment_rows)
+        gaap_net_income = core_net_income + after_tax_adjustments
+        return {
+            "core_operating_income_usd_millions": core_operating_income,
+            "reported_gaap_operating_income_usd_millions": core_operating_income + operating_adjustments,
+            "recurring_non_operating_income_usd_millions": recurring_non_operating,
+            "normalized_tax_rate_percent": tax_rate,
+            "reported_gaap_pretax_income_usd_millions": core_pretax + pretax_adjustments,
+            "reported_gaap_net_income_usd_millions": gaap_net_income,
+            "reported_gaap_eps_usd": gaap_net_income / shares,
+            "reported_non_gaap_net_income_usd_millions": core_net_income,
+            "reported_non_gaap_eps_usd": core_net_income / shares,
+            "diluted_shares_millions": shares,
+            "buyback_attributable_weighted_average_share_reduction_millions": 18 if current else 0,
+        }
+
+    return {
+        "periods": {"prior_period": "FY2026", "current_period": "FY2027"},
+        "balance_sheet": {
+            "prior": {"revenue_usd_millions": 30000, "accounts_receivable_usd_millions": 4000, "inventory_usd_millions": 3000, "contract_liabilities_usd_millions": 2000, "deferred_revenue_usd_millions": 1000},
+            "current": {"revenue_usd_millions": 36000, "accounts_receivable_usd_millions": 5200, "inventory_usd_millions": 3900, "contract_liabilities_usd_millions": 2600, "deferred_revenue_usd_millions": 1250},
+            "source_ids": ["filing"],
+            "methodology": "Compare reported period-end balances with the corresponding annual revenue periods.",
+        },
+        "cash_conversion": {
+            "prior": {"operating_cash_flow_usd_millions": 6500, "total_assets_usd_millions": 40000, "working_capital_contribution_usd_millions": -300},
+            "current": {"operating_cash_flow_usd_millions": 7200, "total_assets_usd_millions": 45000, "working_capital_contribution_usd_millions": -600},
+            "source_ids": ["filing"],
+            "methodology": "Use reported operating cash flow and signed working-capital cash contribution.",
+        },
+        "capital_investment": {
+            "prior": {"depreciation_amortization_usd_millions": 1300, "capex_usd_millions": 1800},
+            "current": {"depreciation_amortization_usd_millions": 1500, "capex_usd_millions": 2200},
+            "source_ids": ["filing"],
+            "methodology": "Compare reported depreciation and amortization with cash capital expenditures.",
+        },
+        "earnings_bridge": {
+            "prior": bridge("prior"),
+            "current": bridge("current"),
+            "source_ids": ["filing"],
+            "methodology": "Reconcile core operating profit, recurring below-line items, tax, adjustments, and diluted shares to EPS.",
+        },
+        "adjustments": adjustment_rows,
+        "methodology": "Analyze earnings quality independently from valuation and reconcile every reported and adjusted figure.",
+        "source_ids": ["filing"],
+    }
+
+
 def trading_dates(count: int) -> list[str]:
     current = date(2025, 8, 18)
     result = []
@@ -186,6 +268,7 @@ class StockRecommendationTest(unittest.TestCase):
                 "source_ids": ["filing", "industry"],
                 "rationale": "Measure the EPS and FCF flow-through from the growth demand driver.",
             }]},
+            "earnings_quality": earnings_quality_payload(),
             "valuation": {"framework": "Scenario EPS and normalized P/E cross-checked against cash flow.", "cases": [
                 {"name": "bear", "probability": 0.2, "price_target": 26.0, "method": "pe", "equation": "Bear EPS times 13x.", "assumptions": ["Multiple contracts.", "No mix premium."], "source_ids": ["px", "consensus"]},
                 {"name": "base", "probability": 0.5, "price_target": 42.0, "method": "pe", "equation": "Base EPS times 13.1x.", "assumptions": ["Normal multiple.", "Partial mix premium."], "source_ids": ["px", "consensus"]},
@@ -214,7 +297,7 @@ class StockRecommendationTest(unittest.TestCase):
             source_manifest_ids=["manifest-1"],
         )
         self.assertEqual(result["universe"]["ranked_count"], 4)
-        self.assertEqual(result["schema_version"], "stock-recommendation-run-v4")
+        self.assertEqual(result["schema_version"], "stock-recommendation-run-v5")
         self.assertEqual(len(result["screening_candidates"]), 2)
         self.assertEqual(result["screening_candidates"][0]["symbol"], "AAA")
         self.assertEqual(result["recommendations"], [])
@@ -256,6 +339,9 @@ class StockRecommendationTest(unittest.TestCase):
         self.assertGreater(
             earnings["sensitivity_cases"][0]["results"]["eps_change_percent"], 0
         )
+        quality = result["recommendations"][0]["earnings_quality"]
+        self.assertEqual(quality["eps_growth_attribution"]["state"], "reconciled")
+        self.assertEqual(len(quality["adjustments"]), 5)
         self.assertEqual(list(result["recommendations"][0])[-1], "score_summary")
 
     def test_stale_dossier_returns_to_research_queue_instead_of_failing_run(self):
@@ -295,6 +381,32 @@ class StockRecommendationTest(unittest.TestCase):
         )
         self.assertEqual(
             result["recommendation_gate"]["driver_model_upgrade_required_count"], 1
+        )
+        self.assertEqual(result["recommendations"], [])
+
+    def test_v3_dossier_requires_earnings_quality_upgrade_without_failing_run(self):
+        as_of, rows = self.rows()
+        legacy = copy.deepcopy(self.focused_dossier(as_of))
+        legacy["schema_version"] = "focused-research-dossier-v3"
+        result = generate_stock_recommendations(
+            rows,
+            policy=self.policy,
+            as_of_date=as_of,
+            code_revision="a" * 40,
+            focused_research_dossiers=[legacy],
+        )
+        aaa = next(
+            item for item in result["screening_candidates"] if item["symbol"] == "AAA"
+        )
+        self.assertEqual(
+            aaa["focused_research_state"],
+            "focused_research_earnings_quality_required",
+        )
+        self.assertEqual(
+            result["recommendation_gate"][
+                "earnings_quality_upgrade_required_count"
+            ],
+            1,
         )
         self.assertEqual(result["recommendations"], [])
 

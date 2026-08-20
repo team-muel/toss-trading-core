@@ -1,5 +1,5 @@
 {
-  "schema_version": "focused-research-policy-v3",
+  "schema_version": "focused-research-policy-v4",
   "minimum_variant_chains": 3,
   "minimum_distinct_source_organizations": 3,
   "maximum_source_age_days": 120,
@@ -52,6 +52,13 @@
     "ev_ebitda",
     "sum_of_parts"
   ],
+  "required_earnings_quality_adjustment_ids": [
+    "stock_based_compensation",
+    "restructuring",
+    "acquisition_adjustment",
+    "tax_benefit",
+    "one_off_gain"
+  ],
   "minimum_thesis_pillars": 2,
   "minimum_risks": 2,
   "minimum_contrary_evidence": 1,
@@ -70,6 +77,9 @@
   "require_driver_based_earnings_model": true,
   "require_cash_flow_bridge": true,
   "require_incremental_roic": true,
+  "require_earnings_quality_analysis": true,
+  "require_eps_growth_attribution": true,
+  "require_gaap_non_gaap_reconciliation": true,
   "buy_requires_positive_expected_return": true,
   "score_may_gate_recommendation": false,
   "score_may_size_position": false,

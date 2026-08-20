@@ -186,8 +186,11 @@ ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙
 종목만 연구상 `buy` 추천이 될 수 있습니다. 공급자 credential과 이용약관 gate가
 완료되기 전에는 비활성이며 어떤 결과도 주문 권한을 갖지 않습니다.
 
-집중연구 결과는 Investment Thesis → Variant View → Earnings Model → Valuation →
+집중연구 결과는 Investment Thesis → Variant View → Earnings Model → Earnings Quality → Valuation →
 Catalyst Path → Risk/Disconfirming Evidence → Position Construction 순서로 기록합니다.
 Investment Conviction 점수는 추천이나 비중 산정에 사용하지 않고 마지막 요약에만
 표시합니다. Earnings Model의 매출·EPS·OCF·FCF·증분 ROIC는 segment driver에서
 계산하며, 경제 driver 충격이 EPS에 미치는 영향도 같은 모델로 재계산합니다.
+Earnings Quality는 매출채권·재고·계약부채·이연매출, accruals·현금전환·운전자본,
+SBC·구조조정·인수조정·세제효과·일회성 이익, GAAP/non-GAAP, D&A/CAPEX와 자사주 EPS
+기여도를 별도 bridge로 검증합니다.
