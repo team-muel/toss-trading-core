@@ -215,11 +215,20 @@ class VariantPerceptionTest(unittest.TestCase):
                     "methodology": "Net income bridged to OCF, with maintenance and growth CAPEX separated.",
                 },
                 "capital_efficiency": {
+                    "prior_period": "FY2027",
+                    "measurement_period_months": 12,
+                    "prior_period_revenue_usd_millions": 33000,
                     "prior_period_operating_income_usd_millions": 8000,
                     "prior_period_invested_capital_usd_millions": 20000,
-                    "ending_invested_capital_usd_millions": 25000 + growth_capex,
+                    "ending_invested_capital_usd_millions": (
+                        20000 + 900 + growth_capex - 1500 + 500 * scale
+                    ),
+                    "hurdle_rate_percent": 10.0,
+                    "acquisition_investment_usd_millions": 0,
+                    "other_invested_capital_change_usd_millions": 0,
+                    "investment_lag_months": 24,
                     "source_ids": ["filing"],
-                    "methodology": "Incremental after-tax operating profit divided by incremental invested capital.",
+                    "methodology": "Reconcile invested capital from CAPEX, depreciation, working capital, acquisitions, and other changes before comparing incremental NOPAT with the hurdle rate.",
                 },
                 "key_assumptions": [
                     "Market CAPEX, share, intensity, and timing are modeled separately.",
@@ -381,6 +390,9 @@ class VariantPerceptionTest(unittest.TestCase):
         self.assertGreater(memo.index("Investment Conviction"), memo.index("Position Construction"))
         self.assertIn("Base-case revenue drivers", memo)
         self.assertIn("Maintenance CAPEX", memo)
+        self.assertIn("Incremental economics", memo)
+        self.assertIn("invested-capital bridge", memo)
+        self.assertIn("Growth CAPEX productivity", memo)
         self.assertIn("AI-related CAPEX +10%", memo)
         self.assertIn("GAAP to non-GAAP reconciliation", memo)
         self.assertIn("EPS growth attribution", memo)
@@ -411,6 +423,34 @@ class VariantPerceptionTest(unittest.TestCase):
             base["free_cash_flow_usd_millions"],
             base["operating_cash_flow_usd_millions"] - base["capex_usd_millions"],
         )
+        economics = base["incremental_economics"]
+        bridge = economics["invested_capital_bridge"]
+        self.assertAlmostEqual(
+            bridge["reported_ending_invested_capital_usd_millions"],
+            bridge["beginning_invested_capital_usd_millions"]
+            + bridge["maintenance_capex_usd_millions"]
+            + bridge["growth_capex_usd_millions"]
+            - bridge["less_depreciation_amortization_usd_millions"]
+            + bridge["net_working_capital_investment_usd_millions"]
+            + bridge["acquisition_investment_usd_millions"]
+            + bridge["other_invested_capital_change_usd_millions"],
+        )
+        self.assertAlmostEqual(
+            economics["incremental_roic_percent"],
+            economics["incremental_nopat_usd_millions"]
+            / economics["incremental_invested_capital_usd_millions"]
+            * 100,
+        )
+        self.assertAlmostEqual(
+            economics["incremental_economic_profit_usd_millions"],
+            economics["incremental_nopat_usd_millions"]
+            - economics["incremental_invested_capital_usd_millions"]
+            * economics["hurdle_rate_percent"]
+            / 100,
+        )
+        self.assertEqual(economics["state"], "value_creating_above_hurdle")
+        self.assertGreater(economics["growth_capex_revenue_multiple"], 0)
+        self.assertGreater(economics["growth_capex_operating_income_multiple"], 0)
         sensitivity = earnings["sensitivity_cases"][0]
         self.assertEqual(sensitivity["label"], "AI-related CAPEX +10%")
         self.assertGreater(sensitivity["results"]["revenue_change_percent"], 0)
@@ -434,6 +474,16 @@ class VariantPerceptionTest(unittest.TestCase):
                 no_cash_flow, policy=self.policy, code_revision="a" * 40
             )
 
+    def test_rejects_unreconciled_invested_capital_bridge(self):
+        invalid = copy.deepcopy(self.payload)
+        invalid["earnings_model"]["scenarios"][1]["capital_efficiency"][
+            "ending_invested_capital_usd_millions"
+        ] += 1
+        with self.assertRaisesRegex(ValueError, "invested capital bridge"):
+            build_focused_research_dossier(
+                invalid, policy=self.policy, code_revision="a" * 40
+            )
+
     def test_validator_recalculates_driver_outputs_instead_of_trusting_them(self):
         dossier = build_focused_research_dossier(
             self.payload, policy=self.policy, code_revision="a" * 40
@@ -441,6 +491,18 @@ class VariantPerceptionTest(unittest.TestCase):
         dossier["research_sections"]["earnings_model"]["scenarios"][1][
             "revenue_drivers"
         ][0]["revenue_usd_millions"] += 1
+        with self.assertRaisesRegex(ValueError, "does not reconcile"):
+            validate_focused_research_dossier(
+                dossier, as_of_date=self.as_of, maximum_age_days=14
+            )
+
+    def test_validator_recalculates_incremental_economics_outputs(self):
+        dossier = build_focused_research_dossier(
+            self.payload, policy=self.policy, code_revision="a" * 40
+        )
+        dossier["research_sections"]["earnings_model"]["scenarios"][1][
+            "incremental_economics"
+        ]["incremental_economic_profit_usd_millions"] += 1
         with self.assertRaisesRegex(ValueError, "does not reconcile"):
             validate_focused_research_dossier(
                 dossier, as_of_date=self.as_of, maximum_age_days=14

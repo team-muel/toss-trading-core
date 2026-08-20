@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-POLICY_SCHEMA = "focused-research-policy-v4"
-DOSSIER_SCHEMA = "focused-research-dossier-v4"
+POLICY_SCHEMA = "focused-research-policy-v5"
+DOSSIER_SCHEMA = "focused-research-dossier-v5"
 RESEARCH_SECTION_ORDER = [
     "investment_thesis",
     "variant_view",
@@ -119,6 +119,8 @@ def load_focused_research_policy(path: str | Path) -> dict[str, Any]:
         "require_driver_based_earnings_model",
         "require_cash_flow_bridge",
         "require_incremental_roic",
+        "require_incremental_economics_bridge",
+        "require_incremental_roic_hurdle_rate",
         "require_earnings_quality_analysis",
         "require_eps_growth_attribution",
         "require_gaap_non_gaap_reconciliation",
@@ -289,7 +291,7 @@ def _percentage(
     return result
 
 
-def _calculate_driver_scenario(model: dict[str, Any]) -> dict[str, float]:
+def _calculate_driver_scenario(model: dict[str, Any]) -> dict[str, float | None]:
     revenue = sum(item["revenue_usd_millions"] for item in model["revenue_drivers"])
     gross_profit = sum(
         item["gross_profit_usd_millions"] for item in model["revenue_drivers"]
@@ -323,14 +325,48 @@ def _calculate_driver_scenario(model: dict[str, Any]) -> dict[str, float]:
     )
     free_cash_flow = operating_cash_flow - capex
     capital = model["capital_efficiency"]
+    prior_revenue = capital["prior_period_revenue_usd_millions"]
+    incremental_revenue = revenue - prior_revenue
+    incremental_operating_income = (
+        operating_income - capital["prior_period_operating_income_usd_millions"]
+    )
     incremental_invested_capital = (
         capital["ending_invested_capital_usd_millions"]
         - capital["prior_period_invested_capital_usd_millions"]
     )
-    incremental_nopat = (
-        operating_income - capital["prior_period_operating_income_usd_millions"]
-    ) * (1 - below_line["tax_rate_percent"] / 100)
+    normalized_after_tax_factor = 1 - below_line["tax_rate_percent"] / 100
+    current_nopat = operating_income * normalized_after_tax_factor
+    incremental_nopat = incremental_operating_income * normalized_after_tax_factor
     incremental_roic = incremental_nopat / incremental_invested_capital * 100
+    hurdle_rate = capital["hurdle_rate_percent"]
+    value_creation_spread = incremental_roic - hurdle_rate
+    incremental_economic_profit = incremental_nopat - (
+        incremental_invested_capital * hurdle_rate / 100
+    )
+
+    def ratio(numerator: float, denominator: float) -> float | None:
+        return (
+            numerator / denominator
+            if not math.isclose(denominator, 0.0, abs_tol=1e-12)
+            else None
+        )
+
+    incremental_operating_margin = ratio(
+        incremental_operating_income, incremental_revenue
+    )
+    incremental_capital_turnover = ratio(
+        incremental_revenue, incremental_invested_capital
+    )
+    growth_capex = cash["growth_capex_usd_millions"]
+    growth_capex_revenue_multiple = ratio(incremental_revenue, growth_capex)
+    growth_capex_operating_income_multiple = ratio(
+        incremental_operating_income, growth_capex
+    )
+    growth_capex_nopat_multiple = ratio(incremental_nopat, growth_capex)
+    growth_capex_payback_years = (
+        growth_capex / incremental_nopat if incremental_nopat > 0 else None
+    )
+    reinvestment_rate = ratio(incremental_invested_capital, current_nopat)
     return {
         "revenue_usd_millions": revenue,
         "gross_profit_usd_millions": gross_profit,
@@ -346,9 +382,30 @@ def _calculate_driver_scenario(model: dict[str, Any]) -> dict[str, float]:
         "operating_cash_flow_usd_millions": operating_cash_flow,
         "capex_usd_millions": capex,
         "free_cash_flow_usd_millions": free_cash_flow,
+        "incremental_revenue_usd_millions": incremental_revenue,
+        "incremental_operating_income_usd_millions": incremental_operating_income,
+        "current_nopat_usd_millions": current_nopat,
         "incremental_nopat_usd_millions": incremental_nopat,
         "incremental_invested_capital_usd_millions": incremental_invested_capital,
         "incremental_roic_percent": incremental_roic,
+        "hurdle_rate_percent": hurdle_rate,
+        "value_creation_spread_basis_points": value_creation_spread * 100,
+        "incremental_economic_profit_usd_millions": incremental_economic_profit,
+        "incremental_operating_margin_percent": (
+            incremental_operating_margin * 100
+            if incremental_operating_margin is not None
+            else None
+        ),
+        "incremental_capital_turnover_ratio": incremental_capital_turnover,
+        "growth_capex_revenue_multiple": growth_capex_revenue_multiple,
+        "growth_capex_operating_income_multiple": (
+            growth_capex_operating_income_multiple
+        ),
+        "growth_capex_nopat_multiple": growth_capex_nopat_multiple,
+        "growth_capex_payback_years": growth_capex_payback_years,
+        "reinvestment_rate_percent": (
+            reinvestment_rate * 100 if reinvestment_rate is not None else None
+        ),
     }
 
 
@@ -530,16 +587,63 @@ def _driver_scenario(
     capital_efficiency = {
         field: _finite_number(capital_raw.get(field), field=f"{name}.{field}")
         for field in (
+            "prior_period_revenue_usd_millions",
             "prior_period_operating_income_usd_millions",
             "prior_period_invested_capital_usd_millions",
             "ending_invested_capital_usd_millions",
+            "hurdle_rate_percent",
+            "acquisition_investment_usd_millions",
+            "other_invested_capital_change_usd_millions",
         )
     }
+    capital_efficiency["prior_period"] = _bounded_text(
+        capital_raw.get("prior_period"),
+        field=f"{name}.capital_efficiency.prior_period",
+        maximum=40,
+    )
+    measurement_period_months = capital_raw.get("measurement_period_months")
+    if (
+        isinstance(measurement_period_months, bool)
+        or not isinstance(measurement_period_months, int)
+        or not 1 <= measurement_period_months <= 60
+    ):
+        raise ValueError(f"{name}.measurement_period_months is invalid")
+    capital_efficiency["measurement_period_months"] = measurement_period_months
+    investment_lag_months = capital_raw.get("investment_lag_months")
+    if (
+        isinstance(investment_lag_months, bool)
+        or not isinstance(investment_lag_months, int)
+        or not 0 <= investment_lag_months <= 120
+    ):
+        raise ValueError(f"{name}.investment_lag_months is invalid")
+    capital_efficiency["investment_lag_months"] = investment_lag_months
+    if capital_efficiency["prior_period_revenue_usd_millions"] <= 0:
+        raise ValueError(f"{name} prior-period revenue must be positive")
+    if not 0 < capital_efficiency["hurdle_rate_percent"] <= 50:
+        raise ValueError(f"{name} hurdle rate is invalid")
+    if capital_efficiency["acquisition_investment_usd_millions"] < 0:
+        raise ValueError(f"{name} acquisition investment cannot be negative")
     if capital_efficiency["prior_period_invested_capital_usd_millions"] <= 0 or (
         capital_efficiency["ending_invested_capital_usd_millions"]
         <= capital_efficiency["prior_period_invested_capital_usd_millions"]
     ):
         raise ValueError(f"{name} requires positive incremental invested capital")
+    calculated_ending_invested_capital = (
+        capital_efficiency["prior_period_invested_capital_usd_millions"]
+        + cash_flow["maintenance_capex_usd_millions"]
+        + cash_flow["growth_capex_usd_millions"]
+        - cash_flow["depreciation_amortization_usd_millions"]
+        + cash_flow["change_in_net_working_capital_usd_millions"]
+        + capital_efficiency["acquisition_investment_usd_millions"]
+        + capital_efficiency["other_invested_capital_change_usd_millions"]
+    )
+    if not math.isclose(
+        capital_efficiency["ending_invested_capital_usd_millions"],
+        calculated_ending_invested_capital,
+        rel_tol=1e-9,
+        abs_tol=1e-8,
+    ):
+        raise ValueError(f"{name} invested capital bridge does not reconcile")
     capital_efficiency.update(
         {"source_ids": capital_sources, "methodology": capital_method}
     )
@@ -553,6 +657,43 @@ def _driver_scenario(
     calculated = _calculate_driver_scenario(model)
     if calculated["revenue_usd_millions"] <= 0 or calculated["eps_usd"] <= 0:
         raise ValueError(f"{name} calculated revenue and EPS must be positive")
+    if calculated["incremental_nopat_usd_millions"] <= 0:
+        investment_state = "negative_incremental_nopat"
+    elif calculated["value_creation_spread_basis_points"] > 0:
+        investment_state = "value_creating_above_hurdle"
+    else:
+        investment_state = "positive_but_below_hurdle"
+    invested_capital_bridge = {
+        "beginning_invested_capital_usd_millions": capital_efficiency[
+            "prior_period_invested_capital_usd_millions"
+        ],
+        "maintenance_capex_usd_millions": cash_flow[
+            "maintenance_capex_usd_millions"
+        ],
+        "growth_capex_usd_millions": cash_flow["growth_capex_usd_millions"],
+        "less_depreciation_amortization_usd_millions": cash_flow[
+            "depreciation_amortization_usd_millions"
+        ],
+        "net_working_capital_investment_usd_millions": cash_flow[
+            "change_in_net_working_capital_usd_millions"
+        ],
+        "acquisition_investment_usd_millions": capital_efficiency[
+            "acquisition_investment_usd_millions"
+        ],
+        "other_invested_capital_change_usd_millions": capital_efficiency[
+            "other_invested_capital_change_usd_millions"
+        ],
+        "calculated_ending_invested_capital_usd_millions": (
+            calculated_ending_invested_capital
+        ),
+        "reported_ending_invested_capital_usd_millions": capital_efficiency[
+            "ending_invested_capital_usd_millions"
+        ],
+        "reconciliation_difference_usd_millions": (
+            capital_efficiency["ending_invested_capital_usd_millions"]
+            - calculated_ending_invested_capital
+        ),
+    }
     return {
         "name": name,
         "probability": probability,
@@ -584,10 +725,50 @@ def _driver_scenario(
         "incremental_returns": {
             key: calculated[key]
             for key in (
+                "incremental_revenue_usd_millions",
+                "incremental_operating_income_usd_millions",
+                "current_nopat_usd_millions",
                 "incremental_nopat_usd_millions",
                 "incremental_invested_capital_usd_millions",
                 "incremental_roic_percent",
+                "hurdle_rate_percent",
+                "value_creation_spread_basis_points",
+                "incremental_economic_profit_usd_millions",
+                "incremental_operating_margin_percent",
+                "incremental_capital_turnover_ratio",
+                "growth_capex_revenue_multiple",
+                "growth_capex_operating_income_multiple",
+                "growth_capex_nopat_multiple",
+                "growth_capex_payback_years",
+                "reinvestment_rate_percent",
             )
+        },
+        "incremental_economics": {
+            "state": investment_state,
+            "prior_period": capital_efficiency["prior_period"],
+            "measurement_period_months": measurement_period_months,
+            "investment_lag_months": investment_lag_months,
+            "invested_capital_bridge": invested_capital_bridge,
+            **{
+                key: calculated[key]
+                for key in (
+                    "incremental_revenue_usd_millions",
+                    "incremental_operating_income_usd_millions",
+                    "incremental_nopat_usd_millions",
+                    "incremental_invested_capital_usd_millions",
+                    "incremental_roic_percent",
+                    "hurdle_rate_percent",
+                    "value_creation_spread_basis_points",
+                    "incremental_economic_profit_usd_millions",
+                    "incremental_operating_margin_percent",
+                    "incremental_capital_turnover_ratio",
+                    "growth_capex_revenue_multiple",
+                    "growth_capex_operating_income_multiple",
+                    "growth_capex_nopat_multiple",
+                    "growth_capex_payback_years",
+                    "reinvestment_rate_percent",
+                )
+            },
         },
         **calculated,
         "key_assumptions": _text_list(
@@ -817,7 +998,10 @@ def _earnings_model(
             "eps": "(operating income − net interest expense + other non-operating income − tax) ÷ diluted shares",
             "operating_cash_flow": "net income + D&A + stock compensation − change in net working capital + other operating cash adjustments",
             "free_cash_flow": "operating cash flow − maintenance CAPEX − growth CAPEX",
-            "incremental_roic": "incremental NOPAT ÷ incremental invested capital",
+            "invested_capital_bridge": "beginning invested capital + maintenance CAPEX + growth CAPEX − D&A + net working capital investment + acquisitions + other invested-capital change = ending invested capital",
+            "incremental_roic": "(current operating income − prior operating income) × (1 − normalized tax rate) ÷ (ending invested capital − beginning invested capital)",
+            "incremental_economic_profit": "incremental NOPAT − incremental invested capital × hurdle rate",
+            "growth_capex_productivity": "incremental revenue or operating profit or NOPAT ÷ growth CAPEX",
         },
         "base_vs_consensus_percent": (base_eps / consensus_eps - 1) * 100,
         "base_vs_market_implied_percent": (base_eps / market_implied_eps - 1) * 100,
@@ -2041,6 +2225,17 @@ def validate_focused_research_dossier(
         if not math.isclose(value, expected, rel_tol=1e-9, abs_tol=1e-8):
             raise ValueError(f"focused research driver model {field} does not reconcile")
 
+    def require_optional_close(
+        actual: Any, expected: float | None, field: str
+    ) -> None:
+        if expected is None:
+            if actual is not None:
+                raise ValueError(
+                    f"focused research driver model {field} does not reconcile"
+                )
+            return
+        require_close(actual, expected, field)
+
     scenarios: dict[str, dict[str, Any]] = {}
     driver_sets: list[set[str]] = []
     income_statement_fields = (
@@ -2062,9 +2257,22 @@ def validate_focused_research_dossier(
         "free_cash_flow_usd_millions",
     )
     incremental_return_fields = (
+        "incremental_revenue_usd_millions",
+        "incremental_operating_income_usd_millions",
+        "current_nopat_usd_millions",
         "incremental_nopat_usd_millions",
         "incremental_invested_capital_usd_millions",
         "incremental_roic_percent",
+        "hurdle_rate_percent",
+        "value_creation_spread_basis_points",
+        "incremental_economic_profit_usd_millions",
+        "incremental_operating_margin_percent",
+        "incremental_capital_turnover_ratio",
+        "growth_capex_revenue_multiple",
+        "growth_capex_operating_income_multiple",
+        "growth_capex_nopat_multiple",
+        "growth_capex_payback_years",
+        "reinvestment_rate_percent",
     )
     for scenario in scenarios_raw:
         if not isinstance(scenario, dict) or scenario.get("name") not in {
@@ -2143,7 +2351,7 @@ def validate_focused_research_dossier(
             raise ValueError("focused research financial bridge is incomplete")
         calculated = _calculate_driver_scenario(model)
         for field, expected in calculated.items():
-            require_close(scenario.get(field), expected, f"{name}.{field}")
+            require_optional_close(scenario.get(field), expected, f"{name}.{field}")
         for section_name, fields in (
             ("income_statement", income_statement_fields),
             ("cash_flow_bridge", cash_flow_fields),
@@ -2153,9 +2361,98 @@ def validate_focused_research_dossier(
             if not isinstance(section, dict):
                 raise ValueError(f"focused research {section_name} is incomplete")
             for field in fields:
-                require_close(
+                require_optional_close(
                     section.get(field), calculated[field], f"{name}.{section_name}.{field}"
                 )
+        incremental_economics = scenario.get("incremental_economics")
+        if not isinstance(incremental_economics, dict):
+            raise ValueError("focused research incremental economics is incomplete")
+        for field in incremental_return_fields:
+            if field == "current_nopat_usd_millions":
+                continue
+            require_optional_close(
+                incremental_economics.get(field),
+                calculated[field],
+                f"{name}.incremental_economics.{field}",
+            )
+        expected_state = (
+            "negative_incremental_nopat"
+            if calculated["incremental_nopat_usd_millions"] <= 0
+            else (
+                "value_creating_above_hurdle"
+                if calculated["value_creation_spread_basis_points"] > 0
+                else "positive_but_below_hurdle"
+            )
+        )
+        if incremental_economics.get("state") != expected_state:
+            raise ValueError(
+                f"focused research driver model {name}.incremental_economics.state does not reconcile"
+            )
+        capital_efficiency = model["capital_efficiency"]
+        if incremental_economics.get("investment_lag_months") != capital_efficiency.get(
+            "investment_lag_months"
+        ):
+            raise ValueError(
+                f"focused research driver model {name}.investment_lag_months does not reconcile"
+            )
+        for field in ("prior_period", "measurement_period_months"):
+            if incremental_economics.get(field) != capital_efficiency.get(field):
+                raise ValueError(
+                    f"focused research driver model {name}.{field} does not reconcile"
+                )
+        cash_flow = model["cash_flow"]
+        calculated_ending = (
+            capital_efficiency["prior_period_invested_capital_usd_millions"]
+            + cash_flow["maintenance_capex_usd_millions"]
+            + cash_flow["growth_capex_usd_millions"]
+            - cash_flow["depreciation_amortization_usd_millions"]
+            + cash_flow["change_in_net_working_capital_usd_millions"]
+            + capital_efficiency["acquisition_investment_usd_millions"]
+            + capital_efficiency["other_invested_capital_change_usd_millions"]
+        )
+        require_close(
+            capital_efficiency["ending_invested_capital_usd_millions"],
+            calculated_ending,
+            f"{name}.invested_capital_bridge.ending_invested_capital",
+        )
+        expected_bridge = {
+            "beginning_invested_capital_usd_millions": capital_efficiency[
+                "prior_period_invested_capital_usd_millions"
+            ],
+            "maintenance_capex_usd_millions": cash_flow[
+                "maintenance_capex_usd_millions"
+            ],
+            "growth_capex_usd_millions": cash_flow["growth_capex_usd_millions"],
+            "less_depreciation_amortization_usd_millions": cash_flow[
+                "depreciation_amortization_usd_millions"
+            ],
+            "net_working_capital_investment_usd_millions": cash_flow[
+                "change_in_net_working_capital_usd_millions"
+            ],
+            "acquisition_investment_usd_millions": capital_efficiency[
+                "acquisition_investment_usd_millions"
+            ],
+            "other_invested_capital_change_usd_millions": capital_efficiency[
+                "other_invested_capital_change_usd_millions"
+            ],
+            "calculated_ending_invested_capital_usd_millions": calculated_ending,
+            "reported_ending_invested_capital_usd_millions": capital_efficiency[
+                "ending_invested_capital_usd_millions"
+            ],
+            "reconciliation_difference_usd_millions": (
+                capital_efficiency["ending_invested_capital_usd_millions"]
+                - calculated_ending
+            ),
+        }
+        bridge = incremental_economics.get("invested_capital_bridge")
+        if not isinstance(bridge, dict):
+            raise ValueError("focused research invested capital bridge is incomplete")
+        for field, expected in expected_bridge.items():
+            require_close(
+                bridge.get(field),
+                expected,
+                f"{name}.invested_capital_bridge.{field}",
+            )
         scenarios[name] = scenario
         driver_sets.append(ids)
     if set(scenarios) != {"bear", "base", "bull"} or not (
@@ -2369,6 +2666,8 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
     score = sections["score_summary"]
     earnings_cases = {item["name"]: item for item in earnings["scenarios"]}
     base_case = earnings_cases["base"]
+    base_economics = base_case["incremental_economics"]
+    base_capital_bridge = base_economics["invested_capital_bridge"]
     quality_growth = quality["balance_sheet_growth"]
     quality_cash = quality["accruals_and_cash_conversion"]
     quality_eps = quality["eps_growth_attribution"]
@@ -2381,6 +2680,12 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
 
     def formatted_points(value: float | None) -> str:
         return "not meaningful" if value is None else f"{value:+.1f} pp"
+
+    def formatted_multiple(value: float | None) -> str:
+        return "not meaningful" if value is None else f"{value:.2f}x"
+
+    def formatted_years(value: float | None) -> str:
+        return "not meaningful" if value is None else f"{value:.1f} years"
 
     lines = [
         f"# {dossier['symbol']} Focused Research",
@@ -2438,6 +2743,23 @@ def render_focused_research_memo(dossier: dict[str, Any]) -> str:
         "",
         f"Revenue ${base_case['revenue_usd_millions']:.1f}m → gross profit ${base_case['gross_profit_usd_millions']:.1f}m → operating expense ${base_case['operating_expense_usd_millions']:.1f}m → operating income ${base_case['operating_income_usd_millions']:.1f}m → tax ${base_case['tax_expense_usd_millions']:.1f}m → net income ${base_case['net_income_usd_millions']:.1f}m → EPS ${base_case['eps_usd']:.2f}",
         f"Net income ${base_case['net_income_usd_millions']:.1f}m → OCF ${base_case['operating_cash_flow_usd_millions']:.1f}m → maintenance CAPEX ${base_case['cash_flow']['maintenance_capex_usd_millions']:.1f}m + growth CAPEX ${base_case['cash_flow']['growth_capex_usd_millions']:.1f}m → FCF ${base_case['free_cash_flow_usd_millions']:.1f}m → incremental ROIC {base_case['incremental_roic_percent']:.1f}%",
+        "",
+        "### Incremental economics",
+        "",
+        f"Measurement: {base_economics['prior_period']} → {earnings['forecast_period']} over {base_economics['measurement_period_months']} months | stated investment-to-output lag {base_economics['investment_lag_months']} months. These are period economics; causal attribution requires the stated source methodology.",
+        "",
+        "| Case | Incremental revenue ($m) | Incremental operating income ($m) | Incremental NOPAT ($m) | Incremental invested capital ($m) | Incremental ROIC | Hurdle | Spread | Economic profit ($m) | State |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
+        *[
+            f"| {case['name']} | {case['incremental_revenue_usd_millions']:+.1f} | {case['incremental_operating_income_usd_millions']:+.1f} | {case['incremental_nopat_usd_millions']:+.1f} | {case['incremental_invested_capital_usd_millions']:+.1f} | {case['incremental_roic_percent']:.1f}% | {case['hurdle_rate_percent']:.1f}% | {case['value_creation_spread_basis_points']:+.0f} bps | {case['incremental_economic_profit_usd_millions']:+.1f} | {case['incremental_economics']['state']} |"
+            for case in earnings["scenarios"]
+        ],
+        "",
+        "### Base-case invested-capital bridge and CAPEX productivity",
+        "",
+        f"Beginning invested capital ${base_capital_bridge['beginning_invested_capital_usd_millions']:.1f}m + maintenance CAPEX ${base_capital_bridge['maintenance_capex_usd_millions']:.1f}m + growth CAPEX ${base_capital_bridge['growth_capex_usd_millions']:.1f}m − D&A ${base_capital_bridge['less_depreciation_amortization_usd_millions']:.1f}m + net working-capital investment ${base_capital_bridge['net_working_capital_investment_usd_millions']:+.1f}m + acquisitions ${base_capital_bridge['acquisition_investment_usd_millions']:.1f}m + other ${base_capital_bridge['other_invested_capital_change_usd_millions']:+.1f}m = ending invested capital ${base_capital_bridge['reported_ending_invested_capital_usd_millions']:.1f}m (reconciliation difference ${base_capital_bridge['reconciliation_difference_usd_millions']:+.1f}m)",
+        f"Growth CAPEX productivity: incremental revenue {formatted_multiple(base_economics['growth_capex_revenue_multiple'])} | incremental operating income {formatted_multiple(base_economics['growth_capex_operating_income_multiple'])} | incremental NOPAT {formatted_multiple(base_economics['growth_capex_nopat_multiple'])} | payback {formatted_years(base_economics['growth_capex_payback_years'])}",
+        f"Incremental operating margin {formatted_change(base_economics['incremental_operating_margin_percent'])} | incremental capital turnover {formatted_multiple(base_economics['incremental_capital_turnover_ratio'])} | reinvestment rate {formatted_change(base_economics['reinvestment_rate_percent'])}",
         "",
         "### Driver sensitivities",
         "",
