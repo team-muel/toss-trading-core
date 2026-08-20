@@ -34,7 +34,7 @@ verify_run() {
 import json
 import sys
 payload = json.load(open(sys.argv[1], encoding="utf-8"))
-print(payload["strategy"]["code_revision"])
+print(payload["code_revision"])
 PY
   )"
   if [[ "${revision}" != "${CURRENT_REVISION}" ]]; then

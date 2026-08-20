@@ -34,6 +34,10 @@
 - prune service 마지막 결과 성공
 - paper를 요구하는 단계에서는 paper report revision 일치와 대사 성공
 
+revision 비교는 전략 artifact가 아니라 run reporting summary의 top-level
+`code_revision`을 사용한다. 시장 날짜가 전진하지 않아 daily 전략 artifact가 정상
+생략된 경우에도 유효한 run revision을 `None`으로 오판하지 않기 위해서다.
+
 ## 별도 연구 VM 전환
 
 1. `scripts/provision_research_automation_gcp.sh`로 연구 service account, 예약 IP,

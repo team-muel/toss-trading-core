@@ -180,6 +180,8 @@ class GcpRunnerFilesTest(unittest.TestCase):
         )
         self.assertIn("sha256sum -c SHA256SUMS", audit)
         self.assertIn("revision_mismatch", audit)
+        self.assertIn('payload["code_revision"]', audit)
+        self.assertNotIn('payload["strategy"]["code_revision"]', audit)
         self.assertIn("prune_not_verified", audit)
         self.assertIn("/usr/bin/bash", prune)
 
