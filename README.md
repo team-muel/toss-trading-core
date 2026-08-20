@@ -75,7 +75,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
   보관합니다. Tiingo total-return과 FRED 승인 series는 활성화됐고, baseline의
   prospective 시작일은 2026-08-03입니다. 8월 8일 첫 daily 실행의 Tiingo
   timeout은 같은 날 복구 실행으로 회복했으며 성과는 126거래일 전까지 봉인합니다.
-- OpenAPI 승인 계약은 1.2.13이며 조건주문 경로는 계약에만 등록하고 모든 쓰기
+- OpenAPI 승인 계약은 1.2.14이며 조건주문 경로는 계약에만 등록하고 모든 쓰기
   capability는 비활성화했습니다.
 
 ## Repository Layout

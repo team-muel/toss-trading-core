@@ -37,7 +37,7 @@ they use read-only data paths and cannot enable broker order submission.
 ## Required evidence
 
 - clean-checkout CI imports the runtime package and passes tests
-- OpenAPI 1.2.13 SHA-256
+- OpenAPI 1.2.14 SHA-256
   `0f2cb7ef938fe1c50b7d69348705632ad488ea68d63fc762847f6c9485a3a111`
   is explicitly approved; CLOSED listing runs with a bounded seven-day overlap
 - one complete run contains only 2xx broker evidence from one account
@@ -187,7 +187,7 @@ an audit blocker. Independently evidenced opening cash, settlement availability,
 and buying-power reconciliation remain blocked work; cash events and open-order
 reservations alone do not make live trading eligible.
 
-The official OpenAPI 1.2.13 document was downloaded again on 2026-08-08. Its
+The official OpenAPI 1.2.14 document was downloaded again on 2026-08-20. Its
 SHA-256 matches the approved value, and it still exposes buying power
 rather than a separate cash-balance endpoint. An independently evidenced
 opening balance is therefore a real external input, not a value the runtime may

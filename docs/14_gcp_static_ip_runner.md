@@ -122,7 +122,7 @@ export FOUNDATION_CLOSED_ORDER_LOOKBACK_DAYS=7
 ./scripts/run_foundation_gcp.sh
 ```
 
-`FOUNDATION_INCLUDE_CLOSED_ORDERS` defaults to `1`. OpenAPI 1.2.13 documents
+`FOUNDATION_INCLUDE_CLOSED_ORDERS` defaults to `1`. OpenAPI 1.2.14 documents
 the paginated CLOSED list, so the scheduled service reads a bounded, overlapping
 seven-day window. Increase the lookback only for a reviewed recovery run.
 

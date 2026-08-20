@@ -4,16 +4,16 @@
 
 ## Official Base
 
-- Approved schema version: `1.2.13`
-- Approved SHA-256: `af93bc7d0d31eda3e24131f0acaa83d6b9c304a801161fbc06ba9a9824f8b92f`
+- Approved schema version: `1.2.14`
+- Approved SHA-256: `fccf49abd11f37f557bdd349138f4a03c42b829ebd8b5c14ab4907116fb84c7a`
 - Base server: `https://openapi.tossinvest.com`
 - Auth: OAuth2 Client Credentials Grant
 - Token endpoint: `POST /oauth2/token`
 - Account context header: `X-Tossinvest-Account: {accountSeq}`
 - Runtime style: REST API
 
-2026-08-08 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
-OpenAPI version `1.2.13`을 확인했습니다. 현재 공식 paths에는 별도 현금
+2026-08-20 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
+OpenAPI version `1.2.14`를 확인했습니다. 현재 공식 paths에는 별도 현금
 잔고 또는 balance endpoint가 없고, 현금 관련 주문 전 constraint는
 `GET /api/v1/buying-power`의 `cashBuyingPower`입니다. 따라서 내부 초기
 현금잔고를 이 값에서 역산하지 않습니다.
@@ -34,7 +34,7 @@ OpenAPI version `1.2.13`을 확인했습니다. 현재 공식 paths에는 별도
 
 ## Important Order Rules
 
-OpenAPI 1.2.13에는 `/api/v1/conditional-orders`의 `SINGLE`, `OCO`, `OTO`
+OpenAPI 1.2.14에는 `/api/v1/conditional-orders`의 `SINGLE`, `OCO`, `OTO`
 조건주문도 포함됩니다. 이 경로들은 계약에는 기록했지만
 `config/default_policy.yaml`에서 계속 비활성화하며, 현재
 `TossReadOnlyAdapter`는 생성·정정·취소할 수 없습니다. 승인된 경로와 method는
@@ -50,7 +50,7 @@ OpenAPI 1.2.13에는 `/api/v1/conditional-orders`의 `SINGLE`, `OCO`, `OTO`
 
 ## CLOSED Order Continuity
 
-OpenAPI 1.2.13은 `/api/v1/orders`의 `OPEN`, `CLOSED`와 CLOSED용 cursor
+OpenAPI 1.2.14는 `/api/v1/orders`의 `OPEN`, `CLOSED`와 CLOSED용 cursor
 pagination을 명시합니다. 2026-07-21 실제 GCP 계정에서도 종료 주문 반환을
 확인했습니다. 기본 6시간 runner는 KST 기준 최근 7일을 중첩 조회해 실행 사이에
 OPEN에서 사라진 주문을 놓치지 않습니다. v1은 OPEN 또는 CLOSED 목록에서 얻은
