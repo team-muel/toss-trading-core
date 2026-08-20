@@ -1,5 +1,5 @@
 {
-  "schema_version": "focused-research-policy-v4",
+  "schema_version": "focused-research-policy-v5",
   "minimum_variant_chains": 3,
   "minimum_distinct_source_organizations": 3,
   "maximum_source_age_days": 120,
@@ -77,6 +77,8 @@
   "require_driver_based_earnings_model": true,
   "require_cash_flow_bridge": true,
   "require_incremental_roic": true,
+  "require_incremental_economics_bridge": true,
+  "require_incremental_roic_hurdle_rate": true,
   "require_earnings_quality_analysis": true,
   "require_eps_growth_attribution": true,
   "require_gaap_non_gaap_reconciliation": true,

@@ -179,11 +179,14 @@ def generate_stock_recommendations(
     stale_dossier_symbols: set[str] = set()
     driver_model_upgrade_symbols: set[str] = set()
     earnings_quality_upgrade_symbols: set[str] = set()
+    incremental_economics_upgrade_symbols: set[str] = set()
     for dossier in focused_research_dossiers:
         dossier_symbol = str(dossier.get("symbol") or "").upper()
         if dossier.get("schema_version") != DOSSIER_SCHEMA:
             if dossier_symbol:
-                if dossier.get("schema_version") == "focused-research-dossier-v3":
+                if dossier.get("schema_version") == "focused-research-dossier-v4":
+                    incremental_economics_upgrade_symbols.add(dossier_symbol)
+                elif dossier.get("schema_version") == "focused-research-dossier-v3":
                     earnings_quality_upgrade_symbols.add(dossier_symbol)
                 else:
                     driver_model_upgrade_symbols.add(dossier_symbol)
@@ -220,6 +223,8 @@ def generate_stock_recommendations(
             focus_state = "focused_research_stale"
         elif item["symbol"] in earnings_quality_upgrade_symbols:
             focus_state = "focused_research_earnings_quality_required"
+        elif item["symbol"] in incremental_economics_upgrade_symbols:
+            focus_state = "focused_research_incremental_economics_required"
         elif item["symbol"] in driver_model_upgrade_symbols:
             focus_state = "focused_research_driver_model_required"
         else:
@@ -281,7 +286,7 @@ def generate_stock_recommendations(
         uuid.uuid5(uuid.NAMESPACE_URL, "stock-recommendation:" + _canonical_json(identity))
     )
     return {
-        "schema_version": "stock-recommendation-run-v5",
+        "schema_version": "stock-recommendation-run-v6",
         "recommendation_id": recommendation_id,
         "as_of_date": as_of_date,
         "code_revision": code_revision,
@@ -321,6 +326,11 @@ def generate_stock_recommendations(
                 == "focused_research_earnings_quality_required"
                 for item in screening_candidates
             ),
+            "incremental_economics_upgrade_required_count": sum(
+                item["focused_research_state"]
+                == "focused_research_incremental_economics_required"
+                for item in screening_candidates
+            ),
             "non_buy_dossier_count": sum(
                 item["focused_research_state"]
                 in {
@@ -341,6 +351,7 @@ def generate_stock_recommendations(
                     "investment_thesis",
                     "variant_view",
                     "earnings_model",
+                    "earnings_model.incremental_economics",
                     "earnings_quality",
                     "valuation",
                     "catalyst_path",

@@ -56,7 +56,7 @@ portfolio/risk hub -> order planner -> paper/live adapter -> audit logs
 | `docs/29_daily_autonomous_research_operation.md` | 일일 자율 연구, 데이터 전진 조건, 중복 메일 억제 운영 규칙 |
 | `docs/32_three_axis_reinforcement.md` | 활성 release 증거, 연구 신원 격리, persistent paper 운영 기준 |
 | `docs/33_broad_stock_recommendations.md` | 2,000~3,000개 미국 주식 스크리닝·추천·전향 추적 기준 |
-| `docs/34_variant_perception_focused_research.md` | 시장 기대 역산과 driver-based 손익·현금흐름·증분 ROIC·민감도를 강제하는 집중연구 기준 |
+| `docs/34_variant_perception_focused_research.md` | 시장 기대 역산과 driver-based 손익·현금흐름·증분 경제성·Earnings Quality·민감도를 강제하는 집중연구 기준 |
 
 ## Current Operating Snapshot — 2026-08-08
 
@@ -189,8 +189,11 @@ ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙
 집중연구 결과는 Investment Thesis → Variant View → Earnings Model → Earnings Quality → Valuation →
 Catalyst Path → Risk/Disconfirming Evidence → Position Construction 순서로 기록합니다.
 Investment Conviction 점수는 추천이나 비중 산정에 사용하지 않고 마지막 요약에만
-표시합니다. Earnings Model의 매출·EPS·OCF·FCF·증분 ROIC는 segment driver에서
-계산하며, 경제 driver 충격이 EPS에 미치는 영향도 같은 모델로 재계산합니다.
+표시합니다. Earnings Model의 매출·EPS·OCF·FCF는 segment driver에서 계산합니다.
+증분 경제성은 성장·유지 CAPEX, D&A, 운전자본, 인수와 기타 자본변화를 기초·기말
+투하자본에 완전히 연결한 뒤 증분 매출·영업이익·NOPAT, 증분 ROIC, hurdle rate 대비
+spread·경제적 이익과 성장 CAPEX 생산성을 계산합니다. 비교기간과 투자-성과 시차도
+명시하며, 경제 driver 충격은 같은 모델로 재계산합니다.
 Earnings Quality는 매출채권·재고·계약부채·이연매출, accruals·현금전환·운전자본,
 SBC·구조조정·인수조정·세제효과·일회성 이익, GAAP/non-GAAP, D&A/CAPEX와 자사주 EPS
 기여도를 별도 bridge로 검증합니다.

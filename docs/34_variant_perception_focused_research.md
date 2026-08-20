@@ -21,7 +21,7 @@
 
 ## 의사결정 메모의 고정 순서
 
-모든 `focused-research-dossier-v4`는 다음 순서를 그대로 사용한다.
+모든 `focused-research-dossier-v5`는 다음 순서를 그대로 사용한다.
 
 ```text
 Investment Thesis
@@ -44,6 +44,8 @@ Investment Thesis
 - 목표 연도의 시장가격 내재 EPS와 point-in-time 컨센서스 EPS
 - bear/base/bull의 driver별 매출, gross margin, operating expense, tax, EPS,
   OCF, 유지·성장 CAPEX, FCF, 증분 ROIC와 확률
+- 비교기간과 투자-성과 시차, 투하자본 bridge, 증분 매출·영업이익·NOPAT,
+  hurdle 대비 증분 ROIC·경제적 이익과 CAPEX 생산성
 - 특정 경제 driver 충격이 매출·EPS·FCF·증분 ROIC에 미치는 재계산 민감도
 - 매출 대비 매출채권·재고·계약부채·이연매출 증가율과 현금전환·accrual 분석
 - GAAP/non-GAAP reconciliation과 EPS 성장의 영업·세율·조정·자사주 기여도
@@ -153,8 +155,37 @@ incremental ROIC
   / (ending invested capital - prior-period invested capital)
 ```
 
+### 증분 경제성
+
+기말 투하자본 차이를 직접 입력하고 끝내지 않는다. 다음 bridge가 정확히 일치해야 한다.
+
+```text
+기초 투하자본
+  + 유지 CAPEX
+  + 성장 CAPEX
+  - D&A
+  + 순운전자본 투자
+  + 인수 투자
+  + 기타 투하자본 변화
+  = 기말 투하자본
+
+증분 매출        = 당기 매출 - 전기 매출
+증분 영업이익    = 당기 영업이익 - 전기 영업이익
+증분 NOPAT       = 증분 영업이익 × (1 - 정상화 세율)
+증분 ROIC        = 증분 NOPAT / 증분 투하자본
+가치창출 spread  = 증분 ROIC - hurdle rate
+증분 경제적 이익 = 증분 NOPAT - 증분 투하자본 × hurdle rate
+```
+
 유지 CAPEX와 성장 CAPEX는 합쳐서 입력할 수 없고 각각 근거와 함께 저장한다. 증분
-투하자본이 양수가 아니면 증분 ROIC 모델로 인정하지 않는다.
+투하자본이 양수가 아니거나 bridge가 맞지 않으면 증분 경제성 모델로 인정하지 않는다.
+각 scenario에는 전기 비교기간, 측정 개월 수, 투자 후 성과가 나타나는 시차를 명시한다.
+성장 CAPEX 대비 증분 매출·영업이익·NOPAT 배수, 회수기간, 증분 영업이익률,
+증분 capital turnover와 재투자율도 계산한다.
+
+이 계산은 먼저 “같은 기간 자본 증가와 이익 증가가 어떠했는가”를 보여준다. 특정
+데이터센터나 공장이 얼마의 매출·이익을 만들었다는 인과 주장은 회사 공시나 별도의
+vintage 방법론이 뒷받침할 때만 허용한다. 단순 동행을 인과로 표현하지 않는다.
 
 ### Driver shock sensitivity
 

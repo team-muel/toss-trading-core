@@ -226,11 +226,20 @@ class StockRecommendationTest(unittest.TestCase):
                     "methodology": "Net income to OCF bridge with split CAPEX.",
                 },
                 "capital_efficiency": {
+                    "prior_period": "FY2026",
+                    "measurement_period_months": 12,
+                    "prior_period_revenue_usd_millions": 1000,
                     "prior_period_operating_income_usd_millions": 150,
                     "prior_period_invested_capital_usd_millions": 800,
-                    "ending_invested_capital_usd_millions": 1000,
+                    "ending_invested_capital_usd_millions": (
+                        800 + 30 + 40 - 30 + 12 * scale
+                    ),
+                    "hurdle_rate_percent": 10.0,
+                    "acquisition_investment_usd_millions": 0,
+                    "other_invested_capital_change_usd_millions": 0,
+                    "investment_lag_months": 18,
                     "source_ids": ["filing"],
-                    "methodology": "Incremental NOPAT divided by incremental invested capital.",
+                    "methodology": "Reconciled capital bridge and incremental NOPAT relative to the hurdle rate.",
                 },
                 "key_assumptions": [
                     "Demand and share are modeled independently.",
@@ -297,7 +306,7 @@ class StockRecommendationTest(unittest.TestCase):
             source_manifest_ids=["manifest-1"],
         )
         self.assertEqual(result["universe"]["ranked_count"], 4)
-        self.assertEqual(result["schema_version"], "stock-recommendation-run-v5")
+        self.assertEqual(result["schema_version"], "stock-recommendation-run-v6")
         self.assertEqual(len(result["screening_candidates"]), 2)
         self.assertEqual(result["screening_candidates"][0]["symbol"], "AAA")
         self.assertEqual(result["recommendations"], [])
@@ -338,6 +347,14 @@ class StockRecommendationTest(unittest.TestCase):
         self.assertEqual(len(earnings["scenarios"][1]["revenue_drivers"]), 2)
         self.assertGreater(
             earnings["sensitivity_cases"][0]["results"]["eps_change_percent"], 0
+        )
+        incremental = earnings["scenarios"][1]["incremental_economics"]
+        self.assertEqual(incremental["state"], "value_creating_above_hurdle")
+        self.assertAlmostEqual(
+            incremental["invested_capital_bridge"][
+                "reconciliation_difference_usd_millions"
+            ],
+            0,
         )
         quality = result["recommendations"][0]["earnings_quality"]
         self.assertEqual(quality["eps_growth_attribution"]["state"], "reconciled")
@@ -405,6 +422,32 @@ class StockRecommendationTest(unittest.TestCase):
         self.assertEqual(
             result["recommendation_gate"][
                 "earnings_quality_upgrade_required_count"
+            ],
+            1,
+        )
+        self.assertEqual(result["recommendations"], [])
+
+    def test_v4_dossier_requires_incremental_economics_upgrade_without_failing_run(self):
+        as_of, rows = self.rows()
+        legacy = copy.deepcopy(self.focused_dossier(as_of))
+        legacy["schema_version"] = "focused-research-dossier-v4"
+        result = generate_stock_recommendations(
+            rows,
+            policy=self.policy,
+            as_of_date=as_of,
+            code_revision="a" * 40,
+            focused_research_dossiers=[legacy],
+        )
+        aaa = next(
+            item for item in result["screening_candidates"] if item["symbol"] == "AAA"
+        )
+        self.assertEqual(
+            aaa["focused_research_state"],
+            "focused_research_incremental_economics_required",
+        )
+        self.assertEqual(
+            result["recommendation_gate"][
+                "incremental_economics_upgrade_required_count"
             ],
             1,
         )
