@@ -29,8 +29,6 @@ Environment=RESEARCH_JSON_LOG_PATH=/home/seoje/toss-trading/research-runtime/res
 Environment=RESEARCH_LOCK_PATH=/home/seoje/toss-trading/research-runtime/research_automation.lock
 Environment=RESEARCH_PROSPECTIVE_OBSERVATION_LEDGER=/home/seoje/toss-trading/research-runtime/prospective_collection_observations.jsonl
 Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/research-runtime/toss_api.lock
-Environment=RESEARCH_EXECUTION_COST_CALIBRATION=/home/seoje/toss-trading/research-runtime/input/research_execution_cost_calibration.json
-Environment=RESEARCH_EXECUTION_COST_CALIBRATION_SECRET=research-execution-cost-calibration
 Environment=RESEARCH_PORTFOLIO_NOTIONAL_USD=10000
 Environment=RESEARCH_GCS_URI=gs://toss-trading-core-lab-research-data/research
 Environment=RESEARCH_BIGQUERY_DATASET=toss_research_reporting
