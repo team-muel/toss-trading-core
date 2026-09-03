@@ -14,8 +14,6 @@ class UniverseMember:
     asset_class: str
     currency: str
     venue: str
-    role: str
-    engine_scope: str
     enabled: bool
     notes: str = ""
 
@@ -25,9 +23,6 @@ class InstrumentMapping:
     symbol_id: str
     toss_symbol: str
     ticker: str
-    vendor_symbol: str
-    occ_symbol: str
-    cik: str
     asset_class: str
     currency: str
     timezone: str
@@ -36,8 +31,6 @@ class InstrumentMapping:
     effective_to: str | None
     listed_from: str | None = None
     delisted_on: str | None = None
-    identity_source: str = ""
-    identity_reviewed_at: str = ""
 
 
 def _bool(value: str) -> bool:
@@ -53,8 +46,6 @@ def load_universe(path: str | Path) -> list[UniverseMember]:
             asset_class=row["asset_class"].strip(),
             currency=row["currency"].strip().upper(),
             venue=row["venue"].strip(),
-            role=row["role"].strip(),
-            engine_scope=row["engine_scope"].strip(),
             enabled=_bool(row["enabled"]),
             notes=row.get("notes", "").strip(),
         )
@@ -76,9 +67,6 @@ def load_instrument_mappings(path: str | Path) -> list[InstrumentMapping]:
             symbol_id=row["symbol_id"].strip(),
             toss_symbol=row["toss_symbol"].strip().upper(),
             ticker=row["ticker"].strip().upper(),
-            vendor_symbol=row["vendor_symbol"].strip().upper(),
-            occ_symbol=row.get("occ_symbol", "").strip(),
-            cik=row.get("cik", "").strip(),
             asset_class=row["asset_class"].strip(),
             currency=row["currency"].strip().upper(),
             timezone=row["timezone"].strip(),
@@ -87,8 +75,6 @@ def load_instrument_mappings(path: str | Path) -> list[InstrumentMapping]:
             effective_to=row.get("effective_to", "").strip() or None,
             listed_from=row.get("listed_from", "").strip() or None,
             delisted_on=row.get("delisted_on", "").strip() or None,
-            identity_source=row.get("identity_source", "").strip(),
-            identity_reviewed_at=row.get("identity_reviewed_at", "").strip(),
         )
         for row in rows
     ]
@@ -140,18 +126,11 @@ def validate_universe_mapping(
             raise ValueError(
                 f"instrument delisting precedes listing: {mapping.symbol_id}"
             )
-        if mapping.listed_from is not None and not (
-            mapping.identity_source and mapping.identity_reviewed_at
-        ):
-            raise ValueError(
-                f"point-in-time instrument evidence is incomplete: {mapping.symbol_id}"
-            )
         if not all(
             (
                 mapping.symbol_id,
                 mapping.toss_symbol,
                 mapping.ticker,
-                mapping.vendor_symbol,
                 mapping.asset_class,
                 mapping.currency,
                 mapping.timezone,
@@ -159,11 +138,6 @@ def validate_universe_mapping(
             )
         ):
             raise ValueError(f"incomplete instrument mapping: {mapping.symbol_id}")
-        if mapping.asset_class.upper() == "ETF" and (
-            len(mapping.cik) != 10 or not mapping.cik.isdigit()
-        ):
-            raise ValueError(f"ETF mapping requires a 10-digit CIK: {mapping.symbol_id}")
-
     mapped_toss_symbols = set(mapping_counts)
     missing = sorted(enabled_symbols - mapped_toss_symbols)
     if missing:

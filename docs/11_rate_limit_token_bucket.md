@@ -74,7 +74,7 @@ Low:
 
 - candle backfill
 - large quote refresh
-- research data query
+- market-data query
 
 ## Persistence
 

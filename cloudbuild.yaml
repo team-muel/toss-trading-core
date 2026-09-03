@@ -5,43 +5,15 @@ steps:
     args:
       - -ceu
       - |
-        test -f src/toss_trading/runtime/rate_limit.py
+        test -f src/toss_trading/broker/toss.py
         apt-get update
         apt-get install --yes --no-install-recommends shellcheck
         python -m pip install --requirement requirements-dev.lock
         python -m pip install --no-deps --editable .
         python -m pytest -q
         python scripts/check_toss_openapi.py
-        python -m toss_trading.cli.research_validate_instruments
         python -m build --wheel
-        shellcheck \
-          scripts/load_gcp_secrets.sh \
-          scripts/run_foundation_gcp.sh \
-          scripts/run_research_automation_gcp.sh \
-          scripts/provision_research_automation_gcp.sh \
-          scripts/install_research_automation_vm.sh \
-          scripts/prune_research_runtime.sh
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
-    id: upload-wheel
-    entrypoint: bash
-    args:
-      - -ceu
-      - |
-        set -- dist/*.whl
-        test "$#" -eq 1
-        wheel_path="$1"
-        wheel_name="$(basename "${wheel_path}")"
-        access_token="$(gcloud auth print-access-token)"
-        curl \
-          --fail-with-body \
-          --silent \
-          --show-error \
-          --request POST \
-          --header "Authorization: Bearer ${access_token}" \
-          --header "Content-Type: application/octet-stream" \
-          --data-binary "@${wheel_path}" \
-          "https://storage.googleapis.com/upload/storage/v1/b/toss-trading-core-lab-research-data/o?uploadType=media&name=builds%2F${BUILD_ID}%2F${wheel_name}"
-serviceAccount: projects/toss-trading-core-lab/serviceAccounts/toss-research-build@toss-trading-core-lab.iam.gserviceaccount.com
+        shellcheck scripts/load_gcp_secrets.sh scripts/run_foundation_gcp.sh
 options:
   logging: CLOUD_LOGGING_ONLY
 timeout: 1200s

@@ -1,2 +1,1 @@
-"""Foundation package for the Toss trading research system."""
-
+"""Toss Invest Open API foundation package."""

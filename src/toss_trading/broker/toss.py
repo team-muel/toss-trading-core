@@ -207,6 +207,16 @@ class TossReadOnlyAdapter:
             "/api/v1/price-limits",
         }:
             return "MARKET_DATA"
+        if path == "/api/v1/stocks/all":
+            return "STOCK_ALL"
+        if path.startswith("/api/v1/stocks/") and path.rsplit("/", 1)[-1] in {
+            "investor-trading",
+            "program-trades",
+            "short-selling",
+            "credit-trades",
+            "securities-lending",
+        }:
+            return "STOCK_TRADING_TREND"
         if path == "/api/v1/stocks" or (
             path.startswith("/api/v1/stocks/") and path.endswith("/warnings")
         ):
@@ -219,9 +229,10 @@ class TossReadOnlyAdapter:
             return "MARKET_INFO"
         if path == "/api/v1/rankings":
             return "RANKING"
-        if path == "/api/v1/market-indicators/prices" or (
-            path.startswith("/api/v1/market-indicators/")
-            and path.endswith("/investor-trading")
+        if path == "/api/v1/market-indicators/prices":
+            return "MARKET_INDICATOR_PRICE"
+        if path.startswith("/api/v1/market-indicators/") and path.endswith(
+            "/investor-trading"
         ):
             return "MARKET_INDICATOR"
         if (
@@ -361,7 +372,7 @@ class TossReadOnlyAdapter:
         return self._get(endpoint, account_bound=True)
 
     # ------------------------------------------------------------------ #
-    # Read-only market data (research decision inputs, not account state)
+    # Read-only Toss market data (separate from account state)
     # ------------------------------------------------------------------ #
 
     def get_prices(self, symbols: list[str]) -> TossApiResult:
@@ -373,6 +384,29 @@ class TossReadOnlyAdapter:
         query = urllib.parse.urlencode({"symbols": ",".join(symbols)})
         return self._get(f"/api/v1/prices?{query}", account_bound=False)
 
+    def get_orderbook(self, symbol: str) -> TossApiResult:
+        """Current bid/ask levels for one KR or US stock."""
+        if not symbol:
+            raise ValueError("get_orderbook requires a symbol")
+        query = urllib.parse.urlencode({"symbol": symbol})
+        return self._get(f"/api/v1/orderbook?{query}", account_bound=False)
+
+    def get_trades(self, symbol: str, *, count: int = 50) -> TossApiResult:
+        """Most recent intraday trades for one KR or US stock."""
+        if not symbol:
+            raise ValueError("get_trades requires a symbol")
+        if not 1 <= count <= 50:
+            raise ValueError("trade count must be between 1 and 50")
+        query = urllib.parse.urlencode({"symbol": symbol, "count": count})
+        return self._get(f"/api/v1/trades?{query}", account_bound=False)
+
+    def get_price_limits(self, symbol: str) -> TossApiResult:
+        """Current upper and lower price limits for one KR or US stock."""
+        if not symbol:
+            raise ValueError("get_price_limits requires a symbol")
+        query = urllib.parse.urlencode({"symbol": symbol})
+        return self._get(f"/api/v1/price-limits?{query}", account_bound=False)
+
     def get_stocks(self, symbols: list[str]) -> TossApiResult:
         """Reference data for up to 200 symbols (`GET /api/v1/stocks`)."""
         if not symbols:
@@ -382,11 +416,141 @@ class TossReadOnlyAdapter:
         query = urllib.parse.urlencode({"symbols": ",".join(symbols)})
         return self._get(f"/api/v1/stocks?{query}", account_bound=False)
 
+    def get_all_stocks(
+        self,
+        market: str,
+        *,
+        status: str = "ACTIVE",
+        security_type: str | None = None,
+        common_share: bool | None = None,
+    ) -> TossApiResult:
+        """All Toss-tradable instruments for one exchange/market."""
+        normalized_market = market.upper()
+        allowed_markets = {
+            "KOSPI",
+            "KOSDAQ",
+            "NYSE",
+            "NASDAQ",
+            "AMEX",
+            "KR_ETC",
+            "US_ETC",
+        }
+        allowed_statuses = {"SCHEDULED", "ACTIVE", "DELISTED"}
+        allowed_security_types = {
+            "STOCK",
+            "FOREIGN_STOCK",
+            "DEPOSITARY_RECEIPT",
+            "INFRASTRUCTURE_FUND",
+            "REIT",
+            "ETF",
+            "FOREIGN_ETF",
+            "ETN",
+            "STOCK_WARRANTS",
+        }
+        normalized_status = status.upper()
+        if normalized_market not in allowed_markets:
+            raise ValueError(f"unsupported Toss stock market: {market}")
+        if normalized_status not in allowed_statuses:
+            raise ValueError(f"unsupported Toss listing status: {status}")
+        query: dict[str, str] = {
+            "market": normalized_market,
+            "status": normalized_status,
+        }
+        if security_type is not None:
+            normalized_type = security_type.upper()
+            if normalized_type not in allowed_security_types:
+                raise ValueError(f"unsupported Toss security type: {security_type}")
+            query["securityType"] = normalized_type
+        if common_share is not None:
+            if not isinstance(common_share, bool):
+                raise ValueError("common_share must be boolean or None")
+            query["commonShare"] = "true" if common_share else "false"
+        return self._get(
+            f"/api/v1/stocks/all?{urllib.parse.urlencode(query)}",
+            account_bound=False,
+        )
+
     def get_stock_warnings(self, symbol: str) -> TossApiResult:
         encoded = urllib.parse.quote(symbol, safe="")
         return self._get(
             f"/api/v1/stocks/{encoded}/warnings",
             account_bound=False,
+        )
+
+    def _get_stock_trading_trend(
+        self,
+        symbol: str,
+        dataset: str,
+        *,
+        count: int,
+        until: str | None,
+    ) -> TossApiResult:
+        if not symbol:
+            raise ValueError("stock trading-trend request requires a symbol")
+        if not 1 <= count <= 100:
+            raise ValueError("stock trading-trend count must be between 1 and 100")
+        encoded = urllib.parse.quote(symbol, safe="")
+        query: dict[str, str | int] = {"count": count}
+        if until:
+            query["until"] = until
+        return self._get(
+            f"/api/v1/stocks/{encoded}/{dataset}?{urllib.parse.urlencode(query)}",
+            account_bound=False,
+        )
+
+    def get_stock_investor_trading(
+        self,
+        symbol: str,
+        *,
+        count: int = 100,
+        until: str | None = None,
+    ) -> TossApiResult:
+        return self._get_stock_trading_trend(
+            symbol, "investor-trading", count=count, until=until
+        )
+
+    def get_stock_program_trades(
+        self,
+        symbol: str,
+        *,
+        count: int = 100,
+        until: str | None = None,
+    ) -> TossApiResult:
+        return self._get_stock_trading_trend(
+            symbol, "program-trades", count=count, until=until
+        )
+
+    def get_stock_short_selling(
+        self,
+        symbol: str,
+        *,
+        count: int = 100,
+        until: str | None = None,
+    ) -> TossApiResult:
+        return self._get_stock_trading_trend(
+            symbol, "short-selling", count=count, until=until
+        )
+
+    def get_stock_credit_trades(
+        self,
+        symbol: str,
+        *,
+        count: int = 100,
+        until: str | None = None,
+    ) -> TossApiResult:
+        return self._get_stock_trading_trend(
+            symbol, "credit-trades", count=count, until=until
+        )
+
+    def get_stock_securities_lending(
+        self,
+        symbol: str,
+        *,
+        count: int = 100,
+        until: str | None = None,
+    ) -> TossApiResult:
+        return self._get_stock_trading_trend(
+            symbol, "securities-lending", count=count, until=until
         )
 
     def get_exchange_rate(

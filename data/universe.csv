@@ -1,16 +1,16 @@
-symbol,asset_class,currency,venue,role,engine_scope,enabled,notes
-SPY,ETF,USD,US,core_equity,broad_momentum;homogeneous_etf_rv,true,S&P 500 core ETF
-VOO,ETF,USD,US,core_equity,homogeneous_etf_rv,true,S&P 500 substitute
-IVV,ETF,USD,US,core_equity,homogeneous_etf_rv,true,S&P 500 substitute
-SPYM,ETF,USD,US,core_equity,homogeneous_etf_rv,true,S&P 500 substitute; ticker changed from SPLG on 2025-10-31
-QQQ,ETF,USD,US,growth_equity,broad_momentum,true,Nasdaq 100 growth proxy
-SMH,ETF,USD,US,sector_equity,broad_momentum,true,Semiconductor sector proxy
-SCHD,ETF,USD,US,dividend_equity,distribution_filter,true,Dividend ETF candidate
-VTV,ETF,USD,US,value_equity,broad_momentum,true,US value proxy
-XLP,ETF,USD,US,defensive_sector,broad_momentum,true,Consumer staples sector proxy
-XLU,ETF,USD,US,defensive_sector,broad_momentum,true,Utilities sector proxy
-SGOV,ETF,USD,US,cash_like,homogeneous_etf_rv;broad_momentum,true,Short Treasury ETF cash-like sleeve
-BIL,ETF,USD,US,cash_like,homogeneous_etf_rv,true,T-bill ETF substitute
-SHV,ETF,USD,US,cash_like,homogeneous_etf_rv,true,Short Treasury ETF substitute
-TLT,ETF,USD,US,duration,broad_momentum,true,Long Treasury duration proxy
-GLD,ETF,USD,US,commodity,broad_momentum,true,Gold proxy
+symbol,asset_class,currency,venue,enabled,notes
+SPY,ETF,USD,US,true,Toss API account mapping
+VOO,ETF,USD,US,true,Toss API account mapping
+IVV,ETF,USD,US,true,Toss API account mapping
+SPYM,ETF,USD,US,true,Toss API account mapping
+QQQ,ETF,USD,US,true,Toss API account mapping
+SMH,ETF,USD,US,true,Toss API account mapping
+SCHD,ETF,USD,US,true,Toss API account mapping
+VTV,ETF,USD,US,true,Toss API account mapping
+XLP,ETF,USD,US,true,Toss API account mapping
+XLU,ETF,USD,US,true,Toss API account mapping
+SGOV,ETF,USD,US,true,Toss API account mapping
+BIL,ETF,USD,US,true,Toss API account mapping
+SHV,ETF,USD,US,true,Toss API account mapping
+TLT,ETF,USD,US,true,Toss API account mapping
+GLD,ETF,USD,US,true,Toss API account mapping

@@ -349,122 +349,6 @@ class AccountLedger:
             )
             self.conn.execute("PRAGMA user_version = 3")
             version = 3
-        if version < 4:
-            for table, columns in {
-                "market_bars": [
-                    "available_at TEXT",
-                    "source_ts TEXT",
-                    "exchange_local_date TEXT",
-                    "interval TEXT NOT NULL DEFAULT '1d'",
-                    "currency TEXT",
-                    "session_label TEXT",
-                    "source_timezone TEXT",
-                    "adjustment TEXT NOT NULL DEFAULT 'raw'",
-                    "source_revision TEXT",
-                    "raw_manifest_id TEXT",
-                    "schema_version TEXT NOT NULL DEFAULT 'market-bars-v1'",
-                ],
-                "feature_snapshot": [
-                    "available_at TEXT",
-                    "dataset_manifest_ids TEXT",
-                    "transformation_version TEXT",
-                    "parameters_hash TEXT",
-                    "code_revision TEXT",
-                ],
-            }.items():
-                existing = {
-                    row["name"]
-                    for row in self.conn.execute(
-                        f"PRAGMA table_info({table})"
-                    ).fetchall()
-                }
-                for column in columns:
-                    name = column.split()[0]
-                    if name not in existing:
-                        self.conn.execute(
-                            f"ALTER TABLE {table} ADD COLUMN {column}"
-                        )
-            self.conn.execute(
-                """
-                CREATE UNIQUE INDEX IF NOT EXISTS uq_market_bars_point_in_time
-                  ON market_bars(ts, symbol, source, interval, adjustment)
-                """
-            )
-            self.conn.execute("PRAGMA user_version = 4")
-            version = 4
-        if version < 5:
-            primary_key = [
-                row["name"]
-                for row in sorted(
-                    self.conn.execute("PRAGMA table_info(market_bars)").fetchall(),
-                    key=lambda row: row["pk"] or 999,
-                )
-                if row["pk"]
-            ]
-            if primary_key != [
-                "ts",
-                "symbol",
-                "source",
-                "interval",
-                "adjustment",
-            ]:
-                try:
-                    self.conn.executescript(
-                        """
-                    BEGIN IMMEDIATE;
-                    ALTER TABLE market_bars RENAME TO market_bars_v4;
-                    CREATE TABLE market_bars (
-                      ts TEXT NOT NULL,
-                      available_at TEXT,
-                      source_ts TEXT,
-                      exchange_local_date TEXT,
-                      interval TEXT NOT NULL DEFAULT '1d',
-                      symbol TEXT NOT NULL,
-                      venue TEXT,
-                      currency TEXT,
-                      session_label TEXT,
-                      source_timezone TEXT,
-                      adjustment TEXT NOT NULL DEFAULT 'raw',
-                      open REAL,
-                      high REAL,
-                      low REAL,
-                      close REAL,
-                      volume REAL,
-                      source TEXT NOT NULL,
-                      source_revision TEXT,
-                      raw_manifest_id TEXT,
-                      schema_version TEXT NOT NULL DEFAULT 'market-bars-v1',
-                      ingested_at TEXT NOT NULL,
-                      quality_flag TEXT NOT NULL DEFAULT 'ok',
-                      PRIMARY KEY (ts, symbol, source, interval, adjustment)
-                    );
-                    INSERT INTO market_bars (
-                      ts, available_at, source_ts, exchange_local_date, interval,
-                      symbol, venue, currency, session_label, source_timezone,
-                      adjustment, open, high, low, close, volume, source,
-                      source_revision, raw_manifest_id, schema_version,
-                      ingested_at, quality_flag
-                    )
-                    SELECT
-                      ts, available_at, source_ts, exchange_local_date, interval,
-                      symbol, venue, currency, session_label, source_timezone,
-                      adjustment, open, high, low, close, volume, source,
-                      source_revision, raw_manifest_id, schema_version,
-                      ingested_at, quality_flag
-                    FROM market_bars_v4;
-                    DROP TABLE market_bars_v4;
-                    COMMIT;
-                    """
-                    )
-                except Exception:
-                    if self.conn.in_transaction:
-                        self.conn.rollback()
-                    raise
-            self.conn.execute(
-                "DROP INDEX IF EXISTS uq_market_bars_point_in_time"
-            )
-            self.conn.execute("PRAGMA user_version = 5")
-
     def begin_snapshot_run(
         self,
         *,
@@ -521,18 +405,15 @@ class AccountLedger:
         self.conn.executemany(
             """
             INSERT OR REPLACE INTO instrument_master (
-              symbol_id, toss_symbol, ticker, vendor_symbol, occ_symbol, cik,
-              asset_class, currency, timezone, mic, effective_from, effective_to, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              symbol_id, toss_symbol, ticker, asset_class, currency, timezone,
+              mic, effective_from, effective_to, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
                     item.symbol_id,
                     item.toss_symbol,
                     item.ticker,
-                    item.vendor_symbol,
-                    item.occ_symbol or None,
-                    item.cik or None,
                     item.asset_class,
                     item.currency,
                     item.timezone,

@@ -99,7 +99,7 @@ The v1 audit must prove:
 
 ## Go/No-Go Rule
 
-Paper order planner and strategy signals remain blocked until v1 passes.
+Any use beyond the read-only Foundation remains blocked until v1 passes.
 
 If any v1 requirement fails:
 
@@ -116,6 +116,6 @@ If any v1 requirement fails:
 Do not add these in v1:
 
 - automatic order submission
-- strategy signals
+- order writes
 - NAV, option, news, or external market-data engines
 - tax-lot automation beyond reading commission/tax/settlement fields from Toss order responses

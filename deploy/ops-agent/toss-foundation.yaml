@@ -5,21 +5,6 @@ logging:
       include_paths:
         - /home/seoje/toss-trading/runtime/foundation_runner.jsonl
       record_log_file_path: true
-    toss_research_jsonl:
-      type: files
-      include_paths:
-        - /home/seoje/toss-trading/research-runtime/research_automation.jsonl
-      record_log_file_path: true
-    toss_paper_jsonl:
-      type: files
-      include_paths:
-        - /home/seoje/toss-trading/paper-runtime/paper_operation.jsonl
-      record_log_file_path: true
-    toss_stock_recommendations_jsonl:
-      type: files
-      include_paths:
-        - /home/seoje/toss-trading/stock-recommendation-runtime/stock_recommendations.jsonl
-      record_log_file_path: true
   processors:
     toss_foundation_parse_json:
       type: parse_json
@@ -27,13 +12,4 @@ logging:
     pipelines:
       toss_foundation_pipeline:
         receivers: [toss_foundation_jsonl]
-        processors: [toss_foundation_parse_json]
-      toss_research_pipeline:
-        receivers: [toss_research_jsonl]
-        processors: [toss_foundation_parse_json]
-      toss_paper_pipeline:
-        receivers: [toss_paper_jsonl]
-        processors: [toss_foundation_parse_json]
-      toss_stock_recommendations_pipeline:
-        receivers: [toss_stock_recommendations_jsonl]
         processors: [toss_foundation_parse_json]

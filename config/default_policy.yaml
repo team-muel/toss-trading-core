@@ -5,12 +5,9 @@ runtime:
   live_trading_enabled: false
   broker_base_url: https://openapi.tossinvest.com
   toss_openapi_schema_version: 1.2.14
-  toss_openapi_schema_hash: fccf49abd11f37f557bdd349138f4a03c42b829ebd8b5c14ab4907116fb84c7a
+  toss_openapi_schema_hash: a7b32ba754401d13fa649ba91eebd212420eb1afab28e9c2c0d6ea8d43055fed
   toss_openapi_schema_hash_source: https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
   toss_openapi_contract_review: config/toss_openapi_contract.json
-  # OpenAPI 1.2.14 explicitly documents paginated CLOSED order history.
-  # Poll it with a bounded overlap window so fills that disappear from OPEN
-  # between six-hour Foundation runs remain observable and replayable.
   closed_order_listing_supported: true
   closed_order_lookback_days: 7
   broker_capabilities:
@@ -27,183 +24,15 @@ runtime:
     conditional_order_modify:
       documented: true
       enabled: false
-    disabled_reason: "The foundation adapter is read-only; write capabilities require paper and shadow lifecycle evidence plus separate operator approval."
-  live_scope: us_listed_usd_long_only_etf_dedicated_account
-
-external_data:
-  execution_truth_source: toss
-  provider_data_never_overwrites_broker_state: true
-  minimum_stack:
-    massive_rest:
-      enabled: false
-      role:
-        - options_snapshot_research
-        - dividends_splits
-        - indices_futures_proxy
-    fred:
-      enabled: false
-      role:
-        - rate_hurdle
-        - treasury_yield_series
-        - release_calendar
-    sec_edgar:
-      enabled: false
-      role:
-        - official_event_gate
-        - ticker_cik_map
-        - filing_classifier
-    issuer_parser:
-      enabled: false
-      role:
-        - etf_nav
-        - premium_discount
-        - roc_tax_character_audit
-  stage2_optional:
-    massive_websocket:
-      enabled: false
-      requires_source_health: true
-    tradier:
-      enabled: false
-      role:
-        - options_chain_backup
-        - etb_list
-  source_health_required_before_signal: true
-
-calibration:
-  policy_values_are_market_laws: false
-  report_numbers_are_initial_guardrails_only: true
-  requires_paper_trade_calibration_before_live: true
-  require_manual_approval_for_threshold_changes: true
-  minimum_observations_before_relaxing_limits:
-    shadow_trading_days: 60
-    completed_rebalance_cycles: 3
-    order_lifecycle_scenarios: 30
-    unresolved_reconciliation_blocks: 0
-    unknown_order_states: 0
-  calibration_inputs:
-    - realized_slippage
-    - reject_rate
-    - partial_fill_rate
-    - order_latency
-    - drawdown_distribution
-    - symbol_liquidity
-    - tax_and_fee_drag
-    - source_stale_rate
-    - fallback_rate
-    - nav_roc_manual_audit_rate
+    disabled_reason: "This Foundation adapter is read-only."
 
 starter_guardrails:
-  description: "More conservative than report examples; use only for paper/micro-live until calibrated."
-  max_drawdown_warning_pct: 1.0
-  max_drawdown_kill_switch_pct: 2.0
-  single_trade_max_loss_nav_pct: 0.1
-  single_live_order_notional_nav_pct: 0.1
   max_open_orders: 1
-  allow_amount_based_market_orders: false
-  allow_high_value_order_confirmation: false
-  allow_stale_external_signal_reuse: false
   block_new_orders_on_any_reconciliation_diff: true
   block_new_orders_after_any_unknown_order_state: true
   require_same_run_reconciliation: true
   require_normal_source_health: true
   require_rate_limit_healthy: true
-  kill_switch_states_allowing_orders:
-    - NORMAL
-
-# This profile is consumed only by the persistent local paper broker. It does
-# not relax starter_guardrails or enable a Toss write capability.
-paper_guardrails:
-  enabled: true
-  live_orders_enabled: false
-  initial_cash_usd: 10000
-  minimum_trade_notional_usd: 1
-  max_open_orders: 1
-  max_drawdown_kill_switch_pct: 100
-  single_trade_max_loss_nav_pct: 100
-  single_live_order_notional_nav_pct: 100
-
-portfolio_limits:
-  # Populated only after calibration review. Do not copy report numbers here.
-  max_drawdown_warning_pct: null
-  max_drawdown_kill_switch_pct: null
-  single_trade_max_loss_nav_pct: null
-  single_live_order_notional_nav_pct: null
-  distribution_etf_single_name_cap_nav_pct: null
-  distribution_etf_engine_cap_nav_pct: null
-
-option_carry:
-  enabled: false
-  live_orders_enabled: false
-  disabled_reason: "Toss Open API docs do not provide options chain, Greeks, or options order endpoints."
-  calibration_required: true
-
-broad_etf_dual_momentum:
-  enabled: false
-  research_enabled: true
-  live_orders_enabled: false
-  baseline_version: broad_etf_dual_momentum_v1
-  lookback_trading_days: 252
-  skip_recent_trading_days: 21
-  rebalance_frequency: month_end
-  execution_delay_trading_days: 1
-  top_k: 1
-  minimum_absolute_momentum: 0.0
-  cash_symbol: SGOV
-  walk_forward_train_days: 504
-  walk_forward_test_days: 126
-  disabled_reason: "Research baseline must pass point-in-time OOS and paper gates."
-
-etf_relative_value:
-  enabled: false
-  live_orders_enabled: false
-  calibration_required: true
-  lookback_days: null
-  half_life_bounds_days: null
-  exit_zscore_abs: null
-  max_holding_days: null
-  gross_exposure_bounds_nav_pct: null
-  require_borrow_rate_for_short_leg: true
-  live_scope_note: "Toss live MVP allows long-only cash/ETF switching until borrow and short mechanics are verified elsewhere."
-
-distribution_filter:
-  enabled: false
-  calibration_required: true
-  block_dividend_capture_before_ex_date: true
-  nav_premium_warning_pct: null
-  reduce_weight_when_roc_unknown: true
-
-tbill_collateral:
-  enabled: false
-  live_orders_enabled: false
-  mode: accounting_only
-  disabled_reason: "Toss Open API holdings exclude overseas bonds; T-bill collateral automation is out of official scope."
-  calibration_required: true
-
-data_quality:
-  max_market_data_delay_seconds: null
-  global_gates:
-    block_on_stale_toss_market_data: true
-    block_on_missing_broker_snapshot: true
-    block_on_missing_source_health_for_external_signal: true
-  engine_scoped_gates:
-    distribution_filter:
-      block_when_nav_stale: true
-      block_when_roc_unknown: true
-      block_when_issuer_parser_failed: true
-    etf_relative_value:
-      block_when_borrow_missing: true
-      require_whitelisted_homogeneous_pair: true
-    option_carry:
-      block_when_option_quote_crossed: true
-      block_when_option_chain_stale: true
-    opening_gap_fade:
-      block_when_orderbook_trade_timestamp_mismatch: true
-
-alerts:
-  order_reject_rate_kill_switch_pct: null
-  slippage_model_multiple_warning: null
-  slippage_warning_consecutive_days: null
-  engine_pnl_corr_warning: null
 
 rate_limit:
   design_doc: docs/11_rate_limit_token_bucket.md

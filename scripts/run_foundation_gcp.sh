@@ -18,8 +18,6 @@ MAX_ORDER_DETAILS="${FOUNDATION_MAX_ORDER_DETAILS:-1}"
 INCLUDE_CLOSED_ORDERS="${FOUNDATION_INCLUDE_CLOSED_ORDERS:-1}"
 CLOSED_ORDER_LOOKBACK_DAYS="${FOUNDATION_CLOSED_ORDER_LOOKBACK_DAYS:-7}"
 TARGET_ORDER_ID="${FOUNDATION_TARGET_ORDER_ID:-}"
-COST_CALIBRATION_PATH="${FOUNDATION_RESEARCH_COST_CALIBRATION_PATH:-runtime/research_execution_cost_calibration.json}"
-COST_CALIBRATION_SECRET="${FOUNDATION_RESEARCH_COST_CALIBRATION_SECRET:-}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 CODE_REVISION="${FOUNDATION_CODE_REVISION:-}"
 if [[ -z "${CODE_REVISION}" ]] && command -v git >/dev/null 2>&1; then
@@ -43,7 +41,6 @@ mkdir -p \
   "$(dirname "${JSON_LOG_PATH}")" \
   "$(dirname "${LOCK_PATH}")" \
   "$(dirname "${TOSS_API_LOCK_PATH}")" \
-  "$(dirname "${COST_CALIBRATION_PATH}")" \
   "${BACKUP_DIR}"
 
 json_escape() {
@@ -159,30 +156,6 @@ fi
   --db "${DB_PATH}" \
   --profile "${PROFILE}" \
   --json-log "${JSON_LOG_PATH}"
-
-"${PYTHON_BIN}" -m toss_trading.cli.research_export_cost_model \
-  --db "${DB_PATH}" \
-  --output "${COST_CALIBRATION_PATH}" \
-  --policy "${ROOT_DIR}/config/research_validation_protocol.json" \
-  --as-of "$(date -u +%F)" \
-  > "${COST_CALIBRATION_PATH}.status.json"
-json_log "foundation_research_cost_calibration_ok"
-if [[ -n "${COST_CALIBRATION_SECRET}" ]]; then
-  PUBLISHED_DATE_PATH="${COST_CALIBRATION_PATH}.published-date"
-  CURRENT_CALIBRATION_DATE="$(date -u +%F)"
-  PUBLISHED_DATE=""
-  if [[ -f "${PUBLISHED_DATE_PATH}" ]]; then
-    PUBLISHED_DATE="$(<"${PUBLISHED_DATE_PATH}")"
-  fi
-  if [[ "${PUBLISHED_DATE}" != "${CURRENT_CALIBRATION_DATE}" ]]; then
-    gcloud secrets versions add "${COST_CALIBRATION_SECRET}" \
-      --project="${GCP_PROJECT_ID}" \
-      --data-file="${COST_CALIBRATION_PATH}" >/dev/null
-    printf '%s\n' "${CURRENT_CALIBRATION_DATE}" > "${PUBLISHED_DATE_PATH}.tmp"
-    mv -f "${PUBLISHED_DATE_PATH}.tmp" "${PUBLISHED_DATE_PATH}"
-    json_log "foundation_research_cost_calibration_published"
-  fi
-fi
 
 BACKUP_TS="$(date -u +"%Y%m%dT%H%M%SZ")"
 BACKUP_PATH="${BACKUP_DIR}/foundation_account_state_${PROFILE}_${BACKUP_TS}.sqlite"

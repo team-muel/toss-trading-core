@@ -36,8 +36,6 @@ Environment=FOUNDATION_REPORT_PATH=/home/seoje/toss-trading/runtime/foundation_a
 Environment=FOUNDATION_JSON_LOG_PATH=/home/seoje/toss-trading/runtime/foundation_runner.jsonl
 Environment=FOUNDATION_BACKUP_DIR=/home/seoje/toss-trading/runtime/backups
 Environment=FOUNDATION_LOCAL_BACKUP_RETENTION_DAYS=14
-Environment=FOUNDATION_RESEARCH_COST_CALIBRATION_PATH=/home/seoje/toss-trading/runtime/research_execution_cost_calibration.json
-Environment=FOUNDATION_RESEARCH_COST_CALIBRATION_SECRET=research-execution-cost-calibration
 Environment=FOUNDATION_LOCK_PATH=/home/seoje/toss-trading/runtime/foundation_runner.lock
 Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/runtime/toss_api.lock
 Environment=FOUNDATION_GCS_BACKUP_URI=gs://toss-trading-core-lab-foundation-backups/foundation

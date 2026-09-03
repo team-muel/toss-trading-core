@@ -24,9 +24,9 @@ jobs:
       - run: python -m pip install --no-deps --editable .
       - run: python -m pytest -q
       - run: python scripts/check_toss_openapi.py
-      - run: python -m toss_trading.cli.research_validate_instruments
       - run: python -m build --wheel
-      - run: python -c "import toss_trading.runtime"
+      - run: bash -n scripts/load_gcp_secrets.sh scripts/run_foundation_gcp.sh
+      - run: shellcheck scripts/load_gcp_secrets.sh scripts/run_foundation_gcp.sh
       - name: Verify wheel resources outside checkout
         shell: bash
         run: |
@@ -34,5 +34,3 @@ jobs:
           smoke_dir="$(mktemp -d)"
           cd "${smoke_dir}"
           python -c "from toss_trading.account import AccountLedger; from toss_trading.data import load_universe; from toss_trading.policy import load_policy; ledger=AccountLedger(); ledger.init_schema(); assert load_universe('data/universe.csv'); assert load_policy('config/default_policy.yaml')[0]; ledger.close()"
-      - run: bash -n scripts/load_gcp_secrets.sh scripts/run_foundation_gcp.sh scripts/run_research_automation_gcp.sh scripts/provision_research_automation_gcp.sh scripts/install_research_automation_vm.sh
-      - run: shellcheck scripts/load_gcp_secrets.sh scripts/run_foundation_gcp.sh scripts/run_research_automation_gcp.sh scripts/provision_research_automation_gcp.sh scripts/install_research_automation_vm.sh

@@ -179,8 +179,10 @@ class FoundationAccountStateTest(unittest.TestCase):
         universe = load_universe("data/universe.csv")
         mappings = load_instrument_mappings("data/instrument_master.csv")
         validate_universe_mapping(universe, mappings)
-        missing_cik = [item.ticker for item in mappings if not item.cik]
-        self.assertEqual(missing_cik, [])
+        self.assertEqual(
+            {item.toss_symbol for item in mappings},
+            {item.symbol for item in universe if item.enabled},
+        )
 
     def test_universe_mapping_rejects_duplicate_provider_identity(self):
         universe = load_universe("data/universe.csv")

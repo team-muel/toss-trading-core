@@ -1,8 +1,8 @@
 # Account State And Reconciliation
 
-## Why This Comes Before Strategy
+## Why Account State Comes First
 
-Toss API 기반 자동매매에서 가장 중요한 모듈은 전략 엔진이 아니라 계좌 상태 엔진입니다. 공식 API는 buying power, holdings, orders, 주문별 execution summary를 제공하지만 별도 cashflow/tax lot API는 제공하지 않습니다.
+Toss API 기반 주문 시스템에서 가장 중요한 기반은 계좌 상태 엔진입니다. 공식 API는 buying power, holdings, orders, 주문별 execution summary를 제공하지만 별도 cashflow/tax lot API는 제공하지 않습니다.
 
 따라서 브로커 응답과 내부 이벤트 장부를 결합해 주문 가능 금액, 포지션, 주문 상태, 체결 합계, 수수료, 세금, 결제 예정일을 재현해야 합니다.
 
@@ -134,4 +134,4 @@ v1 audit은 다음을 요구합니다.
 - buying power가 broker constraint로 저장됨
 - `blockers=['none']`
 
-이 조건이 통과하기 전에는 paper order planner와 전략 신호를 연결하지 않습니다.
+이 조건이 통과하지 않으면 계좌 상태를 신뢰 가능한 것으로 표시하지 않습니다.

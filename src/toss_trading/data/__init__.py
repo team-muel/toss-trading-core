@@ -1,4 +1,4 @@
-"""Data provider boundaries and normalization utilities."""
+"""Toss symbol-universe mapping utilities."""
 from .universe import (
     InstrumentMapping,
     UniverseMember,

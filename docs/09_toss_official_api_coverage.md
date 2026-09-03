@@ -26,11 +26,35 @@ OpenAPI version `1.2.14`를 확인했습니다. 현재 공식 paths에는 별도
 | Account | `GET /api/v1/accounts` | 계좌 목록과 `accountSeq` 확인 |
 | Asset | `GET /api/v1/holdings` | 국내/미국 주식 보유 현황 |
 | Market Data | `GET /api/v1/orderbook`, `prices`, `trades`, `price-limits`, `candles` | 호가, 현재가, 체결, 상하한가, 1분/일봉 |
-| Stock Info | `GET /api/v1/stocks`, `stocks/{symbol}/warnings` | 종목 마스터, 매수 유의사항 |
+| Stock Info | `GET /api/v1/stocks`, `stocks/all`, `stocks/{symbol}/warnings` | 종목 마스터, 거래소별 전체 거래 가능 유니버스, 매수 유의사항 |
+| KR Stock Trading Trend | `GET /api/v1/stocks/{symbol}/investor-trading`, `program-trades`, `short-selling`, `credit-trades`, `securities-lending` | 국내 종목 투자자·프로그램·공매도·신용·대차 일별 동향 |
 | Market Info | `GET /api/v1/exchange-rate`, `market-calendar/KR`, `market-calendar/US` | 환율, 국내/미국 장 운영 |
 | Order | `POST /api/v1/orders`, `orders/{orderId}/modify`, `orders/{orderId}/cancel` | 주문 생성, 정정, 취소 |
 | Order History | `GET /api/v1/orders`, `orders/{orderId}` | 주문 목록, 주문 상세 |
 | Order Info | `GET /api/v1/buying-power`, `sellable-quantity`, `commissions` | 매수 가능 금액, 매도 가능 수량, 수수료 |
+
+`GET /api/v1/stocks/all`은 `KOSPI`, `KOSDAQ`, `NYSE`, `NASDAQ`,
+`AMEX`, `KR_ETC`, `US_ETC`별 활성 종목을 페이지네이션 없이 반환하며,
+상장 상태·증권 유형·보통주 여부 필터를 지원합니다. `/prices`와 `/stocks`는
+최대 200개 심볼을 한 요청으로 조회하므로 수집기는 200개 단위로 분할합니다.
+
+국내 종목 동향 5개 API는 최대 100개 일별 레코드와 `nextUntil` cursor를
+제공합니다. 이 데이터는 미국 종목에는 제공되지 않습니다. 공매도 동향은
+일별 거래 활동이지 short interest가 아니며, 대차잔고는 borrow availability나
+borrow fee가 아닙니다.
+
+## Connected Read-only Adapter
+
+`TossReadOnlyAdapter`는 다음 read-only endpoint를 모두 호출할 수 있습니다.
+
+- 거래소별 전체 거래 가능 종목
+- 최대 200개 단위 종목 기본정보와 현재가
+- 종목별 경고, 호가, 최근 체결, 상·하한가
+- 국내 종목별 투자자·프로그램·공매도·신용·대차 동향
+- 환율, 장 운영 정보, 랭킹, 국내 지수·국채 지표
+
+시장 데이터 경로는 OAuth token만 사용하며 계좌 헤더나 주문 endpoint를
+사용하지 않습니다. 국내 종목 동향은 국내 심볼에만 요청해야 합니다.
 
 ## Important Order Rules
 
@@ -98,10 +122,12 @@ Rate limit은 client x API group 기준입니다. 현재 공식 overview 기준:
 | `ACCOUNT` | 1 TPS |
 | `ASSET` | 5 TPS |
 | `STOCK` | 5 TPS |
+| `STOCK_ALL` | 1 TPS |
+| `STOCK_TRADING_TREND` | 10 TPS |
 | `MARKET_INFO` | 3 TPS |
-| `MARKET_DATA` | 10 TPS |
-| `MARKET_DATA_CHART` | 5 TPS |
-| `ORDER` | 6 TPS, 09:00-09:10 KST에는 3 TPS |
+| `MARKET_DATA` | 15 TPS |
+| `MARKET_DATA_CHART` | 20 TPS |
+| `ORDER` | 10 TPS |
 | `ORDER_HISTORY` | 5 TPS |
 | `ORDER_INFO` | 6 TPS, 09:00-09:10 KST에는 3 TPS |
 

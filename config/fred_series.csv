@@ -1,8 +1,0 @@
-series_id,enabled,rights_review,role,source_url,notes
-DTB3,true,approved,absolute_momentum_cash_hurdle,https://fred.stlouisfed.org/series/DTB3,3-month Treasury bill secondary market rate; public domain citation requested reviewed 2026-07-30
-DGS2,true,approved,rate_regime_2y,https://fred.stlouisfed.org/series/DGS2,2-year Treasury constant maturity rate; public domain citation requested reviewed 2026-07-30
-DGS10,true,approved,rate_regime_10y,https://fred.stlouisfed.org/series/DGS10,10-year Treasury constant maturity rate; public domain citation requested reviewed 2026-07-30
-FEDFUNDS,true,approved,monetary_policy_regime,https://fred.stlouisfed.org/series/FEDFUNDS,Effective federal funds rate; public domain citation requested reviewed 2026-07-30
-CPIAUCSL,true,approved,inflation_regime,https://fred.stlouisfed.org/series/CPIAUCSL,Consumer price index; public domain citation requested reviewed 2026-07-30
-UNRATE,true,approved,employment_regime,https://fred.stlouisfed.org/series/UNRATE,Civilian unemployment rate; public domain citation requested reviewed 2026-07-30
-VIXCLS,false,pending_cboe_copyright_permission,risk_regime,https://fred.stlouisfed.org/series/VIXCLS,CBOE volatility index

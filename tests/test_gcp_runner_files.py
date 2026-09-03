@@ -36,16 +36,6 @@ class GcpRunnerFilesTest(unittest.TestCase):
             "deploy/monitoring/log-metrics.yaml",
             "deploy/systemd/toss-foundation.service",
             "deploy/systemd/toss-foundation.timer",
-            "scripts/check_research_identity_gcp.sh",
-            "scripts/audit_active_research_release.sh",
-            "scripts/run_paper_operation_gcp.sh",
-            "scripts/bootstrap_research_vm.sh",
-            "deploy/systemd/toss-paper-operation.service",
-            "deploy/systemd/toss-paper-operation.timer",
-            "scripts/run_stock_recommendations_gcp.sh",
-            "deploy/systemd/toss-stock-recommendations.service",
-            "deploy/systemd/toss-stock-recommendations.timer",
-            "docs/27_p0_identity_and_holdout_remediation.md",
         ]:
             self.assertTrue(Path(path).exists(), path)
 
@@ -83,8 +73,6 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("trap on_error ERR", runner)
         self.assertIn("date -u", runner)
         self.assertIn("foundation_runner_ok", runner)
-        self.assertIn("research_export_cost_model", runner)
-        self.assertIn("foundation_research_cost_calibration_ok", runner)
 
     def test_cloud_monitoring_event_contract_is_documented_and_emitted(self):
         docs = Path("docs/16_cloud_monitoring_runner_health.md").read_text(encoding="utf-8")
@@ -141,95 +129,6 @@ class GcpRunnerFilesTest(unittest.TestCase):
         self.assertIn("OnUnitActiveSec=6h", timer)
         self.assertIn("Persistent=true", timer)
 
-    def test_research_identity_is_separate_and_foundation_secrets_are_forbidden(self):
-        service = Path(
-            "deploy/systemd/toss-research-automation@.service"
-        ).read_text(encoding="utf-8")
-        provisioner = Path(
-            "scripts/provision_research_automation_gcp.sh"
-        ).read_text(encoding="utf-8")
-        checker = Path("scripts/check_research_identity_gcp.sh").read_text(
-            encoding="utf-8"
-        )
-
-        self.assertIn("toss-research-client-id", service)
-        self.assertIn("toss-research-client-secret", service)
-        self.assertNotIn("Environment=TOSS_CLIENT_ID_SECRET=toss-client-id", service)
-        self.assertIn("toss-research-runner", provisioner)
-        self.assertIn("refuses the Foundation service account", provisioner)
-        self.assertIn("foundation_secret_access", checker)
-        self.assertIn("research_record_observation", provisioner + service + Path(
-            "scripts/run_research_automation_gcp.sh"
-        ).read_text(encoding="utf-8"))
-        research_runner = Path("scripts/run_research_automation_gcp.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("--cross-provider-source", research_runner)
-        self.assertIn("research_validate_instruments", research_runner)
-        self.assertIn("research_instrument_identity_ok", research_runner)
-        self.assertIn("--instrument-master", research_runner)
-        self.assertIn("--cost-calibration", research_runner)
-        self.assertIn("RESEARCH_EXECUTION_COST_CALIBRATION", research_runner)
-        self.assertIn(
-            "CLOUDSDK_CONFIG=/home/seoje/toss-trading/research-runtime/gcloud",
-            service,
-        )
-        self.assertNotIn(
-            "CLOUDSDK_CONFIG=/home/seoje/toss-trading/runtime/gcloud",
-            service,
-        )
-        self.assertIn("RESEARCH_EXECUTION_COST_CALIBRATION", research_runner)
-        self.assertNotIn(
-            "RESEARCH_EXECUTION_COST_CALIBRATION_SECRET=research-execution-cost-calibration",
-            service,
-        )
-
-    def test_release_audit_and_prune_do_not_depend_on_release_mode_bits(self):
-        audit = Path("scripts/audit_active_research_release.sh").read_text(
-            encoding="utf-8"
-        )
-        prune = Path("deploy/systemd/toss-research-prune.service").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("sha256sum -c SHA256SUMS", audit)
-        self.assertIn("revision_mismatch", audit)
-        self.assertIn('payload["code_revision"]', audit)
-        self.assertNotIn('payload["strategy"]["code_revision"]', audit)
-        self.assertIn("prune_not_verified", audit)
-        self.assertIn("/usr/bin/bash", prune)
-
-    def test_paper_service_is_local_only_and_hardened(self):
-        service = Path(
-            "deploy/systemd/toss-paper-operation.service"
-        ).read_text(encoding="utf-8")
-        timer = Path("deploy/systemd/toss-paper-operation.timer").read_text(
-            encoding="utf-8"
-        )
-        runner = Path("scripts/run_paper_operation_gcp.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("NoNewPrivileges=true", service)
-        self.assertIn("CapabilityBoundingSet=", service)
-        self.assertIn("ReadOnlyPaths=/home/seoje/toss-trading/research-runtime", service)
-        self.assertIn("ReadWritePaths=/home/seoje/toss-trading/paper-runtime", service)
-        self.assertNotIn("toss-client-id", service + runner)
-        self.assertNotIn("TOSS_ACCOUNT_SEQ", service + runner)
-        self.assertIn(
-            "CLOUDSDK_CONFIG=/home/seoje/toss-trading/paper-runtime/gcloud",
-            service,
-        )
-        self.assertIn("Persistent=true", timer)
-        self.assertIn("paper_operation_ok", runner)
-        self.assertIn('CALIBRATION_SECRET="${RESEARCH_EXECUTION_COST_CALIBRATION_SECRET:-}"', runner)
-
-        stock_service = Path(
-            "deploy/systemd/toss-stock-recommendations.service"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            "CLOUDSDK_CONFIG=/home/seoje/toss-trading/stock-recommendation-runtime/gcloud",
-            stock_service,
-        )
-
     def test_ops_agent_collects_and_parses_foundation_jsonl(self):
         config = Path("deploy/ops-agent/toss-foundation.yaml").read_text(
             encoding="utf-8"
@@ -240,19 +139,6 @@ class GcpRunnerFilesTest(unittest.TestCase):
         )
         self.assertIn("type: parse_json", config)
         self.assertIn("toss_foundation_pipeline", config)
-
-    def test_research_vm_installer_never_installs_foundation_services(self):
-        installer = Path("scripts/install_research_automation_vm.sh").read_text(
-            encoding="utf-8"
-        )
-        research_ops = Path("deploy/ops-agent/toss-research.yaml").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn("toss-foundation.service", installer)
-        self.assertNotIn("toss-foundation.timer", installer)
-        self.assertIn("toss-paper-operation.timer", installer)
-        self.assertIn("toss-stock-recommendations.timer", installer)
-        self.assertNotIn("foundation_runner.jsonl", research_ops)
 
     def test_additional_monitoring_policies_cover_backup_and_overlap(self):
         backup_policy = Path(

@@ -1,7 +1,7 @@
 [project]
 name = "toss-trading"
-version = "0.1.0"
-description = "USD-based multi-engine auto-trading research foundation"
+version = "0.2.0"
+description = "Toss Invest Open API account-state and market-data foundation"
 requires-python = ">=3.11"
 dependencies = [
   "google-cloud-secret-manager>=2.20,<3",
@@ -10,24 +10,9 @@ dependencies = [
 ]
 
 [project.scripts]
-toss-research-ingest-bars = "toss_trading.cli.research_ingest_bars:main"
-toss-research-backtest = "toss_trading.cli.research_backtest:main"
-toss-research-collect-toss = "toss_trading.cli.research_collect_toss:main"
-toss-research-collect-toss-reference = "toss_trading.cli.research_collect_toss_reference:main"
-toss-research-collect-tiingo = "toss_trading.cli.research_collect_tiingo:main"
-toss-research-collect-sec = "toss_trading.cli.research_collect_sec:main"
-toss-research-collect-fred = "toss_trading.cli.research_collect_fred:main"
-toss-research-export-cost-model = "toss_trading.cli.research_export_cost_model:main"
-toss-research-validate-bars = "toss_trading.cli.research_validate_bars:main"
-toss-research-validate-instruments = "toss_trading.cli.research_validate_instruments:main"
-toss-research-automation = "toss_trading.cli.research_automation:main"
-toss-research-reporting = "toss_trading.cli.research_reporting:main"
-toss-research-plan-hypotheses = "toss_trading.cli.research_plan_hypotheses:main"
-toss-research-evaluate-hypotheses = "toss_trading.cli.research_evaluate_hypotheses:main"
-toss-paper-operation = "toss_trading.cli.paper_operation:main"
-toss-research-recommend-stocks = "toss_trading.cli.research_recommend_stocks:main"
-toss-research-collect-massive = "toss_trading.cli.research_collect_massive:main"
-toss-research-validate-focus-dossier = "toss_trading.cli.research_validate_focus_dossier:main"
+toss-foundation-snapshot = "toss_trading.cli.foundation_snapshot:main"
+toss-foundation-audit = "toss_trading.cli.foundation_audit:main"
+toss-foundation-replay = "toss_trading.cli.foundation_replay:main"
 
 [project.optional-dependencies]
 test = [
@@ -35,9 +20,6 @@ test = [
   "pytest>=8,<9",
   "setuptools>=69,<81",
   "shellcheck-py>=0.10,<0.11",
-]
-research = [
-  "duckdb>=1.4,<2",
 ]
 
 [build-system]
@@ -49,8 +31,8 @@ where = ["src"]
 
 [tool.setuptools.data-files]
 "share/toss-trading/schemas" = ["schemas/trading_ledger.sql"]
-"share/toss-trading/config" = ["config/default_policy.yaml", "config/data_sources.yaml", "config/fred_series.csv", "config/autonomous_research_policy.json", "config/research_validation_protocol.json", "config/stock_recommendation_policy.json", "config/focused_research_policy.json"]
-"share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv", "data/instrument_history.csv", "data/corporate_actions.csv"]
+"share/toss-trading/config" = ["config/default_policy.yaml", "config/toss_openapi_contract.json"]
+"share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
