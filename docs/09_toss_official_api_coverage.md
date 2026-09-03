@@ -5,14 +5,14 @@
 ## Official Base
 
 - Approved schema version: `1.2.14`
-- Approved SHA-256: `fccf49abd11f37f557bdd349138f4a03c42b829ebd8b5c14ab4907116fb84c7a`
+- Approved SHA-256: `a7b32ba754401d13fa649ba91eebd212420eb1afab28e9c2c0d6ea8d43055fed`
 - Base server: `https://openapi.tossinvest.com`
 - Auth: OAuth2 Client Credentials Grant
 - Token endpoint: `POST /oauth2/token`
 - Account context header: `X-Tossinvest-Account: {accountSeq}`
-- Runtime style: REST API
+- Runtime style: REST API (read-only Foundation)
 
-2026-08-20 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
+2026-09-03 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
 OpenAPI version `1.2.14`를 확인했습니다. 현재 공식 paths에는 별도 현금
 잔고 또는 balance endpoint가 없고, 현금 관련 주문 전 constraint는
 `GET /api/v1/buying-power`의 `cashBuyingPower`입니다. 따라서 내부 초기
@@ -62,7 +62,10 @@ OpenAPI 1.2.14에는 `/api/v1/conditional-orders`의 `SINGLE`, `OCO`, `OTO`
 조건주문도 포함됩니다. 이 경로들은 계약에는 기록했지만
 `config/default_policy.yaml`에서 계속 비활성화하며, 현재
 `TossReadOnlyAdapter`는 생성·정정·취소할 수 없습니다. 승인된 경로와 method는
-`config/toss_openapi_contract.json`에 고정합니다.
+`config/toss_openapi_contract.json`에 고정합니다. 계약 검사는 공식 문서의
+33개 path에 속한 모든 HTTP method가 승인 또는 명시적 비활성 중 하나로
+분류됐는지도 확인합니다. 새 endpoint가 문서에 추가되면 해시를 갱신하는
+것만으로는 통과하지 않습니다.
 
 - `clientOrderId`는 멱등성 키입니다.
 - `clientOrderId` 미전달 시 멱등성이 적용되지 않습니다.
@@ -171,7 +174,8 @@ Rate limit은 client x API group 기준입니다. 현재 공식 overview 기준:
 - T-bill 또는 채권 직접 보유/담보 API
 - margin requirement breakdown
 - borrow rate, short availability
-- webhook 또는 websocket stream
+- webhook
+- WebSocket 런타임 연동(공식 AsyncAPI 3.0 계약은 별도로 제공되지만 현재 비활성)
 - tax lot/cost basis API
 - 배당/원천징수/corporate action cashflow 이벤트 API
 - ETF NAV, premium/discount, ROC 분배 구성

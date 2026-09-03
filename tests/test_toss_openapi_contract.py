@@ -59,6 +59,34 @@ class TossOpenApiContractTest(unittest.TestCase):
         self.assertTrue(any("missing path" in error for error in errors))
         self.assertTrue(any("must remain disabled" in error for error in errors))
 
+    def test_unreviewed_official_operation_is_rejected(self):
+        policy, review, body = contract_fixture()
+        document = json.loads(body)
+        document["paths"]["/api/v1/new-endpoint"] = {"get": {}}
+        changed_body = json.dumps(document, sort_keys=True).encode()
+        digest = hashlib.sha256(changed_body).hexdigest()
+        policy["runtime"]["toss_openapi_schema_hash"] = digest
+        review["approved_sha256"] = digest
+
+        errors = verify_openapi_document(policy, review, changed_body)
+
+        self.assertIn("unreviewed operation GET /api/v1/new-endpoint", errors)
+
+    def test_required_write_and_duplicate_classification_are_rejected(self):
+        policy, review, body = contract_fixture()
+        review["required_operations"]["/api/v1/conditional-orders"] = ["post"]
+
+        errors = verify_openapi_document(policy, review, body)
+
+        self.assertIn(
+            "operation classified twice: POST /api/v1/conditional-orders",
+            errors,
+        )
+        self.assertIn(
+            "write operation cannot be required: POST /api/v1/conditional-orders",
+            errors,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
