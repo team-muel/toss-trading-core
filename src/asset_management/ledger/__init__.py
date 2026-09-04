@@ -4,10 +4,16 @@ from .posting import ExecutionLedgerPoster, ExecutionPosting, ExecutionPostingCo
 from .positions import PositionLedger, PositionState
 from .replay import LedgerReplay, LedgerReplayResult
 from .tax_lots import TaxLot, TaxLotLedger
+from .reconciliation import (
+    AccountReconciler, ReconciliationFact, ReconciliationPolicy,
+    ReconciliationStatus, ReconciliationTarget, ToleranceRule, TradeGate,
+)
 
 __all__ = [
     "BrokerConstraint", "CashEventType", "CashLedger", "CashState", "OpenBuyOrder",
     "ExecutionLedgerPoster", "ExecutionPosting", "ExecutionPostingContext",
     "PositionLedger", "PositionState", "LedgerReplay", "LedgerReplayResult",
     "TaxLot", "TaxLotLedger",
+    "AccountReconciler", "ReconciliationFact", "ReconciliationPolicy",
+    "ReconciliationStatus", "ReconciliationTarget", "ToleranceRule", "TradeGate",
 ]

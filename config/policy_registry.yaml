@@ -37,7 +37,7 @@ policies:
     version: execution-v0-draft
     status: DRAFT
     document: docs/execution_policy.md
-    document_hash: 9c6afe0119943a1e4e40dbb0e2a42c2d59df0e57076c1df8307a27ce2f2042b7
+    document_hash: 8d69352898819dec782f432eb265bbe0c0235736accf0ca9f5722547fdce5bd9
     effective_from: null
     effective_to: null
     approved_by: null

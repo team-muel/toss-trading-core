@@ -9,10 +9,11 @@ and exact reconciliation. Individual-stock research is outside this phase.
 
 ## Mandatory runtime order
 
-Investment policy -> account truth -> time truth -> data truth -> financial
-calculation -> target portfolio -> risk control -> order -> fill -> ledger ->
-broker reconciliation. Every stage records immutable evidence. Missing evidence
-stops the run; a later stage may never repair an earlier one.
+Investment policy -> account truth -> time truth -> ledger replay/account
+reconciliation -> data truth -> financial calculation -> target portfolio -> risk
+control -> order -> fill -> ledger -> post-trade reconciliation. Every stage records
+immutable evidence. Missing evidence stops the run; a later stage may never repair an
+earlier one.
 
 The application is `src/asset_management`. The verified legacy Toss client is
 temporarily isolated behind `broker/toss_read.py`; investment logic cannot import

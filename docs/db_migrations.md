@@ -35,3 +35,7 @@ For pre-v6 rows, tax-lot timing is derived only from the immutable originating
 execution or opening timestamp, disposal timing from its execution delta, and manual
 authorization from complete existing metadata. Records without such evidence remain
 unreconciled and fail closed instead of receiving a fabricated timestamp or approval.
+
+Migration 7 adds approved account-reconciliation tolerance policies, immutable runs
+and item comparisons, persistent issues and explicit resolutions, the effective
+`RESOLVED` issue view, and the database order-intent reconciliation guard.

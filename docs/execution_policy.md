@@ -11,3 +11,6 @@
 - Writes require durable idempotency keys. Duplicate delivery must not duplicate
   cash, positions, fills, or orders.
 - Unknown broker status or incomplete reconciliation produces NO_TRADE.
+- A new order intent requires the latest account reconciliation, no failed current
+  item, no unresolved historical issue, and immutable reconciliation authorization.
+  The database enforces this even when application code is bypassed.

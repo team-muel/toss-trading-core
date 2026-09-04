@@ -25,7 +25,7 @@ def test_real_read_only_configuration_boots_and_applies_migrations_once():
     )
     first = ApplicationRuntime.boot(**kwargs)
     second = ApplicationRuntime.boot(**kwargs)
-    assert first.migration_versions == (1, 2, 3, 4, 5, 6)
+    assert first.migration_versions == (1, 2, 3, 4, 5, 6, 7)
     assert second.migration_versions == ()
     assert first.policies is not None
     assert first.policies.policies["data"].is_effective(NOW)
