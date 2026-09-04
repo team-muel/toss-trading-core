@@ -30,7 +30,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.data-files]
-"share/toss-trading/schemas" = ["schemas/trading_ledger.sql", "schemas/asset_management.sql"]
+"share/toss-trading/schemas" = ["schemas/trading_ledger.sql", "schemas/asset_management.sql", "schemas/migrations/0002_toss_read_only.sql"]
 "share/toss-trading/config" = ["config/default_policy.yaml", "config/policy_registry.yaml", "config/toss_openapi_contract.json"]
 "share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv"]
 

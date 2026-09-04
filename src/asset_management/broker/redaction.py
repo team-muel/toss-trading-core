@@ -1,6 +1,9 @@
 """Redaction boundary for broker payloads."""
 
-SENSITIVE_KEYS = frozenset({"access_token", "refresh_token", "accountseq", "account_no"})
+SENSITIVE_KEYS = frozenset({
+    "access_token", "refresh_token", "id_token", "client_secret", "authorization",
+    "accountno", "accountnumber", "account_no", "residentnumber", "phone", "email",
+})
 
 
 def redact(value: object) -> object:
@@ -9,3 +12,10 @@ def redact(value: object) -> object:
     if isinstance(value, list):
         return [redact(item) for item in value]
     return value
+
+
+def sanitized_headers(headers: dict[str, str]) -> dict[str, str]:
+    """Retain operational headers while removing credentials and cookies entirely."""
+
+    blocked = {"authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key"}
+    return {key: item for key, item in headers.items() if key.lower() not in blocked}
