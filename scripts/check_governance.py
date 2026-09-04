@@ -1,4 +1,5 @@
 from pathlib import Path
+from hashlib import sha256
 import sys
 
 import yaml
@@ -54,8 +55,21 @@ def validate() -> list[str]:
         if record.get("status") not in {"DRAFT", "ACCEPTED", "RETIRED"}:
             errors.append(f"{kind} policy has invalid status")
         document = record.get("document")
-        if not isinstance(document, str) or not (ROOT / document).is_file():
+        document_path = ROOT / document if isinstance(document, str) else None
+        if document_path is None or not document_path.is_file():
             errors.append(f"{kind} policy document does not exist")
+        else:
+            expected_hash = record.get("document_hash")
+            actual_hash = sha256(document_path.read_bytes()).hexdigest()
+            if expected_hash != actual_hash:
+                errors.append(f"{kind} policy document hash does not match")
+        status = record.get("status")
+        effective_from = record.get("effective_from")
+        approved_by = record.get("approved_by")
+        if status == "ACCEPTED" and (effective_from is None or not approved_by):
+            errors.append(f"{kind} accepted policy lacks effectivity or approval")
+        if status == "DRAFT" and (effective_from is not None or approved_by is not None):
+            errors.append(f"{kind} draft policy must not be effective or approved")
     if len(versions) != len(set(versions)):
         errors.append("policy versions must be unique")
     return errors

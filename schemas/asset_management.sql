@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS am_raw_api_response (
   raw_response_id TEXT PRIMARY KEY,
   source TEXT NOT NULL,
   endpoint TEXT NOT NULL,
-  http_method TEXT NOT NULL CHECK (http_method = 'GET' OR endpoint = '/oauth2/token'),
+  http_method TEXT NOT NULL CHECK (http_method = 'GET' OR (endpoint = '/oauth2/token' AND http_method = 'POST')),
   request_hash TEXT NOT NULL,
   status_code INTEGER NOT NULL,
   response_hash TEXT NOT NULL,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS am_account_snapshot (
   runtime_run_id TEXT NOT NULL REFERENCES am_runtime_run(runtime_run_id),
   account_id TEXT NOT NULL,
   observed_at_utc TEXT NOT NULL,
-  source_response_id TEXT NOT NULL,
+  source_response_id TEXT NOT NULL REFERENCES am_raw_api_response(raw_response_id),
   payload_json TEXT NOT NULL,
   content_hash TEXT NOT NULL
 );
@@ -53,13 +53,19 @@ CREATE TABLE IF NOT EXISTS am_holding_snapshot (
   payload_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS am_account_snapshot_raw (
+  account_snapshot_id TEXT NOT NULL REFERENCES am_account_snapshot(account_snapshot_id),
+  raw_response_id TEXT NOT NULL REFERENCES am_raw_api_response(raw_response_id),
+  PRIMARY KEY (account_snapshot_id, raw_response_id)
+);
+
 CREATE TABLE IF NOT EXISTS am_broker_order (
   broker_order_id TEXT PRIMARY KEY,
   runtime_run_id TEXT NOT NULL REFERENCES am_runtime_run(runtime_run_id),
   account_id TEXT NOT NULL,
   status TEXT NOT NULL,
   payload_json TEXT NOT NULL,
-  source_response_id TEXT NOT NULL
+  source_response_id TEXT NOT NULL REFERENCES am_raw_api_response(raw_response_id)
 );
 
 CREATE TABLE IF NOT EXISTS am_execution (
@@ -70,7 +76,7 @@ CREATE TABLE IF NOT EXISTS am_execution (
   commission_decimal TEXT NOT NULL,
   tax_decimal TEXT NOT NULL,
   executed_at_utc TEXT NOT NULL,
-  source_response_id TEXT NOT NULL
+  source_response_id TEXT NOT NULL REFERENCES am_raw_api_response(raw_response_id)
 );
 
 CREATE TABLE IF NOT EXISTS am_cash_ledger (
@@ -177,7 +183,7 @@ CREATE TABLE IF NOT EXISTS am_risk_model_run (
 
 CREATE TABLE IF NOT EXISTS am_policy_version (
   policy_version TEXT PRIMARY KEY,
-  policy_kind TEXT NOT NULL CHECK (policy_kind IN ('investment', 'risk', 'execution', 'promotion', 'tax')),
+  policy_kind TEXT NOT NULL CHECK (policy_kind IN ('investment', 'risk', 'data', 'temporal', 'execution', 'promotion', 'tax')),
   effective_from_utc TEXT NOT NULL,
   effective_to_utc TEXT,
   approved_by TEXT NOT NULL,
@@ -216,7 +222,7 @@ CREATE TABLE IF NOT EXISTS am_order_intent (
   order_intent_id TEXT PRIMARY KEY,
   risk_decision_id TEXT NOT NULL REFERENCES am_risk_decision(risk_decision_id),
   idempotency_key TEXT NOT NULL UNIQUE,
-  mode TEXT NOT NULL CHECK (mode IN ('PAPER', 'SHADOW', 'LIVE')),
+  mode TEXT NOT NULL CHECK (mode IN ('PAPER', 'SHADOW')),
   payload_json TEXT NOT NULL,
   content_hash TEXT NOT NULL
 );
@@ -269,3 +275,11 @@ CREATE TRIGGER IF NOT EXISTS am_raw_response_no_update
 BEFORE UPDATE ON am_raw_api_response BEGIN SELECT RAISE(ABORT, 'raw API responses are append-only'); END;
 CREATE TRIGGER IF NOT EXISTS am_raw_response_no_delete
 BEFORE DELETE ON am_raw_api_response BEGIN SELECT RAISE(ABORT, 'raw API responses are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS am_account_snapshot_no_update
+BEFORE UPDATE ON am_account_snapshot BEGIN SELECT RAISE(ABORT, 'account snapshots are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS am_account_snapshot_no_delete
+BEFORE DELETE ON am_account_snapshot BEGIN SELECT RAISE(ABORT, 'account snapshots are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS am_source_health_no_update
+BEFORE UPDATE ON am_source_health BEGIN SELECT RAISE(ABORT, 'source health events are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS am_source_health_no_delete
+BEFORE DELETE ON am_source_health BEGIN SELECT RAISE(ABORT, 'source health events are append-only'); END;

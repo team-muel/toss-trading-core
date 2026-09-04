@@ -5,27 +5,55 @@ policies:
     version: investment-v0-draft
     status: DRAFT
     document: docs/investment_policy.md
+    document_hash: 51eeb4fc0ea461a46ddebc4b277bf59d6a5fccb90e83016f0a99ec1c11551954
+    effective_from: null
+    effective_to: null
+    approved_by: null
   risk:
     version: risk-v0-draft
     status: DRAFT
     document: docs/risk_policy.md
+    document_hash: 8b8f7d0aca9f64bbabcb723c73bf4492f81708fc90726c1b63d8bedd002f3111
+    effective_from: null
+    effective_to: null
+    approved_by: null
   data:
     version: data-v0
     status: ACCEPTED
     document: docs/data_policy.md
+    document_hash: ff9f7a56a658e4bdd15f41ed5447198393185a72f857ae4b13a4af71f7fdc539
+    effective_from: 2026-09-04T00:00:00Z
+    effective_to: null
+    approved_by: user-design-stage-0
   temporal:
     version: temporal-v0
     status: ACCEPTED
     document: docs/temporal_policy.md
+    document_hash: e796b56a5ac7de0b231ca18c35b6be9fc0b556d575f7042cfeb6f24c407d98b4
+    effective_from: 2026-09-04T00:00:00Z
+    effective_to: null
+    approved_by: user-design-stage-0
   execution:
     version: execution-v0-draft
     status: DRAFT
     document: docs/execution_policy.md
+    document_hash: 9c6afe0119943a1e4e40dbb0e2a42c2d59df0e57076c1df8307a27ce2f2042b7
+    effective_from: null
+    effective_to: null
+    approved_by: null
   promotion:
     version: promotion-v0
     status: ACCEPTED
     document: docs/promotion_policy.md
+    document_hash: c614a5c18f725d38636f9257f617e74e26d5d508dee274731d117bc0f3ceac3b
+    effective_from: 2026-09-04T00:00:00Z
+    effective_to: null
+    approved_by: user-design-stage-0
   tax:
     version: tax-v0-draft
     status: DRAFT
     document: docs/investment_policy.md
+    document_hash: 51eeb4fc0ea461a46ddebc4b277bf59d6a5fccb90e83016f0a99ec1c11551954
+    effective_from: null
+    effective_to: null
+    approved_by: null

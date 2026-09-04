@@ -23,3 +23,14 @@ coerced to a known enum and block affected order decisions.
 Rate limits use a token bucket per API group. Existing order state and reconciliation
 reads take precedence over new market-data reads. Under limit pressure the system
 degrades new reads, never account truth.
+
+The read adapter builds account truth only from persisted raw response identifiers.
+A complete collection includes accounts, holdings, open and closed orders, order
+details, currency buying power, per-position sellable quantities, commissions,
+KR/US calendars, and instrument reference data. The consistency operation performs
+two independent collections and blocks with `UNRECONCILED` semantics when their
+non-volatile account sections disagree.
+
+Read-only replay verifies each stored response hash and never contacts Toss. HTTP,
+schema, unknown-state, and repeated-read consistency failures are written to source
+health as blocking evidence. No write endpoint is reachable from this layer.

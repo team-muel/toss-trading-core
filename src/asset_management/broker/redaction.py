@@ -2,7 +2,8 @@
 
 SENSITIVE_KEYS = frozenset({
     "access_token", "refresh_token", "id_token", "client_secret", "authorization",
-    "accountno", "accountnumber", "account_no", "residentnumber", "phone", "email",
+    "accountno", "accountnumber", "account_no", "accountseq", "account_seq",
+    "accountid", "account_id", "customerid", "customer_id", "residentnumber", "phone", "email",
 })
 
 

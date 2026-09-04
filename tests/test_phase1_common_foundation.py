@@ -115,3 +115,10 @@ def test_migration_sequence_cannot_have_gaps():
         Migrator(sqlite3.connect(":memory:"), FrozenClock(NOW)).migrate(
             (Migration(1, "one", "SELECT 1;"), Migration(3, "three", "SELECT 3;"))
         )
+
+
+def test_migration_sequence_cannot_start_after_one():
+    with pytest.raises(ConfigurationError, match="start at version 1"):
+        Migrator(sqlite3.connect(":memory:"), FrozenClock(NOW)).migrate(
+            (Migration(2, "two", "SELECT 2;"),)
+        )

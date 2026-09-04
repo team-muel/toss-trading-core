@@ -73,6 +73,53 @@ class SQLiteRawResponseStore:
             )
         return identifier
 
+    def append_health(
+        self,
+        *,
+        raw_response_id: str | None,
+        source: str,
+        endpoint: str,
+        status: str,
+        reason: str | None,
+        observed_at: datetime,
+    ) -> str:
+        if status not in {"OK", "DEGRADED", "BLOCKED"}:
+            raise ValueError("invalid source health status")
+        if observed_at.tzinfo is None or observed_at.utcoffset() != timezone.utc.utcoffset(None):
+            raise ValueError("observed_at must be timezone-aware UTC")
+        identifier = str(uuid4())
+        with self._conn:
+            self._conn.execute(
+                """
+                INSERT INTO am_source_health (
+                  health_event_id, raw_response_id, source, endpoint, status, reason, observed_at_utc
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (identifier, raw_response_id, source, endpoint, status, reason, observed_at.isoformat()),
+            )
+        return identifier
+
+    def verified(self, raw_response_id: str) -> RawApiResponse:
+        row = self._conn.execute(
+            """
+            SELECT source, endpoint, http_method, request_hash, status_code, response_hash,
+                   body_json, requested_at_utc, received_at_utc, account_id,
+                   schema_version, headers_json
+            FROM am_raw_api_response WHERE raw_response_id = ?
+            """,
+            (raw_response_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(raw_response_id)
+        body = json.loads(row[6])
+        if _hash(body) != row[5]:
+            raise ValueError(f"raw response hash mismatch: {raw_response_id}")
+        return RawApiResponse(
+            str(row[0]), str(row[1]), str(row[2]), str(row[3]), int(row[4]), str(row[5]),
+            body, datetime.fromisoformat(str(row[7])), datetime.fromisoformat(str(row[8])),
+            str(row[9]) if row[9] is not None else None, str(row[10]), json.loads(row[11]),
+        )
+
 
 def _canonical(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

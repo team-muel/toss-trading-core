@@ -1,6 +1,6 @@
 """Broker-specific rate-limit policies; implementation is adapted from toss_trading.runtime."""
 
-from toss_trading.runtime.rate_limit import TokenBucket
+from toss_trading.runtime.rate_limit import PriorityTokenBucket, TokenBucket
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Iterable
@@ -23,4 +23,4 @@ class PrioritizedRead:
 def priority_order(requests: Iterable[PrioritizedRead]) -> tuple[PrioritizedRead, ...]:
     return tuple(sorted(requests, key=lambda item: (item.priority, item.sequence)))
 
-__all__ = ["PrioritizedRead", "ReadPriority", "TokenBucket", "priority_order"]
+__all__ = ["PrioritizedRead", "PriorityTokenBucket", "ReadPriority", "TokenBucket", "priority_order"]

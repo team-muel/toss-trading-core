@@ -7,12 +7,13 @@ import urllib.parse
 import urllib.request
 import time
 from dataclasses import dataclass, replace
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Callable
 
 from toss_trading.account.ledger import AccountLedger
 from toss_trading.broker.base import BrokerCapabilities
 from toss_trading.broker.credentials import TossCredentials
-from toss_trading.runtime import TokenBucket
+from toss_trading.runtime import PriorityTokenBucket, TokenBucket
 
 
 SECRET_RESPONSE_KEYS = {"access_token", "refresh_token", "id_token"}
@@ -129,12 +130,25 @@ def _response_request_id(headers: dict[str, str], body: Any) -> str | None:
     return _header(headers, "X-Request-Id") or _extract_toss_error(body).get("request_id")
 
 
+def _request_priority(endpoint: str) -> int:
+    path = endpoint.split("?", 1)[0]
+    if path == "/api/v1/orders" or path.startswith("/api/v1/orders/"):
+        return 0
+    if path in {
+        "/api/v1/accounts", "/api/v1/holdings", "/api/v1/buying-power",
+        "/api/v1/sellable-quantity", "/api/v1/commissions",
+    }:
+        return 2
+    return 3
+
+
 @dataclass(frozen=True)
 class TossApiResult:
     endpoint: str
     status_code: int
     body: Any
     raw_response_id: str
+    response_headers: dict[str, str] | None = None
 
 
 class TossReadOnlyAdapter:
@@ -157,28 +171,41 @@ class TossReadOnlyAdapter:
         credentials: TossCredentials,
         ledger: AccountLedger | None = None,
         rate_limiter: TokenBucket | None = None,
+        raw_response_store: Any | None = None,
+        now_utc: Callable[[], datetime] | None = None,
+        schema_version: str = "1.2.14",
     ) -> None:
         self.credentials = credentials
         self.ledger = ledger
         self._access_token: str | None = None
         self._access_token_expires_at: float = 0.0
         self.run_id: str | None = None
+        self.raw_response_store = raw_response_store
+        self._now_utc = now_utc or (lambda: datetime.now(timezone.utc))
+        self.schema_version = schema_version
         default_limiter = rate_limiter or TokenBucket(
             capacity=float(os.environ.get("TOSS_RATE_LIMIT_CAPACITY", "20")),
             refill_per_second=float(os.environ.get("TOSS_RATE_LIMIT_REFILL_PER_SECOND", "5")),
         )
         self.rate_limiter = default_limiter
         self.rate_limiters: dict[str, TokenBucket] = {"DEFAULT": default_limiter}
+        self.priority_limiters: dict[str, PriorityTokenBucket] = {
+            "DEFAULT": PriorityTokenBucket(default_limiter)
+        }
 
     def with_account(self, account_seq: str) -> "TossReadOnlyAdapter":
         clone = TossReadOnlyAdapter(
             replace(self.credentials, account_seq=account_seq),
             ledger=self.ledger,
             rate_limiter=self.rate_limiter,
+            raw_response_store=self.raw_response_store,
+            now_utc=self._now_utc,
+            schema_version=self.schema_version,
         )
         clone._access_token = self._access_token
         clone._access_token_expires_at = self._access_token_expires_at
         clone.rate_limiters = self.rate_limiters
+        clone.priority_limiters = self.priority_limiters
         clone.run_id = self.run_id
         return clone
 
@@ -249,7 +276,13 @@ class TossReadOnlyAdapter:
                 capacity=float(os.environ.get("TOSS_RATE_LIMIT_CAPACITY", "5")),
                 refill_per_second=float(os.environ.get("TOSS_RATE_LIMIT_REFILL_PER_SECOND", "5")),
             )
+            self.priority_limiters[group] = PriorityTokenBucket(self.rate_limiters[group])
         return self.rate_limiters[group]
+
+    def _priority_limiter_for(self, endpoint: str) -> PriorityTokenBucket:
+        group = self._api_group(endpoint)
+        self._limiter_for(endpoint)
+        return self.priority_limiters[group]
 
     def refresh_token(self) -> TossApiResult:
         endpoint = "/oauth2/token"
@@ -735,9 +768,11 @@ class TossReadOnlyAdapter:
         status_code = 0
         response_headers: dict[str, str] = {}
         limiter = self._limiter_for(endpoint)
+        priority_limiter = self._priority_limiter_for(endpoint)
         retry_count = 0
+        requested_at = self._now_utc()
         while True:
-            limiter.acquire()
+            priority_limiter.acquire(_request_priority(endpoint))
             try:
                 with urllib.request.urlopen(request, timeout=15) as response:
                     status_code = response.status
@@ -748,6 +783,21 @@ class TossReadOnlyAdapter:
                 response_headers = dict(exc.headers.items())
                 raw = _decode_response(exc.read())
             except urllib.error.URLError as exc:
+                received_at = self._now_utc()
+                new_raw_id = self._save_new_raw_response(
+                    endpoint=endpoint,
+                    method=request.get_method(),
+                    request_payload=request_payload,
+                    status_code=0,
+                    body={"network_error": str(exc.reason)},
+                    requested_at=requested_at,
+                    received_at=received_at,
+                    headers={},
+                    account_seq=dict(request.header_items()).get("X-tossinvest-account"),
+                )
+                self._save_new_health(
+                    new_raw_id, endpoint, "BLOCKED", f"network_error:{exc.reason}", received_at
+                )
                 if self.ledger is not None:
                     self.ledger.record_source_health(
                         source="toss",
@@ -765,6 +815,7 @@ class TossReadOnlyAdapter:
                 continue
             break
         body = _parse_response_body(raw)
+        received_at = self._now_utc()
         request_headers = {key.lower(): value for key, value in request.header_items()}
         account_seq = request_headers.get("x-tossinvest-account")
         raw_response_id = ""
@@ -792,6 +843,26 @@ class TossReadOnlyAdapter:
                 last_success_at=None if status_code >= 400 else None,
                 run_id=self.run_id,
             )
+        new_raw_id = self._save_new_raw_response(
+            endpoint=endpoint,
+            method=request.get_method(),
+            request_payload=request_payload,
+            status_code=status_code,
+            body=body,
+            requested_at=requested_at,
+            received_at=received_at,
+            headers=response_headers,
+            account_seq=account_seq,
+        )
+        if new_raw_id:
+            raw_response_id = new_raw_id
+            self._save_new_health(
+                new_raw_id,
+                endpoint,
+                "OK" if status_code < 400 else "BLOCKED",
+                _health_action(status_code, body),
+                received_at,
+            )
         if status_code >= 400:
             raise TossApiError(endpoint=endpoint, status_code=status_code, body=body)
         return TossApiResult(
@@ -799,4 +870,52 @@ class TossReadOnlyAdapter:
             status_code=status_code,
             body=body,
             raw_response_id=raw_response_id,
+            response_headers=response_headers,
         )
+
+    def _save_new_raw_response(
+        self,
+        *,
+        endpoint: str,
+        method: str,
+        request_payload: Any,
+        status_code: int,
+        body: Any,
+        requested_at: datetime,
+        received_at: datetime,
+        headers: dict[str, str],
+        account_seq: str | None,
+    ) -> str:
+        if self.raw_response_store is None:
+            return ""
+        return self.raw_response_store.append(
+            source="toss",
+            endpoint=endpoint,
+            http_method=method,
+            request_payload={"endpoint": endpoint, "method": method, "body": request_payload},
+            status_code=status_code,
+            body=body,
+            requested_at=requested_at,
+            received_at=received_at,
+            account_id=account_seq,
+            schema_version=self.schema_version,
+            headers=headers,
+        )
+
+    def _save_new_health(
+        self,
+        raw_response_id: str,
+        endpoint: str,
+        status: str,
+        reason: str | None,
+        observed_at: datetime,
+    ) -> None:
+        if self.raw_response_store is not None:
+            self.raw_response_store.append_health(
+                raw_response_id=raw_response_id or None,
+                source="toss",
+                endpoint=endpoint,
+                status=status,
+                reason=reason,
+                observed_at=observed_at,
+            )
