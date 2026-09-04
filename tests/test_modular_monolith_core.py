@@ -5,6 +5,7 @@ import pytest
 
 from asset_management.decisions.governor import RiskGovernor
 from asset_management.domain.enums import DataStatus, DecisionAction
+from asset_management.domain.errors import TemporalViolation
 from asset_management.domain.money import Money
 from asset_management.domain.quantity import Quantity
 from asset_management.time.asof import AsOfContext
@@ -22,7 +23,7 @@ def test_quantity_rounds_down_to_market_increment():
 
 
 def test_asof_rejects_future_information():
-    with pytest.raises(ValueError):
+    with pytest.raises(TemporalViolation):
         AsOfContext("r", datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 1, 2, tzinfo=timezone.utc), "p", "params", "sha")
 
 

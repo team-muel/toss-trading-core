@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from asset_management.domain.errors import TemporalViolation
+
 
 def _require_utc(value: datetime, name: str) -> None:
     if value.tzinfo is None or value.utcoffset() != timezone.utc.utcoffset(None):
-        raise ValueError(f"{name} must be timezone-aware UTC")
+        raise TemporalViolation(f"{name} must be timezone-aware UTC")
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,7 +22,7 @@ class AsOfContext:
         _require_utc(self.as_of_utc, "as_of_utc")
         _require_utc(self.information_cutoff_utc, "information_cutoff_utc")
         if self.information_cutoff_utc > self.as_of_utc:
-            raise ValueError("information cutoff cannot be after as-of time")
+            raise TemporalViolation("information cutoff cannot be after as-of time")
         for name in ("run_id", "policy_version", "parameter_set_id", "code_revision"):
             if not getattr(self, name).strip():
                 raise ValueError(f"{name} cannot be blank")

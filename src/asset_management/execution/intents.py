@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from asset_management.domain.errors import InvariantViolation
-from asset_management.domain.money import exact_decimal
+from asset_management.domain.decimal import exact_decimal
 
 
 @dataclass(frozen=True, slots=True)

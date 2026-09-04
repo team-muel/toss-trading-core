@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
+from .decimal import exact_decimal
 from .errors import InvariantViolation
-from .money import exact_decimal
 
 
 @dataclass(frozen=True, slots=True)
