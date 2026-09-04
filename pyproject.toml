@@ -31,7 +31,7 @@ where = ["src"]
 
 [tool.setuptools.data-files]
 "share/toss-trading/schemas" = ["schemas/trading_ledger.sql", "schemas/asset_management.sql"]
-"share/toss-trading/schemas/migrations" = ["schemas/migrations/0002_toss_read_only.sql", "schemas/migrations/0003_integrity_hardening.sql", "schemas/migrations/0004_order_state_execution_ledger.sql"]
+"share/toss-trading/schemas/migrations" = ["schemas/migrations/0002_toss_read_only.sql", "schemas/migrations/0003_integrity_hardening.sql", "schemas/migrations/0004_order_state_execution_ledger.sql", "schemas/migrations/0005_cash_position_settlement.sql"]
 "share/toss-trading/config" = ["config/application.yaml", "config/default_policy.yaml", "config/policy_registry.yaml", "config/toss_openapi_contract.json"]
 "share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv"]
 "share/toss-trading/docs" = ["docs/investment_policy.md", "docs/risk_policy.md", "docs/data_policy.md", "docs/temporal_policy.md", "docs/execution_policy.md", "docs/promotion_policy.md"]

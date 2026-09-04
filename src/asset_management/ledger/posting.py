@@ -14,7 +14,9 @@ class ExecutionPostingContext:
     instrument_id: str
     side: str
     currency: str
-    settlement_date: date | None = None
+    settlement_date: date
+    tax_policy_version: str
+    fx_rate: Decimal = Decimal("1")
 
     def __post_init__(self) -> None:
         side = self.side.strip().upper()
@@ -24,6 +26,10 @@ class ExecutionPostingContext:
             raise ReconciliationError("execution posting context is incomplete")
         object.__setattr__(self, "side", side)
         object.__setattr__(self, "currency", self.currency.strip().upper())
+        if not isinstance(self.settlement_date, date):
+            raise ReconciliationError("execution settlement date is required")
+        if self.fx_rate <= 0 or not self.tax_policy_version:
+            raise ReconciliationError("tax-lot FX rate and policy version are required")
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,7 +68,7 @@ class ExecutionLedgerPoster:
 
         cash_event_id = (
             str(uuid5(NAMESPACE_URL, f"cash:{delta.execution_delta_id}"))
-            if cash_delta != 0 else None
+            if delta.amount != 0 else None
         )
         position_event_id = (
             str(uuid5(NAMESPACE_URL, f"position:{delta.execution_delta_id}"))
@@ -78,9 +84,30 @@ class ExecutionLedgerPoster:
                         amount_decimal, settlement_date, event_type, created_at_utc)
                        VALUES (?, NULL, ?, ?, ?, ?, ?, ?)""",
                     (cash_event_id, context.account_id, context.currency,
-                     format(cash_delta, "f"),
-                     context.settlement_date.isoformat() if context.settlement_date else None,
-                     f"EXECUTION_{context.side}", instant),
+                     format(principal_direction * delta.amount, "f"),
+                     context.settlement_date.isoformat(),
+                     "TRADE_COST" if context.side == "BUY" else "TRADE_PROCEEDS", instant),
+                )
+                self._conn.execute(
+                    "INSERT INTO am_execution_cash_component VALUES (?, 'PRINCIPAL', ?)",
+                    (delta.execution_delta_id, cash_event_id),
+                )
+            for component, value in (("COMMISSION", delta.commission), ("TAX", delta.tax)):
+                if value == 0:
+                    continue
+                component_id = str(uuid5(NAMESPACE_URL, f"cash:{component.lower()}:{delta.execution_delta_id}"))
+                self._conn.execute(
+                    """INSERT INTO am_cash_ledger
+                       (cash_event_id, execution_id, account_id, currency,
+                        amount_decimal, settlement_date, event_type, created_at_utc)
+                       VALUES (?, NULL, ?, ?, ?, ?, ?, ?)""",
+                    (component_id, context.account_id, context.currency, format(-value, "f"),
+                     context.settlement_date.isoformat(),
+                     component, instant),
+                )
+                self._conn.execute(
+                    "INSERT INTO am_execution_cash_component VALUES (?, ?, ?)",
+                    (delta.execution_delta_id, component, component_id),
                 )
             if position_event_id:
                 self._conn.execute(
@@ -91,6 +118,29 @@ class ExecutionLedgerPoster:
                     (position_event_id, context.account_id, context.instrument_id,
                      format(quantity_delta, "f"), f"EXECUTION_{context.side}", instant),
                 )
+                self._conn.execute(
+                    "INSERT INTO am_position_event_settlement VALUES (?, ?)",
+                    (position_event_id, context.settlement_date.isoformat()),
+                )
+                from asset_management.ledger.tax_lots import TaxLotLedger
+                lots = TaxLotLedger(self._conn)
+                trade_date = posted_at_utc.astimezone(timezone.utc).date()
+                if context.side == "BUY":
+                    price = delta.amount / delta.quantity
+                    lots.acquire(
+                        execution_delta_id=delta.execution_delta_id,
+                        account_id=context.account_id, instrument_id=context.instrument_id,
+                        acquisition_date=trade_date, settlement_date=context.settlement_date,
+                        quantity=delta.quantity, price=price, commission=delta.commission,
+                        currency=context.currency, fx_rate=context.fx_rate,
+                        tax_policy_version=context.tax_policy_version,
+                    )
+                else:
+                    lots.dispose_fifo(
+                        execution_delta_id=delta.execution_delta_id,
+                        account_id=context.account_id, instrument_id=context.instrument_id,
+                        quantity=delta.quantity, disposal_date=trade_date,
+                    )
             self._conn.execute(
                 "INSERT INTO am_execution_posting VALUES (?, ?, ?, ?)",
                 (delta.execution_delta_id, cash_event_id, position_event_id, instant),

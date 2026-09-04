@@ -22,3 +22,7 @@ caller bypasses higher-level validation.
 Migration 4 adds the append-only order-state event stream and cumulative execution
 snapshot/delta ledger. It enforces raw-response lineage, per-order sequencing, and
 idempotent cumulative snapshot identity at the database boundary.
+
+Migration 5 adds evidenced cash and position openings, settlement metadata,
+idempotent open-order cash/position reservations, separately classified execution
+cash components, and versioned append-only tax lots and disposal events.

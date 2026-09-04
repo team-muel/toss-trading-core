@@ -60,7 +60,9 @@ def test_three_partial_fills_then_final_fill_produce_exact_nonduplicated_deltas(
     service = OrderObservationService(states, ExecutionSnapshotRepository(ledger))
     fills = [("1", "100"), ("2", "205"), ("2.5", "260"), ("3", "315")]
     deltas = []
-    context = ExecutionPostingContext("account-1", "SPY", "BUY", "USD")
+    context = ExecutionPostingContext(
+        "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+    )
     for index, (quantity, amount) in enumerate(fills, start=1):
         raw_id = f"raw-{index}"
         _raw(ledger, raw_id)
@@ -261,12 +263,18 @@ def test_reposting_same_delta_does_not_duplicate_cash_or_position(ledger):
     )
     assert delta is not None
     poster = ExecutionLedgerPoster(ledger)
-    context = ExecutionPostingContext("account-1", "SPY", "BUY", "USD")
+    context = ExecutionPostingContext(
+        "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+    )
     first = poster.post(delta, context, posted_at_utc=NOW)
     second = poster.post(delta, context, posted_at_utc=NOW)
     assert first == second
     assert first.cash_delta == Decimal("-125.35")
     assert first.quantity_delta == Decimal("1.25")
     assert ledger.execute("SELECT COUNT(*) FROM am_execution_posting").fetchone()[0] == 1
-    assert ledger.execute("SELECT COUNT(*) FROM am_cash_ledger").fetchone()[0] == 1
+    assert ledger.execute("SELECT COUNT(*) FROM am_cash_ledger").fetchone()[0] == 3
     assert ledger.execute("SELECT COUNT(*) FROM am_position_ledger").fetchone()[0] == 1
+    components = dict(ledger.execute("SELECT event_type, amount_decimal FROM am_cash_ledger"))
+    assert components == {
+        "TRADE_COST": "-125", "COMMISSION": "-0.25", "TAX": "-0.10"
+    }
