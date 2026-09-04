@@ -18,21 +18,21 @@ policies:
     effective_to: null
     approved_by: null
   data:
-    version: data-v0
+    version: data-v1
     status: ACCEPTED
     document: docs/data_policy.md
-    document_hash: ff9f7a56a658e4bdd15f41ed5447198393185a72f857ae4b13a4af71f7fdc539
+    document_hash: fa3dd9728fe3974e14fa7f3888589d0a7bcb81cb341c7ce0f0ed10d15dd3a937
     effective_from: 2026-09-04T00:00:00Z
     effective_to: null
-    approved_by: user-design-stage-0
+    approved_by: user-design-stage-6
   temporal:
-    version: temporal-v0
+    version: temporal-v1
     status: ACCEPTED
     document: docs/temporal_policy.md
-    document_hash: e796b56a5ac7de0b231ca18c35b6be9fc0b556d575f7042cfeb6f24c407d98b4
+    document_hash: 7fde07fd0af43f65eb1a430dd9a8e6656b4f6dc51da3dacb3bec3eb9e05be731
     effective_from: 2026-09-04T00:00:00Z
     effective_to: null
-    approved_by: user-design-stage-0
+    approved_by: user-design-stage-6
   execution:
     version: execution-v0-draft
     status: DRAFT

@@ -26,3 +26,20 @@ class AsOfContext:
         for name in ("run_id", "policy_version", "parameter_set_id", "code_revision"):
             if not getattr(self, name).strip():
                 raise ValueError(f"{name} cannot be blank")
+
+    def require_known_at(self, available_at: datetime, *, label: str = "information") -> None:
+        """Reject information that was not knowable at this run's cutoff."""
+
+        _require_utc(available_at, "available_at")
+        if available_at > self.information_cutoff_utc:
+            raise TemporalViolation(
+                f"{label} became available after information_cutoff_utc"
+            )
+
+
+def require_as_of_context(context: AsOfContext) -> AsOfContext:
+    """Shared calculation-boundary guard; a missing context must never be inferred."""
+
+    if not isinstance(context, AsOfContext):
+        raise TemporalViolation("an explicit AsOfContext is required")
+    return context

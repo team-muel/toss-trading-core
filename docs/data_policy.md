@@ -1,6 +1,6 @@
 # Data policy
 
-- Version: `data-v0`
+- Version: `data-v1`
 - Raw provider responses are append-only bronze artifacts.
 - Normalized point-in-time observations are silver artifacts.
 - Features, states, and calculations are gold artifacts.
@@ -10,3 +10,7 @@
 - UNKNOWN, MISSING, STALE, CONFLICT, and UNRECONCILED are preserved, never replaced
   with zero or false.
 - Corrections create new artifacts and manifests; historical data is not overwritten.
+- Silver point-in-time rows retain raw-response or dataset-manifest lineage, exact
+  JSON values (never binary floating point for financial quantities), and an
+  immutable content hash. Missing lineage, conflicting latest rows, and unavailable
+  observations fail closed.

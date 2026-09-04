@@ -39,3 +39,7 @@ unreconciled and fail closed instead of receiving a fabricated timestamp or appr
 Migration 7 adds approved account-reconciliation tolerance policies, immutable runs
 and item comparisons, persistent issues and explicit resolutions, the effective
 `RESOLVED` issue view, and the database order-intent reconciliation guard.
+
+Migration 8 adds immutable normalized point-in-time observations, raw-or-manifest
+lineage, availability indexes, chronological constraints, and a non-branching
+supersession chain for replayable data revisions.
