@@ -18,3 +18,7 @@ Migration 3 adds raw-evidence foreign-key guards, account-snapshot/raw-response
 lineage, append-only protections, strict HTTP method checks, and a database-level
 ban on LIVE order intents. These constraints remain active even if an application
 caller bypasses higher-level validation.
+
+Migration 4 adds the append-only order-state event stream and cumulative execution
+snapshot/delta ledger. It enforces raw-response lineage, per-order sequencing, and
+idempotent cumulative snapshot identity at the database boundary.
