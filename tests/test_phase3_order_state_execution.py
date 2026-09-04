@@ -1,5 +1,6 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import hashlib
 from pathlib import Path
 import sqlite3
 
@@ -11,6 +12,7 @@ from asset_management.domain.enums import OrderState
 from asset_management.domain.errors import ExecutionError, ReconciliationError, UnknownBrokerState
 from asset_management.execution.fills import OrderObservationService
 from asset_management.ledger.posting import ExecutionLedgerPoster, ExecutionPostingContext
+from asset_management.ledger.positions import PositionLedger
 
 
 ROOT = Path(__file__).parents[1]
@@ -18,6 +20,7 @@ NOW = datetime(2026, 9, 4, 2, tzinfo=timezone.utc)
 
 
 def _raw(conn: sqlite3.Connection, raw_id: str) -> None:
+    response_hash = hashlib.sha256(b"{}").hexdigest()
     conn.execute(
         """INSERT INTO am_raw_api_response
            (raw_response_id, source, endpoint, http_method, request_hash, status_code,
@@ -25,7 +28,7 @@ def _raw(conn: sqlite3.Connection, raw_id: str) -> None:
             schema_version, headers_json)
            VALUES (?, 'toss', '/api/v1/orders/id', 'GET', ?, 200, ?, '{}', ?, ?,
                    'account-1', 'v1', '{}')""",
-        (raw_id, f"request-{raw_id}", f"response-{raw_id}", NOW.isoformat(), NOW.isoformat()),
+        (raw_id, f"request-{raw_id}", response_hash, NOW.isoformat(), NOW.isoformat()),
     )
 
 
@@ -49,8 +52,10 @@ def ledger():
     conn.execute(
         """INSERT INTO am_broker_order
            (broker_order_id, runtime_run_id, account_id, status, payload_json,
-            source_response_id) VALUES ('order-1', 'run-1', 'account-1', 'OPEN', '{}',
-                                        'raw-order')"""
+             source_response_id) VALUES
+             ('order-1', 'run-1', 'account-1', 'OPEN',
+              '{"symbol":"SPY","side":"BUY","currency":"USD","quantity":"3"}',
+              'raw-order')"""
     )
     return conn
 
@@ -123,13 +128,16 @@ def test_repeated_cumulative_snapshot_creates_no_second_delta(ledger):
     states = OrderStateRepository(ledger)
     service = OrderObservationService(states, ExecutionSnapshotRepository(ledger))
     values = {"filledQuantity": "1", "filledAmount": "100", "averageFilledPrice": "100"}
+    context = ExecutionPostingContext(
+        "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+    )
     first = service.observe(
         broker_order_id="order-1", raw_state="PARTIAL_FILLED", observed_at_utc=NOW,
-        source_response_id="raw-1", execution=values,
+        source_response_id="raw-1", execution=values, posting_context=context,
     )
     second = service.observe(
         broker_order_id="order-1", raw_state="PARTIAL_FILLED", observed_at_utc=NOW,
-        source_response_id="raw-2", execution=values,
+        source_response_id="raw-2", execution=values, posting_context=context,
     )
     assert first.execution_delta is not None
     assert second.execution_delta is None
@@ -153,7 +161,9 @@ def test_cumulative_fill_decrease_is_unreconciled(ledger):
 
 def test_invalid_transition_and_unknown_state_fail_closed(ledger):
     states = OrderStateRepository(ledger)
-    states.append(broker_order_id="order-1", state=OrderState.FILLED, observed_at_utc=NOW)
+    _raw(ledger, "raw-filled")
+    states.append_broker_state(broker_order_id="order-1", raw_state="FILLED",
+                               observed_at_utc=NOW, source_response_id="raw-filled")
     with pytest.raises(ExecutionError, match="terminal order"):
         states.append(broker_order_id="order-1", state=OrderState.OPEN, observed_at_utc=NOW)
 
@@ -164,7 +174,10 @@ def test_invalid_transition_and_unknown_state_fail_closed(ledger):
     conn.execute("INSERT INTO am_runtime_run VALUES ('run-1', ?, ?, 'rev', ?)",
                  (NOW.isoformat(), NOW.isoformat(), NOW.isoformat()))
     _raw(conn, "raw-unknown")
-    conn.execute("INSERT INTO am_broker_order VALUES ('order-1','run-1','account-1','X','{}','raw-unknown')")
+    conn.execute("""INSERT INTO am_broker_order VALUES
+                 ('order-1','run-1','account-1','X',
+                  '{"symbol":"SPY","side":"BUY","currency":"USD","quantity":"3"}',
+                  'raw-unknown')""")
     unknown_states = OrderStateRepository(conn)
     with pytest.raises(UnknownBrokerState):
         unknown_states.append_broker_state(
@@ -196,7 +209,9 @@ def test_timeout_queries_broker_and_never_calls_submit(ledger):
 
 def test_cancel_rejected_requires_fresh_original_order_query(ledger):
     states = OrderStateRepository(ledger)
-    states.append(broker_order_id="order-1", state=OrderState.OPEN, observed_at_utc=NOW)
+    _raw(ledger, "raw-open")
+    states.append_broker_state(broker_order_id="order-1", raw_state="OPEN",
+                               observed_at_utc=NOW, source_response_id="raw-open")
     states.append(broker_order_id="order-1", state=OrderState.CANCEL_PENDING, observed_at_utc=NOW)
     _raw(ledger, "raw-rejected")
     review = states.append_broker_state(
@@ -218,8 +233,8 @@ def test_cancel_rejected_requires_fresh_original_order_query(ledger):
 
 def test_state_and_execution_tables_are_append_only(ledger):
     _raw(ledger, "raw-1")
-    state = OrderStateRepository(ledger).append(
-        broker_order_id="order-1", state=OrderState.OPEN, observed_at_utc=NOW,
+    state = OrderStateRepository(ledger).append_broker_state(
+        broker_order_id="order-1", raw_state="OPEN", observed_at_utc=NOW,
         source_response_id="raw-1",
     )
     snapshot, delta = ExecutionSnapshotRepository(ledger).append(
@@ -247,6 +262,9 @@ def test_invalid_filled_observation_rolls_back_state_and_snapshot_together(ledge
             broker_order_id="order-1", raw_state="FILLED", observed_at_utc=NOW,
             source_response_id="raw-zero",
             execution={"filledQuantity": "0", "filledAmount": "0"},
+            posting_context=ExecutionPostingContext(
+                "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+            ),
         )
     assert ledger.execute("SELECT COUNT(*) FROM am_order_state_event").fetchone()[0] == 0
     assert ledger.execute("SELECT COUNT(*) FROM am_execution_snapshot").fetchone()[0] == 0
@@ -278,3 +296,134 @@ def test_reposting_same_delta_does_not_duplicate_cash_or_position(ledger):
     assert components == {
         "TRADE_COST": "-125", "COMMISSION": "-0.25", "TAX": "-0.10"
     }
+
+
+def test_fill_state_cannot_exist_without_execution_and_atomic_posting(ledger):
+    _raw(ledger, "raw-filled")
+    service = OrderObservationService(
+        OrderStateRepository(ledger), ExecutionSnapshotRepository(ledger)
+    )
+    with pytest.raises(ExecutionError, match="requires execution"):
+        service.observe(broker_order_id="order-1", raw_state="FILLED",
+                        observed_at_utc=NOW, source_response_id="raw-filled")
+    assert ledger.execute("SELECT COUNT(*) FROM am_order_state_event").fetchone()[0] == 0
+
+
+def test_posting_rejects_fabricated_delta_wrong_owner_and_changed_replay_context(ledger):
+    _raw(ledger, "raw-fill")
+    _, delta = ExecutionSnapshotRepository(ledger).append(
+        broker_order_id="order-1", cumulative_quantity="1", cumulative_amount="100",
+        average_price="100", observed_at_utc=NOW, source_response_id="raw-fill",
+    )
+    assert delta is not None
+    poster = ExecutionLedgerPoster(ledger)
+    with pytest.raises(ReconciliationError, match="persisted delta"):
+        poster.post(
+            type(delta)(delta.execution_delta_id, delta.broker_order_id,
+                        delta.from_snapshot_id, delta.to_snapshot_id,
+                        delta.quantity, Decimal("999"), delta.commission, delta.tax),
+            ExecutionPostingContext("account-1", "SPY", "BUY", "USD", date(2026, 9, 5), "FIFO-v1"),
+            posted_at_utc=NOW,
+        )
+    with pytest.raises(ReconciliationError, match="broker order identity"):
+        poster.post(
+            delta,
+            ExecutionPostingContext("other-account", "SPY", "BUY", "USD", date(2026, 9, 5), "FIFO-v1"),
+            posted_at_utc=NOW,
+        )
+    original = ExecutionPostingContext(
+        "account-1", "SPY", "BUY", "USD", date(2026, 9, 5), "FIFO-v1"
+    )
+    poster.post(delta, original, posted_at_utc=NOW)
+    with pytest.raises(ReconciliationError, match="context conflicts"):
+        poster.post(
+            delta,
+            ExecutionPostingContext("account-1", "SPY", "BUY", "USD", date(2026, 9, 6), "FIFO-v1"),
+            posted_at_utc=NOW,
+        )
+
+
+def test_internal_initial_and_observation_chronology_are_enforced(ledger):
+    states = OrderStateRepository(ledger)
+    with pytest.raises(ExecutionError, match="must begin"):
+        states.append(broker_order_id="order-1", state=OrderState.OPEN,
+                      observed_at_utc=NOW)
+    states.append(broker_order_id="order-1", state=OrderState.PLANNED,
+                  observed_at_utc=NOW)
+    with pytest.raises(ExecutionError, match="cannot move backwards"):
+        states.append(broker_order_id="order-1", state=OrderState.SUBMITTING,
+                      observed_at_utc=NOW - timedelta(seconds=1))
+
+
+def test_fill_status_quantity_and_replayed_evidence_must_be_exact(ledger):
+    service = OrderObservationService(
+        OrderStateRepository(ledger), ExecutionSnapshotRepository(ledger)
+    )
+    context = ExecutionPostingContext(
+        "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+    )
+    _raw(ledger, "raw-incomplete-final")
+    with pytest.raises(ExecutionError, match="must equal ordered quantity"):
+        service.observe(
+            broker_order_id="order-1", raw_state="FILLED", observed_at_utc=NOW,
+            source_response_id="raw-incomplete-final",
+            execution={"filledQuantity": "2", "filledAmount": "200",
+                       "averageFilledPrice": "100"},
+            posting_context=context,
+        )
+    assert ledger.execute("SELECT COUNT(*) FROM am_order_state_event").fetchone()[0] == 0
+
+    _raw(ledger, "raw-open")
+    states = OrderStateRepository(ledger)
+    states.append_broker_state(
+        broker_order_id="order-1", raw_state="OPEN", observed_at_utc=NOW,
+        source_response_id="raw-open",
+    )
+    with pytest.raises(ExecutionError, match="replayed evidence conflicts"):
+        states.append_broker_state(
+            broker_order_id="order-1", raw_state="CANCELED",
+            observed_at_utc=NOW, source_response_id="raw-open",
+        )
+
+
+def test_execution_source_evidence_cannot_be_reused_for_changed_values(ledger):
+    _raw(ledger, "raw-fill-once")
+    snapshots = ExecutionSnapshotRepository(ledger)
+    snapshots.append(
+        broker_order_id="order-1", cumulative_quantity="1", cumulative_amount="100",
+        average_price="100", observed_at_utc=NOW, source_response_id="raw-fill-once",
+    )
+    with pytest.raises(ReconciliationError, match="replayed evidence conflicts"):
+        snapshots.append(
+            broker_order_id="order-1", cumulative_quantity="2", cumulative_amount="200",
+            average_price="100", observed_at_utc=NOW, source_response_id="raw-fill-once",
+        )
+
+
+def test_tax_lot_and_average_cost_are_point_in_time_and_commission_proportional(ledger):
+    positions = PositionLedger(ledger)
+    positions.record_opening(
+        account_id="account-1", instrument_id="SPY", native_currency="USD",
+        as_of_utc=NOW, quantity="1", average_cost="100", evidence="raw-order",
+        approved_by="owner", tax_policy_version="FIFO-v1",
+    )
+    future = NOW + timedelta(days=1)
+    _raw(ledger, "raw-future")
+    _, delta = ExecutionSnapshotRepository(ledger).append(
+        broker_order_id="order-1", cumulative_quantity="1", cumulative_amount="100",
+        average_price="100", cumulative_commission="10", observed_at_utc=future,
+        source_response_id="raw-future",
+    )
+    assert delta is not None
+    ExecutionLedgerPoster(ledger).post(
+        delta,
+        ExecutionPostingContext("account-1", "SPY", "BUY", "USD",
+                                future.date(), "FIFO-v1"),
+        posted_at_utc=future,
+    )
+    assert positions.state(account_id="account-1", instrument_id="SPY",
+                           as_of_utc=NOW).average_cost == Decimal("100")
+    future_state = positions.state(account_id="account-1", instrument_id="SPY",
+                                   as_of_utc=future)
+    assert future_state.quantity == Decimal("2")
+    assert future_state.average_cost == Decimal("105")

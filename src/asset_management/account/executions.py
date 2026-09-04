@@ -88,6 +88,19 @@ class ExecutionSnapshotRepository:
             Decimal(row[7]), datetime.fromisoformat(str(row[8])), str(row[9]), str(row[10]),
         )
 
+    def delta_for_snapshot(self, snapshot_id: str) -> ExecutionDelta | None:
+        row = self._conn.execute(
+            """SELECT execution_delta_id, broker_order_id, from_snapshot_id,
+                      to_snapshot_id, quantity_decimal, amount_decimal,
+                      commission_decimal, tax_decimal
+               FROM am_execution_delta WHERE to_snapshot_id=?""",
+            (snapshot_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return ExecutionDelta(str(row[0]), str(row[1]), row[2], str(row[3]),
+                              Decimal(row[4]), Decimal(row[5]), Decimal(row[6]), Decimal(row[7]))
+
     def append(
         self, *, broker_order_id: str, cumulative_quantity: object,
         cumulative_amount: object, average_price: object | None,
@@ -102,11 +115,43 @@ class ExecutionSnapshotRepository:
         commission = _exact_decimal(cumulative_commission, "cumulative commission")
         tax = _exact_decimal(cumulative_tax, "cumulative tax")
         assert quantity is not None and amount is not None and commission is not None and tax is not None
+        if quantity == 0 and (amount != 0 or (average is not None and average != 0)):
+            raise ReconciliationError("zero filled quantity conflicts with amount or average price")
+        if quantity > 0 and (amount <= 0 or average is None or average <= 0):
+            raise ReconciliationError("positive fill requires amount and average price")
+        order_row = self._conn.execute(
+            "SELECT payload_json FROM am_broker_order WHERE broker_order_id=?",
+            (broker_order_id,),
+        ).fetchone()
+        if order_row is None:
+            raise ReconciliationError("execution has no broker order")
+        order_payload = json.loads(order_row[0])
+        ordered = order_payload.get("quantity", order_payload.get("orderQuantity"))
+        if ordered is not None and quantity > Decimal(str(ordered)):
+            raise ReconciliationError("cumulative fill exceeds ordered quantity")
         payload = {
             "quantity": _text(quantity), "amount": _text(amount), "average": _text(average),
             "commission": _text(commission), "tax": _text(tax),
         }
         content_hash = sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        source_duplicate = self._conn.execute(
+            """SELECT execution_snapshot_id, content_hash, observed_at_utc
+               FROM am_execution_snapshot
+               WHERE broker_order_id=? AND source_response_id=?""",
+            (broker_order_id, source_response_id),
+        ).fetchone()
+        instant = observed_at_utc.astimezone(timezone.utc)
+        if source_duplicate is not None:
+            if (str(source_duplicate[1]), datetime.fromisoformat(str(source_duplicate[2]))) != (
+                content_hash, instant
+            ):
+                raise ReconciliationError(
+                    "replayed evidence conflicts with existing execution snapshot"
+                )
+            latest = self._latest(broker_order_id)
+            if latest is None or latest.execution_snapshot_id != source_duplicate[0]:
+                raise ReconciliationError("replayed execution evidence is out of order")
+            return latest, None
         duplicate = self._conn.execute(
             "SELECT execution_snapshot_id FROM am_execution_snapshot WHERE broker_order_id=? AND content_hash=?",
             (broker_order_id, content_hash),
@@ -117,6 +162,8 @@ class ExecutionSnapshotRepository:
                 raise ReconciliationError("repeated cumulative execution snapshot is out of order")
             return latest, None
         previous = self._latest(broker_order_id)
+        if previous is not None and instant < previous.observed_at_utc:
+            raise ReconciliationError("execution observation time cannot move backwards")
         previous_values = (
             (previous.cumulative_quantity, previous.cumulative_amount,
              previous.cumulative_commission, previous.cumulative_tax)
@@ -127,7 +174,6 @@ class ExecutionSnapshotRepository:
             raise ReconciliationError("cumulative execution values cannot decrease")
         snapshot_id = str(uuid4())
         sequence = (previous.sequence_no + 1) if previous else 1
-        instant = observed_at_utc.astimezone(timezone.utc)
         self._conn.execute(
             """INSERT INTO am_execution_snapshot
                (execution_snapshot_id, broker_order_id, sequence_no,

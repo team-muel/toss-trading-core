@@ -141,29 +141,41 @@ class OrderStateRepository:
         observed_at_utc: datetime,
         source_response_id: str | None = None,
         reason: str | None = None,
+        _external_initial: bool = False,
     ) -> OrderStateEvent:
         if observed_at_utc.tzinfo is None:
             raise ExecutionError("order state timestamp must be timezone-aware")
-        previous = self.latest(broker_order_id)
-        previous_state = previous.state if previous else None
-        assert_order_transition(previous_state, state)
-        existing = None
+        instant = observed_at_utc.astimezone(timezone.utc)
         if source_response_id is not None:
             existing = self._conn.execute(
-                "SELECT order_state_event_id FROM am_order_state_event WHERE broker_order_id=? AND source_response_id=?",
+                """SELECT order_state_event_id, previous_state, state, observed_at_utc, reason
+                   FROM am_order_state_event
+                   WHERE broker_order_id=? AND source_response_id=?""",
                 (broker_order_id, source_response_id),
             ).fetchone()
-        if existing:
-            result = self.latest(broker_order_id)
-            if result is None or result.order_state_event_id != existing[0]:
-                raise ExecutionError("replayed evidence is not the latest order state")
-            return result
+            if existing is not None:
+                if (str(existing[2]), datetime.fromisoformat(str(existing[3])), existing[4]) != (
+                    str(state), instant, reason
+                ):
+                    raise ExecutionError("replayed evidence conflicts with existing order state")
+                latest = self.latest(broker_order_id)
+                if latest is None or latest.order_state_event_id != existing[0]:
+                    raise ExecutionError("replayed evidence is not the latest order state")
+                return latest
+        previous = self.latest(broker_order_id)
+        previous_state = previous.state if previous else None
+        if previous is None and not _external_initial and state not in {
+            OrderState.PLANNED, OrderState.SUBMITTING
+        }:
+            raise ExecutionError("internal order must begin at PLANNED or SUBMITTING")
+        if previous is not None and instant < previous.observed_at_utc:
+            raise ExecutionError("order observation time cannot move backwards")
+        assert_order_transition(previous_state, state)
         event_id = str(uuid4())
         sequence = self._conn.execute(
             "SELECT COALESCE(MAX(sequence_no), 0) + 1 FROM am_order_state_event WHERE broker_order_id=?",
             (broker_order_id,),
         ).fetchone()[0]
-        instant = observed_at_utc.astimezone(timezone.utc)
         self._conn.execute(
             """INSERT INTO am_order_state_event
                (order_state_event_id, broker_order_id, sequence_no, previous_state,
@@ -185,6 +197,7 @@ class OrderStateRepository:
             broker_order_id=broker_order_id, state=state,
             observed_at_utc=observed_at_utc, source_response_id=source_response_id,
             reason=reason,
+            _external_initial=True,
         )
         if state is OrderState.UNKNOWN:
             raise UnknownBrokerState(reason)

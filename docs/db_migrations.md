@@ -26,3 +26,12 @@ idempotent cumulative snapshot identity at the database boundary.
 Migration 5 adds evidenced cash and position openings, settlement metadata,
 idempotent open-order cash/position reservations, separately classified execution
 cash components, and versioned append-only tax lots and disposal events.
+
+Migration 6 hardens phases 3 and 4 with immutable execution-posting contexts,
+point-in-time tax-lot and disposal timestamps, and database-guarded manual-cash
+authorization. Application and replay validation bind these records to exact broker
+identity, raw evidence, chronology, settlement, and policy context.
+For pre-v6 rows, tax-lot timing is derived only from the immutable originating
+execution or opening timestamp, disposal timing from its execution delta, and manual
+authorization from complete existing metadata. Records without such evidence remain
+unreconciled and fail closed instead of receiving a fabricated timestamp or approval.

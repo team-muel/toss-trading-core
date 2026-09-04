@@ -1,11 +1,14 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from hashlib import sha256
+import json
 import sqlite3
 from uuid import NAMESPACE_URL, uuid5
 
 from asset_management.account.executions import ExecutionDelta
 from asset_management.domain.errors import ReconciliationError
+from asset_management.ledger.cash import exact
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,8 +31,21 @@ class ExecutionPostingContext:
         object.__setattr__(self, "currency", self.currency.strip().upper())
         if not isinstance(self.settlement_date, date):
             raise ReconciliationError("execution settlement date is required")
-        if self.fx_rate <= 0 or not self.tax_policy_version:
+        fx_rate = exact(self.fx_rate, "tax-lot FX rate")
+        object.__setattr__(self, "fx_rate", fx_rate)
+        if fx_rate <= 0 or not self.tax_policy_version:
             raise ReconciliationError("tax-lot FX rate and policy version are required")
+        if self.tax_policy_version != "FIFO-v1":
+            raise ReconciliationError("unsupported tax policy version")
+
+    def canonical_payload(self) -> dict[str, str]:
+        return {
+            "account_id": self.account_id, "instrument_id": self.instrument_id,
+            "side": self.side, "currency": self.currency,
+            "settlement_date": self.settlement_date.isoformat(),
+            "tax_policy_version": self.tax_policy_version,
+            "fx_rate": format(self.fx_rate, "f"),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +69,48 @@ class ExecutionLedgerPoster:
     ) -> ExecutionPosting:
         if posted_at_utc.tzinfo is None:
             raise ReconciliationError("posting timestamp must be timezone-aware")
+        stored = self._conn.execute(
+            """SELECT d.broker_order_id, d.quantity_decimal, d.amount_decimal,
+                      d.commission_decimal, d.tax_decimal, o.account_id, o.payload_json
+               FROM am_execution_delta d JOIN am_broker_order o
+                 ON o.broker_order_id=d.broker_order_id
+               WHERE d.execution_delta_id=?""",
+            (delta.execution_delta_id,),
+        ).fetchone()
+        if stored is None:
+            raise ReconciliationError("execution delta is not persisted")
+        if (delta.broker_order_id, delta.quantity, delta.amount, delta.commission, delta.tax) != (
+            str(stored[0]), Decimal(stored[1]), Decimal(stored[2]), Decimal(stored[3]), Decimal(stored[4])
+        ):
+            raise ReconciliationError("caller execution delta conflicts with persisted delta")
+        order_payload = json.loads(stored[6])
+        expected_instrument = order_payload.get("instrumentId", order_payload.get("symbol"))
+        expected_side = str(order_payload.get("side", "")).upper()
+        expected_currency = str(order_payload.get("currency", "")).upper()
+        if not expected_instrument or not expected_side or not expected_currency:
+            raise ReconciliationError("broker order identity is incomplete")
+        if (context.account_id, context.instrument_id, context.side, context.currency) != (
+            str(stored[5]), str(expected_instrument), expected_side, expected_currency
+        ):
+            raise ReconciliationError("posting context conflicts with broker order identity")
+        opening = self._conn.execute(
+            """SELECT native_currency FROM am_position_opening_balance
+               WHERE account_id=? AND instrument_id=?""",
+            (context.account_id, context.instrument_id),
+        ).fetchone()
+        if opening is not None and str(opening[0]) != context.currency:
+            raise ReconciliationError(
+                "execution currency conflicts with position native currency"
+            )
+        context_payload = context.canonical_payload()
+        context_hash = sha256(
+            json.dumps(context_payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
         existing = self._conn.execute(
-            "SELECT cash_event_id, position_event_id FROM am_execution_posting WHERE execution_delta_id=?",
+            """SELECT p.cash_event_id, p.position_event_id, c.context_hash
+               FROM am_execution_posting p LEFT JOIN am_execution_posting_context c
+                 ON c.execution_delta_id=p.execution_delta_id
+               WHERE p.execution_delta_id=?""",
             (delta.execution_delta_id,),
         ).fetchone()
         direction = Decimal("1") if context.side == "BUY" else Decimal("-1")
@@ -62,6 +118,8 @@ class ExecutionLedgerPoster:
         principal_direction = Decimal("-1") if context.side == "BUY" else Decimal("1")
         cash_delta = principal_direction * delta.amount - delta.commission - delta.tax
         if existing:
+            if existing[2] != context_hash:
+                raise ReconciliationError("replayed posting context conflicts with original posting")
             return ExecutionPosting(
                 delta.execution_delta_id, existing[0], existing[1], cash_delta, quantity_delta
             )
@@ -77,6 +135,14 @@ class ExecutionLedgerPoster:
         instant = posted_at_utc.astimezone(timezone.utc).isoformat()
         self._conn.execute("SAVEPOINT am_execution_posting")
         try:
+            self._conn.execute(
+                """INSERT INTO am_execution_posting_context VALUES
+                   (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (delta.execution_delta_id, delta.broker_order_id, context.account_id,
+                 context.instrument_id, context.side, context.currency,
+                 context.settlement_date.isoformat(), context.tax_policy_version,
+                 format(context.fx_rate, "f"), context_hash),
+            )
             if cash_event_id:
                 self._conn.execute(
                     """INSERT INTO am_cash_ledger
@@ -134,12 +200,15 @@ class ExecutionLedgerPoster:
                         quantity=delta.quantity, price=price, commission=delta.commission,
                         currency=context.currency, fx_rate=context.fx_rate,
                         tax_policy_version=context.tax_policy_version,
+                        observed_at_utc=posted_at_utc,
                     )
                 else:
                     lots.dispose_fifo(
                         execution_delta_id=delta.execution_delta_id,
                         account_id=context.account_id, instrument_id=context.instrument_id,
                         quantity=delta.quantity, disposal_date=trade_date,
+                        observed_at_utc=posted_at_utc,
+                        tax_policy_version=context.tax_policy_version,
                     )
             self._conn.execute(
                 "INSERT INTO am_execution_posting VALUES (?, ?, ?, ?)",
