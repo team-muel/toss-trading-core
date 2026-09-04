@@ -1,7 +1,7 @@
 [project]
 name = "toss-trading"
 version = "0.2.0"
-description = "Toss Invest Open API account-state and market-data foundation"
+description = "Modular-monolith asset management system using Toss Invest Open API"
 requires-python = ">=3.11"
 dependencies = [
   "google-cloud-secret-manager>=2.20,<3",
@@ -30,8 +30,8 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.data-files]
-"share/toss-trading/schemas" = ["schemas/trading_ledger.sql"]
-"share/toss-trading/config" = ["config/default_policy.yaml", "config/toss_openapi_contract.json"]
+"share/toss-trading/schemas" = ["schemas/trading_ledger.sql", "schemas/asset_management.sql"]
+"share/toss-trading/config" = ["config/default_policy.yaml", "config/policy_registry.yaml", "config/toss_openapi_contract.json"]
 "share/toss-trading/data" = ["data/universe.csv", "data/instrument_master.csv"]
 
 [tool.pytest.ini_options]

@@ -1,0 +1,31 @@
+registry_version: governance-v0
+live_trading_enabled: false
+policies:
+  investment:
+    version: investment-v0-draft
+    status: DRAFT
+    document: docs/investment_policy.md
+  risk:
+    version: risk-v0-draft
+    status: DRAFT
+    document: docs/risk_policy.md
+  data:
+    version: data-v0
+    status: ACCEPTED
+    document: docs/data_policy.md
+  temporal:
+    version: temporal-v0
+    status: ACCEPTED
+    document: docs/temporal_policy.md
+  execution:
+    version: execution-v0-draft
+    status: DRAFT
+    document: docs/execution_policy.md
+  promotion:
+    version: promotion-v0
+    status: ACCEPTED
+    document: docs/promotion_policy.md
+  tax:
+    version: tax-v0-draft
+    status: DRAFT
+    document: docs/investment_policy.md

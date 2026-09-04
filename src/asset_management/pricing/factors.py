@@ -1,0 +1,1 @@
+"""Factor required-return models."""
