@@ -15,6 +15,12 @@ control -> order -> fill -> ledger -> post-trade reconciliation. Every stage rec
 immutable evidence. Missing evidence stops the run; a later stage may never repair an
 earlier one.
 
+Pipeline progress is stored in `am_pipeline_stage_evidence`. A stage is accepted only
+when its identifier and content hash resolve to the corresponding immutable artifact
+under the same runtime run. The database enforces contiguous ordering, and an order
+intent requires the matching persisted risk-control stage; in-memory strings are not
+authorization evidence.
+
 The application is `src/asset_management`. The verified legacy Toss client is
 temporarily isolated behind `broker/toss_read.py`; investment logic cannot import
 it directly. Service extraction is prohibited until the monolith is stable.

@@ -47,3 +47,7 @@ supersession chain for replayable data revisions.
 Migration 9 binds every new order intent to the exact reconciled account and runtime
 lineage. It adds an approved reconciliation maximum age and blocks missing, stale,
 future-dated, cross-account, or cross-run authorizations at the database boundary.
+
+Migration 10 adds the immutable pipeline-stage evidence ledger. Each stage must be
+contiguous and resolve to the exact persisted artifact and runtime lineage. New order
+intents additionally require the matching verified risk-control evidence.

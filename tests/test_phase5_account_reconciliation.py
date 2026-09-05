@@ -9,6 +9,7 @@ from asset_management.account.snapshots import AccountTruthRepository, AccountTr
 from asset_management.account.executions import ExecutionSnapshotRepository
 from asset_management.account.orders import OrderStateRepository
 from asset_management.data.raw_store import SQLiteRawResponseStore
+from asset_management.config.versions import content_hash
 from asset_management.domain.errors import ReconciliationError
 from asset_management.ledger.reconciliation import (
     AccountReconciler,
@@ -20,6 +21,7 @@ from asset_management.ledger.reconciliation import (
 )
 from asset_management.ledger.cash import CashLedger, OpenBuyOrder
 from asset_management.ledger.positions import PositionLedger
+from asset_management.orchestration.pipelines import InvestmentPipeline, PipelineStage, StageEvidence
 
 
 ROOT = Path(__file__).parents[1]
@@ -131,6 +133,29 @@ def decision_lineage(conn: sqlite3.Connection, runtime_id: str) -> str:
         (decision_id, f"target-{runtime_id}", "ALLOW", "[]", "risk-v1",
          f"decision-hash-{runtime_id}"),
     )
+    account_snapshot_id, account_hash = conn.execute(
+        "SELECT account_snapshot_id, content_hash FROM am_account_snapshot WHERE runtime_run_id=?",
+        (runtime_id,),
+    ).fetchone()
+    runtime = conn.execute(
+        """SELECT as_of_utc, information_cutoff_utc, code_revision
+           FROM am_runtime_run WHERE runtime_run_id=?""", (runtime_id,),
+    ).fetchone()
+    time_hash = content_hash({
+        "runtime_run_id": runtime_id, "as_of_utc": str(runtime[0]),
+        "information_cutoff_utc": str(runtime[1]), "code_revision": str(runtime[2]),
+    })
+    pipeline = InvestmentPipeline.start(conn, runtime_id)
+    for stage_evidence in (
+        StageEvidence(PipelineStage.INVESTMENT_POLICY, "investment-v1", "investment-policy-hash"),
+        StageEvidence(PipelineStage.ACCOUNT_TRUTH, str(account_snapshot_id), str(account_hash)),
+        StageEvidence(PipelineStage.TIME_TRUTH, runtime_id, time_hash),
+        StageEvidence(PipelineStage.DATA_TRUTH, f"manifest-{runtime_id}", f"manifest-hash-{runtime_id}"),
+        StageEvidence(PipelineStage.FINANCIAL_CALCULATION, f"expectation-{runtime_id}", f"expectation-hash-{runtime_id}"),
+        StageEvidence(PipelineStage.TARGET_PORTFOLIO, f"target-{runtime_id}", f"target-hash-{runtime_id}"),
+        StageEvidence(PipelineStage.RISK_CONTROL, decision_id, f"decision-hash-{runtime_id}"),
+    ):
+        pipeline.complete(stage_evidence)
     return decision_id
 
 
