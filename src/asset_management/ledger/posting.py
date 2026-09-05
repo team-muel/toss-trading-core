@@ -9,6 +9,7 @@ from uuid import NAMESPACE_URL, uuid5
 from asset_management.account.executions import ExecutionDelta
 from asset_management.domain.errors import ReconciliationError
 from asset_management.ledger.cash import exact
+from asset_management.ledger.settlement import SettlementEvidenceRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +94,10 @@ class ExecutionLedgerPoster:
             str(stored[5]), str(expected_instrument), expected_side, expected_currency
         ):
             raise ReconciliationError("posting context conflicts with broker order identity")
+        settlements = SettlementEvidenceRepository(self._conn)
+        settlement_evidence = settlements.resolve(
+            delta.execution_delta_id, context.settlement_date
+        )
         opening = self._conn.execute(
             """SELECT native_currency FROM am_position_opening_balance
                WHERE account_id=? AND instrument_id=?""",
@@ -118,6 +123,7 @@ class ExecutionLedgerPoster:
         principal_direction = Decimal("-1") if context.side == "BUY" else Decimal("1")
         cash_delta = principal_direction * delta.amount - delta.commission - delta.tax
         if existing:
+            settlements.require(delta.execution_delta_id, context.settlement_date)
             if existing[2] != context_hash:
                 raise ReconciliationError("replayed posting context conflicts with original posting")
             return ExecutionPosting(
@@ -135,6 +141,7 @@ class ExecutionLedgerPoster:
         instant = posted_at_utc.astimezone(timezone.utc).isoformat()
         self._conn.execute("SAVEPOINT am_execution_posting")
         try:
+            settlements.persist(settlement_evidence)
             self._conn.execute(
                 """INSERT INTO am_execution_posting_context VALUES
                    (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",

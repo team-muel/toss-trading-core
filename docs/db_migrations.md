@@ -55,3 +55,9 @@ intents additionally require the matching verified risk-control evidence.
 Migration 11 rejects account snapshots with blank ownership, timezone-naive or
 non-UTC observation times, future runtime observations, or raw evidence received
 after the claimed observation time.
+
+Migration 12 adds immutable execution-settlement evidence. Each posting date must
+come from the exact verified Toss response cited by the cumulative fill snapshot;
+missing, malformed, conflicting, cross-account, non-success, or hash-invalid raw
+evidence blocks posting. Replay re-resolves the raw value and verifies its stored
+lineage and evidence hash.

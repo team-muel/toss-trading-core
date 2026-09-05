@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 
@@ -24,13 +25,16 @@ def _schema(conn):
         conn.executescript(path.read_text(encoding="utf-8"))
 
 
-def _raw(conn, raw_id):
-    response_hash = hashlib.sha256(b"{}").hexdigest()
+def _raw(conn, raw_id, body=None):
+    if body is None:
+        body = {"settlementDate": "2026-09-05"}
+    body_json = json.dumps(body, sort_keys=True, separators=(",", ":"))
+    response_hash = hashlib.sha256(body_json.encode()).hexdigest()
     conn.execute(
         """INSERT INTO am_raw_api_response VALUES
-           (?, 'toss', '/api/v1/orders/id', 'GET', ?, 200, ?, '{}', ?, ?,
+           (?, 'toss', '/api/v1/orders/id', 'GET', ?, 200, ?, ?, ?, ?,
             'account-1', 'v1', '{}')""",
-        (raw_id, f"req-{raw_id}", response_hash, NOW.isoformat(), NOW.isoformat()),
+        (raw_id, f"req-{raw_id}", response_hash, body_json, NOW.isoformat(), NOW.isoformat()),
     )
 
 
@@ -166,6 +170,62 @@ def test_sell_reservation_above_settled_quantity_blocks(ledger):
 def test_execution_posting_requires_settlement_date():
     with pytest.raises(ReconciliationError, match="settlement date"):
         ExecutionPostingContext("account-1", "SPY", "BUY", "USD", None, "FIFO-v1")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "body, message",
+    [
+        ({}, "evidence is missing"),
+        (
+            {"settlementDate": "2026-09-05", "nested": {"settlement_date": "2026-09-06"}},
+            "conflicts within raw response",
+        ),
+        ({"settlementDate": "09/05/2026"}, "evidence is malformed"),
+    ],
+)
+def test_execution_posting_fails_closed_on_missing_conflicting_or_malformed_settlement(
+    ledger, body, message
+):
+    _raw(ledger, "raw-bad-settlement", body)
+    _, delta = ExecutionSnapshotRepository(ledger).append(
+        broker_order_id="order-1", cumulative_quantity="1", cumulative_amount="100",
+        average_price="100", observed_at_utc=NOW,
+        source_response_id="raw-bad-settlement",
+    )
+    assert delta is not None
+    with pytest.raises(ReconciliationError, match=message):
+        ExecutionLedgerPoster(ledger).post(
+            delta,
+            ExecutionPostingContext(
+                "account-1", "SPY", "SELL", "USD", date(2026, 9, 5), "FIFO-v1"
+            ),
+            posted_at_utc=NOW,
+        )
+    assert ledger.execute("SELECT COUNT(*) FROM am_execution_posting").fetchone()[0] == 0
+
+
+def test_database_rejects_settlement_evidence_not_present_in_fill_response(ledger):
+    _raw(ledger, "raw-settlement-guard")
+    _, delta = ExecutionSnapshotRepository(ledger).append(
+        broker_order_id="order-1", cumulative_quantity="1", cumulative_amount="100",
+        average_price="100", observed_at_utc=NOW,
+        source_response_id="raw-settlement-guard",
+    )
+    assert delta is not None
+    snapshot_id, response_hash = ledger.execute(
+        """SELECT d.to_snapshot_id, raw.response_hash
+           FROM am_execution_delta d
+           JOIN am_execution_snapshot s ON s.execution_snapshot_id=d.to_snapshot_id
+           JOIN am_raw_api_response raw ON raw.raw_response_id=s.source_response_id
+           WHERE d.execution_delta_id=?""",
+        (delta.execution_delta_id,),
+    ).fetchone()
+    with pytest.raises(sqlite3.IntegrityError, match="raw lineage"):
+        ledger.execute(
+            """INSERT INTO am_execution_settlement_evidence VALUES
+               (?, ?, 'raw-settlement-guard', '2026-09-06', '[\"$.settlementDate\"]', ?, ?)""",
+            (delta.execution_delta_id, snapshot_id, response_hash, "0" * 64),
+        )
 
 
 def test_terminal_order_atomically_releases_cash_reservation(ledger):

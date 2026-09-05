@@ -8,6 +8,12 @@
 - Execution consumes an approved Order Intent and cannot recompute features,
   expected returns, target weights, or risk decisions.
 - Quantity, price, commission, tax, cash, and settlement use exact decimal values.
+- An execution settlement date is not a caller-owned estimate. It must be an ISO
+  date found consistently in the exact successful Toss raw response referenced by
+  the cumulative fill snapshot. Its response hash, extraction path, snapshot, and
+  execution-delta lineage are immutable and are revalidated during replay.
+- Missing, malformed, conflicting, account-mismatched, or unverified settlement
+  evidence blocks ledger posting; it is never replaced with a calendar guess.
 - Writes require durable idempotency keys. Duplicate delivery must not duplicate
   cash, positions, fills, or orders.
 - Unknown broker status or incomplete reconciliation produces NO_TRADE.

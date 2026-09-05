@@ -1,6 +1,7 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 
@@ -17,18 +18,20 @@ from asset_management.ledger.positions import PositionLedger
 
 ROOT = Path(__file__).parents[1]
 NOW = datetime(2026, 9, 4, 2, tzinfo=timezone.utc)
+SETTLEMENT_DATE = date(2026, 9, 5)
 
 
 def _raw(conn: sqlite3.Connection, raw_id: str) -> None:
-    response_hash = hashlib.sha256(b"{}").hexdigest()
+    body = json.dumps({"settlementDate": SETTLEMENT_DATE.isoformat()}, separators=(",", ":"))
+    response_hash = hashlib.sha256(body.encode()).hexdigest()
     conn.execute(
         """INSERT INTO am_raw_api_response
            (raw_response_id, source, endpoint, http_method, request_hash, status_code,
             response_hash, body_json, requested_at_utc, received_at_utc, account_id,
             schema_version, headers_json)
-           VALUES (?, 'toss', '/api/v1/orders/id', 'GET', ?, 200, ?, '{}', ?, ?,
+           VALUES (?, 'toss', '/api/v1/orders/id', 'GET', ?, 200, ?, ?, ?, ?,
                    'account-1', 'v1', '{}')""",
-        (raw_id, f"request-{raw_id}", response_hash, NOW.isoformat(), NOW.isoformat()),
+        (raw_id, f"request-{raw_id}", response_hash, body, NOW.isoformat(), NOW.isoformat()),
     )
 
 
@@ -66,7 +69,7 @@ def test_three_partial_fills_then_final_fill_produce_exact_nonduplicated_deltas(
     fills = [("1", "100"), ("2", "205"), ("2.5", "260"), ("3", "315")]
     deltas = []
     context = ExecutionPostingContext(
-        "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+        "account-1", "SPY", "BUY", "USD", SETTLEMENT_DATE, "FIFO-v1"
     )
     for index, (quantity, amount) in enumerate(fills, start=1):
         raw_id = f"raw-{index}"
@@ -129,7 +132,7 @@ def test_repeated_cumulative_snapshot_creates_no_second_delta(ledger):
     service = OrderObservationService(states, ExecutionSnapshotRepository(ledger))
     values = {"filledQuantity": "1", "filledAmount": "100", "averageFilledPrice": "100"}
     context = ExecutionPostingContext(
-        "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+        "account-1", "SPY", "BUY", "USD", SETTLEMENT_DATE, "FIFO-v1"
     )
     first = service.observe(
         broker_order_id="order-1", raw_state="PARTIAL_FILLED", observed_at_utc=NOW,
@@ -263,7 +266,7 @@ def test_invalid_filled_observation_rolls_back_state_and_snapshot_together(ledge
             source_response_id="raw-zero",
             execution={"filledQuantity": "0", "filledAmount": "0"},
             posting_context=ExecutionPostingContext(
-                "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+                "account-1", "SPY", "BUY", "USD", SETTLEMENT_DATE, "FIFO-v1"
             ),
         )
     assert ledger.execute("SELECT COUNT(*) FROM am_order_state_event").fetchone()[0] == 0
@@ -282,7 +285,7 @@ def test_reposting_same_delta_does_not_duplicate_cash_or_position(ledger):
     assert delta is not None
     poster = ExecutionLedgerPoster(ledger)
     context = ExecutionPostingContext(
-        "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+        "account-1", "SPY", "BUY", "USD", SETTLEMENT_DATE, "FIFO-v1"
     )
     first = poster.post(delta, context, posted_at_utc=NOW)
     second = poster.post(delta, context, posted_at_utc=NOW)
@@ -335,7 +338,7 @@ def test_posting_rejects_fabricated_delta_wrong_owner_and_changed_replay_context
         "account-1", "SPY", "BUY", "USD", date(2026, 9, 5), "FIFO-v1"
     )
     poster.post(delta, original, posted_at_utc=NOW)
-    with pytest.raises(ReconciliationError, match="context conflicts"):
+    with pytest.raises(ReconciliationError, match="settlement evidence conflicts"):
         poster.post(
             delta,
             ExecutionPostingContext("account-1", "SPY", "BUY", "USD", date(2026, 9, 6), "FIFO-v1"),
@@ -360,7 +363,7 @@ def test_fill_status_quantity_and_replayed_evidence_must_be_exact(ledger):
         OrderStateRepository(ledger), ExecutionSnapshotRepository(ledger)
     )
     context = ExecutionPostingContext(
-        "account-1", "SPY", "BUY", "USD", NOW.date(), "FIFO-v1"
+        "account-1", "SPY", "BUY", "USD", SETTLEMENT_DATE, "FIFO-v1"
     )
     _raw(ledger, "raw-incomplete-final")
     with pytest.raises(ExecutionError, match="must equal ordered quantity"):

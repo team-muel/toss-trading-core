@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from hashlib import sha256
 import json
@@ -12,6 +12,7 @@ from asset_management.domain.enums import OrderState
 from asset_management.domain.errors import ReconciliationError
 from asset_management.ledger.cash import BrokerConstraint, CashLedger, CashState
 from asset_management.ledger.positions import PositionLedger, PositionState
+from asset_management.ledger.settlement import SettlementEvidenceRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -239,6 +240,11 @@ class LedgerReplay:
                 continue
             if row[7] is None:
                 raise ReconciliationError("execution delta is missing ledger posting or context")
+            try:
+                settlement_date = date.fromisoformat(str(row[11]))
+            except ValueError as error:
+                raise ReconciliationError("execution settlement date is invalid") from error
+            SettlementEvidenceRepository(self._conn).require(delta_id, settlement_date)
             payload = json.loads(str(row[12]))
             identity = (
                 str(row[7]), str(row[8]), str(row[9]), str(row[10])
