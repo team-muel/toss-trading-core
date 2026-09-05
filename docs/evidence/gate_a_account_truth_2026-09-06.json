@@ -1,0 +1,21 @@
+{
+  "decision": "PASS",
+  "reason_codes": [],
+  "blocker_ids": [],
+  "accepted_blocker_ids": [
+    "TOSS_CASH_SOURCE_UNVERIFIABLE"
+  ],
+  "evidence_artifact_ids": [
+    "github-actions:33995216332",
+    "pytest:tests/test_phase3_order_state_execution.py::test_invalid_transition_and_unknown_state_fail_closed",
+    "pytest:tests/test_phase3_order_state_execution.py::test_repeated_cumulative_snapshot_creates_no_second_delta",
+    "pytest:tests/test_phase4_cash_position_settlement.py::test_cash_and_reservation_idempotency_conflicts_fail_closed",
+    "pytest:tests/test_phase4_cash_position_settlement.py::test_execution_posting_fails_closed_on_missing_conflicting_or_malformed_settlement",
+    "pytest:tests/test_phase4_cash_position_settlement.py::test_position_settlement_sell_reservation_tax_lot_and_replay",
+    "pytest:tests/test_phase4_portfolio_accounting.py::test_nav_contributions_currencies_and_external_flows_reconcile",
+    "pytest:tests/test_phase5_account_reconciliation.py"
+  ],
+  "evaluated_at": "2026-09-06T00:00:00+00:00",
+  "code_revision": "c2155a2",
+  "content_hash": "dd3a8591f2fd96904446daf5125daf1d1d7410d4e337f9fcc2ac725fa6164b60"
+}
