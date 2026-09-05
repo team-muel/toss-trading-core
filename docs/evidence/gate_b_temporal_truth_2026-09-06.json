@@ -1,0 +1,18 @@
+{
+  "decision": "PASS",
+  "reason_codes": [],
+  "evidence_artifact_ids": [
+    "github-actions:33995472105",
+    "pytest:tests/test_phase6_point_in_time.py::test_delayed_receipt_and_ingestion_define_actual_availability",
+    "pytest:tests/test_phase6_point_in_time.py::test_future_sentinel_and_same_asof_are_deterministic",
+    "pytest:tests/test_phase6_point_in_time.py::test_revision_vintage_replays_original_before_revision_release",
+    "pytest:tests/test_phase6_point_in_time.py::test_same_day_close_is_not_visible_to_morning_decision",
+    "pytest:tests/test_phase7_reference.py::test_calendar_dst_early_close_and_unknown_session",
+    "pytest:tests/test_phase7_reference.py::test_historical_universe_and_delisting",
+    "pytest:tests/test_phase7_reference.py::test_price_storage_return_and_delisting_action",
+    "pytest:tests/test_phase9_data_collection.py::test_consensus_surprise_requires_real_pre_release_snapshot"
+  ],
+  "evaluated_at": "2026-09-06T00:00:00+00:00",
+  "code_revision": "8bf2013",
+  "content_hash": "0eb027bfc3f3862274b4799ce43de9efe7c3ebe9aaf4948d347ccf1f113b912a"
+}
