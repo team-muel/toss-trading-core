@@ -9,6 +9,9 @@ are half-open; available_at is the knowledge-time boundary. A correction appends
 a complete replacement for the same entity key with a later availability time.
 Queries select the latest known version before testing the effective interval.
 Revisions never overwrite the history needed for an earlier AsOfContext.
+When a future-effective version is already known, the current version remains
+active until that future interval begins; an expired correction does not revive an
+older open-ended version.
 
 Aliases are provider-qualified and dated independently. Missing or ambiguous
 resolution fails closed. Universe membership includes its reason and source;

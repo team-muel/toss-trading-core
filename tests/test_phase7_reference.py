@@ -87,6 +87,15 @@ def test_revision_knowledge_time_and_immutability(db):
         db.execute("DELETE FROM am_reference_record")
 
 
+def test_known_future_version_does_not_hide_current_version(db):
+    iid = instrument(db)
+    current = InstrumentRepository(db).get(iid, ctx(9))
+    future = dict(current, ticker='NEW', toss_symbol='NEW', vendor_symbol='NEW.X')
+    InstrumentRepository(db).register(**future, **hist(start=10, known=8))
+    assert InstrumentRepository(db).get(iid, ctx(9))['ticker'] == 'OLD'
+    assert InstrumentRepository(db).get(iid, ctx(10))['ticker'] == 'NEW'
+
+
 def test_prelisting_price_rejected_and_bases_separated(db):
     iid = instrument(db, start=3)
     prices = PriceObservationStore(db)
@@ -128,6 +137,9 @@ def test_calendar_dst_early_close_and_unknown_session(db):
                 regular_open=datetime(2026,11,27,14,30,tzinfo=timezone.utc),
                 regular_close=datetime(2026,11,27,18,tzinfo=timezone.utc), **hist())
     assert repo.session('XNYS', '2026-11-27', ctx(340))['early_close'] is True
+    repo.record(exchange='XNYS', local_date='2026-12-25', timezone='America/New_York',
+                session_status='CLOSED', **hist())
+    assert repo.session('XNYS', '2026-12-25', ctx(360))['session_status'] == 'CLOSED'
     with pytest.raises(DataQualityError, match='MISSING'):
         repo.session('XNYS', '2026-03-07', ctx(70))
     with pytest.raises(DataQualityError, match='HOURS_MISSING'):
@@ -176,6 +188,13 @@ def test_orphan_reference_and_naive_time_are_blocked(db):
         InstrumentRepository(db).append(
             'INSTRUMENT', 'x', {}, effective_from=datetime(2026,1,1),
             available_at=T, source='fixture')
+    iid = instrument(db)
+    with pytest.raises(DataQualityError, match='TYPE_UNKNOWN'):
+        CorporateActionRepository(db).record(
+            action_id='bad', instrument_id=iid, action_type='UNKNOWN', terms={'x': '1'}, **hist()
+        )
+    with pytest.raises(DataQualityError, match='BASIS_UNKNOWN'):
+        require_price_basis(['mystery'])
 
 
 def test_action_comparisons_are_idempotent_and_auditable(db):

@@ -15,7 +15,10 @@ class PriceBasis(StrEnum):
 
 
 def require_price_basis(bases, *, cash_dividends=False, ledger=False):
-    values = {PriceBasis(value) for value in bases}
+    try:
+        values = {PriceBasis(value) for value in bases}
+    except ValueError as error:
+        raise DataQualityError('PRICE_BASIS_UNKNOWN') from error
     if len(values) != 1:
         raise DataQualityError('PRICE_BASIS_MIXED_OR_MISSING')
     basis = next(iter(values))
@@ -55,19 +58,21 @@ class PriceObservationStore:
 
     def append(self, *, instrument_id, basis, price, context, **observation):
         require_as_of_context(context)
-        basis = PriceBasis(basis)
+        try:
+            basis = PriceBasis(basis)
+        except ValueError as error:
+            raise DataQualityError('PRICE_BASIS_UNKNOWN') from error
         value = exact_decimal(price)
         if value <= 0:
             raise DataQualityError('PRICE_NOT_POSITIVE')
-        versions = self.instruments.versions('INSTRUMENT', context)
-        if instrument_id not in versions:
-            raise DataQualityError('INSTRUMENT_UNKNOWN')
-        start, end, _ = versions[instrument_id]
         event = utc(observation['event_time'])
-        if event < start or (end is not None and event >= end):
-            raise DataQualityError('PRICE_OUTSIDE_LISTING')
-        for action_start, _, action in self.instruments.versions('ACTION', context).values():
-            if action['instrument_id'] == instrument_id and action['action_type'] == 'DELISTING' and event >= action_start:
+        listings = self.instruments.effective('INSTRUMENT', event, context)
+        if instrument_id not in listings:
+            if instrument_id in self.instruments.versions('INSTRUMENT', context):
+                raise DataQualityError('PRICE_OUTSIDE_LISTING')
+            raise DataQualityError('INSTRUMENT_UNKNOWN')
+        for action in self.instruments.effective('ACTION', event, context).values():
+            if action['instrument_id'] == instrument_id and action['action_type'] == 'DELISTING':
                 raise DataQualityError('PRICE_AFTER_DELISTING')
         context.require_known_at(utc(observation['available_at']))
         return self.observations.append(entity_id=instrument_id, field='price:' + basis.value,

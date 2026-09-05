@@ -19,10 +19,15 @@ class ActionType(StrEnum):
 
 class CorporateActionRepository(InstrumentRepository):
     def record(self, *, action_id, instrument_id, action_type, terms, **history):
-        action_type = ActionType(action_type)
+        try:
+            action_type = ActionType(action_type)
+        except ValueError as error:
+            raise DataQualityError('CORPORATE_ACTION_TYPE_UNKNOWN') from error
         if not terms:
             raise DataQualityError('CORPORATE_ACTION_TERMS_MISSING')
         if action_type in {ActionType.SPLIT, ActionType.REVERSE_SPLIT}:
+            if 'ratio' not in terms:
+                raise DataQualityError('CORPORATE_ACTION_RATIO_MISSING')
             ratio = exact_decimal(terms['ratio'])
             if ratio <= 0 or (action_type == ActionType.SPLIT and ratio <= 1) or (
                     action_type == ActionType.REVERSE_SPLIT and ratio >= 1):

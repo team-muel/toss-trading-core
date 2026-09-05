@@ -54,23 +54,44 @@ class ReferenceHistory:
 
     def versions(self, kind, context):
         require_as_of_context(context)
-        rows = self.conn.execute(
+        rows = self._known_rows(kind, context)
+        result = {}
+        for row in rows:
+            if row[1] not in result:
+                result[row[1]] = self._version(row)
+        return result
+
+    def effective(self, kind, effective_at, context):
+        """Select latest knowledge among versions effective at the requested instant."""
+        require_as_of_context(context)
+        instant = utc(effective_at)
+        result = {}
+        considered = set()
+        for row in self._known_rows(kind, context):
+            start, end, body = self._version(row)
+            key = row[1]
+            if key in considered or start > instant:
+                continue
+            considered.add(key)
+            if end is None or instant < end:
+                result[key] = body
+        return result
+
+    def _known_rows(self, kind, context):
+        return self.conn.execute(
             '''SELECT kind,entity_key,effective_from,effective_to,available_at,source,payload_json,content_hash
                FROM am_reference_record WHERE kind=? AND available_at<=?
                ORDER BY entity_key,available_at DESC''',
             (kind, context.information_cutoff_utc.isoformat())).fetchall()
-        result = {}
-        for row in rows:
-            if row[1] in result:
-                continue
+
+    @staticmethod
+    def _version(row):
             digest = sha256(json.dumps(tuple(row[:7]), separators=(',', ':')).encode()).hexdigest()
             if digest != row[7]:
                 raise DataQualityError('REFERENCE_HASH_MISMATCH')
-            result[row[1]] = (datetime.fromisoformat(row[2]),
-                              datetime.fromisoformat(row[3]) if row[3] else None,
-                              json.loads(row[6]))
-        return result
+            return (datetime.fromisoformat(row[2]),
+                    datetime.fromisoformat(row[3]) if row[3] else None,
+                    json.loads(row[6]))
 
     def active(self, kind, context):
-        return {key: body for key, (start, end, body) in self.versions(kind, context).items()
-                if start <= context.as_of_utc and (end is None or context.as_of_utc < end)}
+        return self.effective(kind, context.as_of_utc, context)
