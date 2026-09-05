@@ -2,10 +2,11 @@
 
 ## Scope
 
-The first release is a modular monolith for US-listed broad-market and cash-like
-ETFs. It is long-only, unlevered, and USD-invested. Its objective is operational
-correctness: point-in-time data, target weights, risk gates, simulated execution,
-and exact reconciliation. Individual-stock research is outside this phase.
+The system is a modular monolith with implementation contracts through Phase 16.
+The active operating scope remains US-listed broad-market and cash-like ETFs. It
+is long-only, unlevered, read-only, and USD-invested. Company research contracts
+exist for later use, but individual-stock selection remains inactive until its
+data histories, policies, validation, and promotion gates are approved.
 
 ## Mandatory runtime order
 
@@ -27,3 +28,12 @@ it directly. Service extraction is prohibited until the monolith is stable.
 
 See `src/asset_management/ARCHITECTURE.md` for compile-time dependency rules and
 `docs/adr/` for binding decisions.
+
+## Implemented calculation layers
+
+After immutable point-in-time data and account reconciliation, the monolith
+provides versioned Feature Store snapshots; four separate State engines; required
+return and expected-return models; covariance, tail, exposure and stress risk;
+and six-layer target portfolio construction. These layers return evidence,
+quality, uncertainty, restrictions, target weights, or target quantities. They
+do not authorize or transmit orders.
