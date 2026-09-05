@@ -27,6 +27,21 @@ Imports from the legacy `toss_trading` package are permitted only inside
 anti-corruption adapters while the verified Toss foundation is migrated. They
 must not leak into domain models or investment logic.
 
+## Alpha research boundary
+
+`alpha_management` is a sibling research package rather than a child of the
+investment core. It may depend read-only on `asset_management.time`,
+`asset_management.reference`, and validated `asset_management.data` interfaces.
+The dependency is one-way: core `asset_management` modules must not import
+`alpha_management`.
+
+The alpha package owns expression syntax, BRAIN-style operators, research
+simulation, and evaluation only. It does not call providers or brokers, mutate
+account state, create order intents, or bypass portfolio/risk policy. Any later
+handoff of a validated alpha result into a target-portfolio proposal must occur
+through an explicit outer integration boundary and then follow the normal
+runtime gates below.
+
 ## Runtime gate order
 
 Import direction and runtime approval order are separate controls. Every
