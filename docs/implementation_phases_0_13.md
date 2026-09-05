@@ -1,4 +1,4 @@
-# 구현 단계 0~14 전체 감사
+# 구현 단계 0~15 전체 감사
 
 감사 기준일: 2026-09-05  
 운영 설정: `READ_ONLY`, `live_trading_enabled: false`
@@ -26,6 +26,7 @@
 | 12 | Market/Company/Portfolio/System State | 완료 | 상태 분리, component 재계산, 위험 축소 |
 | 13 | 자산가격결정 Engine | 완료 | CAPM·다요인·BL·Reverse DCF, 주문 비생성 |
 | 14 | 기대수익률과 Alpha | 완료 | 자산군별 component, gross/net, 구간과 ABSTAIN |
+| 15 | 위험모형 | 완료 | 공분산·tail·stress·exposure·risk contribution |
 
 런타임 순서는 `investment policy -> account truth -> time truth -> data truth -> financial calculation -> target portfolio -> risk control -> order`로 보존한다.
 
@@ -39,6 +40,8 @@
 
 단계 14는 개별주, 주식 ETF, 채권 ETF, 현금성 자산과 원자재 ETF에 서로 다른 기대수익 component 계약을 적용한다. component 합, gross/net 비용 분해, confidence shrinkage, expected-minus-required Alpha와 불확실성 구간을 보존한다. 불확실한 판단은 명시적 `ABSTAIN`으로 끝난다. 자세한 내용은 [expected_returns_phase14.md](expected_returns_phase14.md)다.
 
+단계 15는 total-return panel에서 표본·EWMA·shrinkage·factor·stress covariance를 만들고 PSD를 검사한다. 포트폴리오 변동성, Euler 위험기여도, historical VaR/CVaR, exposure, stress, event risk와 drawdown 진단을 분리해 보존한다. 역행렬 fallback과 위험모형 실패는 optimizer를 차단한다. 자세한 내용은 [risk_models_phase15.md](risk_models_phase15.md)다.
+
 ## 운영 상태
 
 - Toss OAuth는 등록된 GCP 고정 IP의 VM에서 검증됐고, 자격증명은 Secret Manager에서 주입한다. 비밀값은 저장소와 수집 원본에 기록하지 않는다.
@@ -49,7 +52,7 @@
 
 ## 검증 기록
 
-- `python -m pytest -q`: **294 passed**
+- `python -m pytest -q`: **304 passed**
 - `python scripts/check_governance.py`: 통과
 - `python scripts/check_toss_openapi.py`: 통과
 - 모든 JSON schema parsing과 Python compile: 통과
