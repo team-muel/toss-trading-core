@@ -106,6 +106,9 @@ class RiskInputs:
     defer_execution: bool = False
 
     def __post_init__(self) -> None:
+        for field in fields(self):
+            if field.type == "bool" and type(getattr(self, field.name)) is not bool:
+                raise NoTrade(f"RISK_INPUT_INVALID: {field.name} must be an explicit boolean")
         identity = (self.runtime_run_id, self.portfolio_target_id, self.portfolio_target_hash,
                     self.policy_version, self.as_of_utc)
         if any(not value.strip() for value in identity):
