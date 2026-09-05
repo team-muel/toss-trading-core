@@ -61,3 +61,7 @@ come from the exact verified Toss response cited by the cumulative fill snapshot
 missing, malformed, conflicting, cross-account, non-success, or hash-invalid raw
 evidence blocks posting. Replay re-resolves the raw value and verifies its stored
 lineage and evidence hash.
+
+Migration 13 adds immutable, hashed, source-attributed reference versions with
+effective and knowledge times, instrument lineage guards, aliases, memberships,
+exchange sessions and corporate actions. See reference_universe.md.
