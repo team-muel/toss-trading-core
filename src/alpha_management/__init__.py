@@ -10,6 +10,20 @@ must never call a broker or create an order directly.
 from .datafields import AssetDataSource, PointInTimeDataSource, RepositoryDataFields
 from .expression import Alpha, AlphaPositions, AlphaSimulationSettings, simulate_cross_section
 from .metrics import SimulationResult, evaluate, fitness
+from .history import HistoricalSession, HistoryPoint, HistorySimulationResult, simulate_history
+from .dsl import (
+    Axis,
+    CallNode,
+    CompiledExpression,
+    DataFieldNode,
+    ExpressionError,
+    GroupFieldNode,
+    LiteralNode,
+    OperatorSpec,
+    RepositoryPanelResolver,
+    ValueType,
+    compile_expression,
+)
 from . import operators
 
 __all__ = [
@@ -24,4 +38,19 @@ __all__ = [
     "SimulationResult",
     "evaluate",
     "fitness",
+    "Axis",
+    "CallNode",
+    "CompiledExpression",
+    "DataFieldNode",
+    "ExpressionError",
+    "GroupFieldNode",
+    "LiteralNode",
+    "OperatorSpec",
+    "RepositoryPanelResolver",
+    "ValueType",
+    "compile_expression",
+    "HistoricalSession",
+    "HistoryPoint",
+    "HistorySimulationResult",
+    "simulate_history",
 ]

@@ -5,6 +5,7 @@ description = "USD-based multi-engine auto-trading research foundation"
 requires-python = ">=3.11"
 dependencies = [
   "google-cloud-secret-manager>=2.20,<3",
+  "lark>=1.2,<2",
   "pyyaml>=6.0,<7",
   "tzdata>=2025.2; sys_platform == 'win32'",
 ]
@@ -46,6 +47,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+alpha_management = ["fast_expression.lark"]
 
 [tool.setuptools.data-files]
 "share/toss-trading/schemas" = ["schemas/trading_ledger.sql"]
