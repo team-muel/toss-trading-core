@@ -8,9 +8,10 @@ from decimal import Decimal
 from typing import Mapping
 
 from asset_management.quality.models import QualityStatus
+from asset_management.domain.horizon import DECISION_HORIZONS, SignalValidity
 
 
-HORIZONS = (21, 63, 126, 252)
+HORIZONS = DECISION_HORIZONS
 
 
 @dataclass(frozen=True)
@@ -83,11 +84,15 @@ class PricingResult:
     estimation_uncertainty: Decimal
     quality_status: QualityStatus
     as_of: datetime
+    validity: SignalValidity
 
     def __post_init__(self) -> None:
-        if (not self.instrument_id.strip() or self.horizon not in HORIZONS or
+        if (not isinstance(self.validity, SignalValidity) or
+                not self.instrument_id.strip() or self.horizon not in HORIZONS or
+                self.validity.forecast_horizon != self.horizon or
                 not self.model_name.strip() or self.as_of.tzinfo is None or
-                self.as_of.utcoffset() is None):
+                self.as_of.utcoffset() is None or
+                self.validity.valid_until <= self.as_of.astimezone(timezone.utc)):
             raise ValueError("PRICING_RESULT_INVALID")
         values = (self.required_return, self.lower_bound, self.upper_bound,
                   self.estimation_uncertainty, *self.factor_loadings.values())
@@ -105,4 +110,5 @@ class PricingResult:
             "estimation_uncertainty": str(self.estimation_uncertainty),
             "quality_status": str(self.quality_status),
             "as_of": self.as_of.astimezone(timezone.utc).isoformat(),
+            "validity": self.validity.payload(),
         }

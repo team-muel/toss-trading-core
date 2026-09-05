@@ -67,13 +67,15 @@ class FeatureStore:
             "universe_manifest_id": context.universe_manifest_id,
             "parameter_set_id": context.parameter_set_id,
             "parent_state_id": context.parent_state_id, "code_revision": context.code_revision,
+            "validity": context.validity.payload(),
             "quality_gate": _jsonable(asdict(quality_gate)),
         }
         run_id = digest(canonical(identity))
         snapshot = FeatureSnapshot(run_id, context.instrument_id, feature_id, utc(context.as_of),
                                    utc(context.information_cutoff), str(value) if value is not None else None,
                                    str(quality), tuple(sorted(context.input_manifest_ids)),
-                                   context.parameter_set_id, context.parent_state_id, context.code_revision)
+                                   context.parameter_set_id, context.parent_state_id, context.code_revision,
+                                   context.validity)
         if quality is not QualityStatus.VALID:
             return FeatureRunResult("NO_TRADE", reason or "FEATURE_QUALITY_BLOCKED", snapshot, None)
         manifest = self._publish(definition, context, snapshot)
@@ -101,6 +103,7 @@ class FeatureStore:
             raise DataQualityError("FEATURE_COMBINED_CONTRACT_REQUIRED")
         definition_id = self.store.catalog("feature-definitions", asdict(definition))
         body = {**asdict(snapshot), "input_manifest_ids": list(snapshot.input_manifest_ids),
+                "validity": snapshot.validity.payload(),
                 "feature_definition_catalog_id": definition_id}
         latest_provider = max(item.provider_timestamp for item in manifests)
         return self.store.write(

@@ -11,6 +11,7 @@ from asset_management.quality.models import QualityStatus
 
 from .models import FactorPremium, PricingResult
 from .risk_free import annual_to_horizon
+from asset_management.domain.horizon import SignalValidity
 
 
 FACTORS = ("MKT", "VALUE", "MOMENTUM", "QUALITY", "SIZE", "PROFITABILITY", "INVESTMENT")
@@ -19,7 +20,7 @@ FACTORS = ("MKT", "VALUE", "MOMENTUM", "QUALITY", "SIZE", "PROFITABILITY", "INVE
 def multifactor_required_return(*, instrument_id: str, risk_free_rate: Decimal,
                                 loadings: Mapping[str, Decimal],
                                 premiums: Mapping[str, FactorPremium], horizon: int,
-                                as_of: datetime, information_cutoff: datetime,
+                                as_of: datetime, information_cutoff: datetime, validity: SignalValidity,
                                 uncertainty_z: Decimal = Decimal("1.96")) -> PricingResult:
     if set(loadings) != set(FACTORS) or set(premiums) != set(FACTORS):
         raise DataQualityError("FACTOR_MODEL_INCOMPLETE")
@@ -35,7 +36,7 @@ def multifactor_required_return(*, instrument_id: str, risk_free_rate: Decimal,
     upper=annual_to_horizon(upper_annual,horizon)
     horizon_uncertainty=max(point-lower,upper-point)/uncertainty_z if uncertainty_z else Decimal(0)
     return PricingResult(instrument_id,horizon,point,lower,upper,"MULTIFACTOR",
-                         dict(loadings),horizon_uncertainty,QualityStatus.VALID,as_of)
+                         dict(loadings),horizon_uncertainty,QualityStatus.VALID,as_of,validity)
 
 
 def require_distinct_factor_roles(*, required_return_factors: set[str],

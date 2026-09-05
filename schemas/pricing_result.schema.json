@@ -3,7 +3,7 @@
   "$id": "pricing_result.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["instrument_id", "horizon", "required_return", "lower_bound", "upper_bound", "model_name", "factor_loadings", "estimation_uncertainty", "quality_status", "as_of"],
+  "required": ["instrument_id", "horizon", "required_return", "lower_bound", "upper_bound", "model_name", "factor_loadings", "estimation_uncertainty", "quality_status", "as_of", "validity"],
   "properties": {
     "instrument_id": {"type": "string", "minLength": 1},
     "horizon": {"enum": [21, 63, 126, 252]},
@@ -14,6 +14,7 @@
     "factor_loadings": {"type": "object", "additionalProperties": {"type": "string"}},
     "estimation_uncertainty": {"type": "string"},
     "quality_status": {"enum": ["VALID", "ESTIMATED"]},
-    "as_of": {"type": "string", "format": "date-time"}
+    "as_of": {"type": "string", "format": "date-time"},
+    "validity": {"$ref": "decision_horizon.schema.json"}
   }
 }

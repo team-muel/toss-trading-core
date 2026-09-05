@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Mapping
 
 from asset_management.quality.models import QualityStatus
+from asset_management.domain.horizon import SignalValidity
 
 
 @dataclass(frozen=True)
@@ -58,8 +59,11 @@ class FeatureContext:
     parameter_set_id: str
     parent_state_id: str | None
     code_revision: str
+    validity: SignalValidity
 
     def __post_init__(self) -> None:
+        if not isinstance(self.validity, SignalValidity):
+            raise ValueError("FEATURE_SIGNAL_VALIDITY_MISSING")
         if (not self.instrument_id.strip() or not self.input_manifest_ids or
                 not self.universe_manifest_id or not self.parameter_set_id.strip()):
             raise ValueError("FEATURE_CONTEXT_INCOMPLETE")
@@ -71,6 +75,8 @@ class FeatureContext:
                 raise ValueError("FEATURE_CONTEXT_TIME_NOT_AWARE")
         if self.information_cutoff > self.as_of:
             raise ValueError("FEATURE_CUTOFF_AFTER_AS_OF")
+        if self.validity.valid_until <= self.as_of.astimezone(timezone.utc):
+            raise ValueError("FEATURE_SIGNAL_EXPIRED")
 
 
 @dataclass(frozen=True)
@@ -93,6 +99,7 @@ class FeatureSnapshot:
     parameter_set_id: str
     parent_state_id: str | None
     code_revision: str
+    validity: SignalValidity
 
 
 def utc(value: datetime) -> str:

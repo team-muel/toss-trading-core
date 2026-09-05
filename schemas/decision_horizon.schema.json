@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "decision_horizon.schema.json",
+  "title": "AMA-32 Decision Horizon and Signal Validity",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["forecast_horizon", "holding_horizon", "valid_until", "decay_profile", "half_life_seconds"],
+  "properties": {
+    "forecast_horizon": {"enum": [21, 63, 126, 252]},
+    "holding_horizon": {"enum": [21, 63, 126, 252]},
+    "valid_until": {"type": "string", "format": "date-time"},
+    "decay_profile": {"enum": ["STEP", "LINEAR", "EXPONENTIAL"]},
+    "half_life_seconds": {"type": ["integer", "null"], "minimum": 1}
+  }
+}

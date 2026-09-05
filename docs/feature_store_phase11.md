@@ -11,6 +11,10 @@ lookback, horizon, transformation, missing policy, and quality policy. Re-regist
 feature ID with a different contract is rejected. The safe defaults are
 `missing_policy=MISSING_HISTORY` and `quality_policy=REQUIRE_VALID`.
 
+Feature snapshots also carry the AMA-32 signal-validity contract: forecast and holding
+horizons, an aware `valid_until`, and an explicit decay profile. This contract is part
+of the deterministic feature identity and immutable Gold payload.
+
 Every successful `FeatureSnapshot` records `feature_run_id`, instrument ID, feature ID,
 `as_of`, `information_cutoff`, Decimal value, quality status, every input manifest ID,
 parameter-set ID, optional parent state ID, and code revision. It is stored as an immutable gold dataset;

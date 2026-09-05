@@ -4,7 +4,7 @@
   "title": "Phase 11 Feature Snapshot",
   "type": "object",
   "additionalProperties": false,
-  "required": ["feature_run_id", "instrument_id", "feature_id", "as_of", "information_cutoff", "value", "quality_status", "input_manifest_ids", "parameter_set_id", "parent_state_id", "code_revision"],
+  "required": ["feature_run_id", "instrument_id", "feature_id", "as_of", "information_cutoff", "value", "quality_status", "input_manifest_ids", "parameter_set_id", "parent_state_id", "code_revision", "validity"],
   "properties": {
     "feature_run_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "instrument_id": {"type": "string", "minLength": 1},
@@ -16,6 +16,7 @@
     "input_manifest_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
     "parameter_set_id": {"type": "string", "minLength": 1},
     "parent_state_id": {"type": ["string", "null"]},
-    "code_revision": {"type": "string", "pattern": "^git:[0-9a-f]{7,40}$"}
+    "code_revision": {"type": "string", "pattern": "^git:[0-9a-f]{7,40}$"},
+    "validity": {"$ref": "decision_horizon.schema.json"}
   }
 }

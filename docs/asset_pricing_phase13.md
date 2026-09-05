@@ -10,3 +10,7 @@
 - 오차 공분산이 없으면 독립성을 가정하지 않고 보수적인 triangle bound를 쓰며 출력 uncertainty는 결과와 같은 horizon 단위다.
 
 결과 계약에는 종목, horizon, 요구수익률, 상하한, 모델명, factor loading, 추정불확실성, 품질, `as_of`만 있으며 주문 방향이나 주문 생성 필드는 없다. 결측·미래·충돌 입력은 값을 만들지 않고 명시적 오류로 종료한다.
+
+각 결과는 forecast/holding horizon, `valid_until`, decay profile을 포함하는 signal
+validity 계약도 보존한다. 계산 horizon과 forecast horizon이 다르면 결과 생성을
+거부한다.

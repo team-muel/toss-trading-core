@@ -5,6 +5,7 @@ import pytest
 
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.domain.errors import DataQualityError
+from asset_management.domain.horizon import DecayProfile, SignalValidity
 from asset_management.features import company, market
 from asset_management.features.leakage import DatedValue, cross_sectional_winsorize, historical_zscore
 from asset_management.features.models import FeatureContext, FeatureDefinition, FeatureInput
@@ -15,6 +16,7 @@ from asset_management.quality.models import QualityGate, QualityStatus
 
 NOW = datetime(2026, 9, 5, 12, tzinfo=timezone.utc)
 LICENSE = "purpose=internal-research;redistribution=forbidden;retention=perpetual"
+VALIDITY = SignalValidity(21, 21, NOW + timedelta(days=1), DecayProfile.LINEAR)
 
 
 def allow_gate():
@@ -48,7 +50,7 @@ def manifests(store):
 def context(prices, universe):
     return FeatureContext("SPY", NOW, NOW - timedelta(seconds=30),
                           (prices.manifest_id, universe.manifest_id), universe.manifest_id,
-                          "parameters-v1", "state-1", "git:abcdef0")
+                          "parameters-v1", "state-1", "git:abcdef0", VALIDITY)
 
 
 def input_value(value, *, available=NOW - timedelta(minutes=1), event=NOW - timedelta(days=1)):
@@ -84,9 +86,9 @@ def test_registry_rejects_same_id_with_changed_contract():
 
 def test_context_requires_unique_complete_universe_lineage():
     with pytest.raises(ValueError, match="FEATURE_CONTEXT_LINEAGE_INVALID"):
-        FeatureContext("SPY", NOW, NOW, ("a", "a"), "a", "parameters-v1", None, "git:abcdef0")
+        FeatureContext("SPY", NOW, NOW, ("a", "a"), "a", "parameters-v1", None, "git:abcdef0", VALIDITY)
     with pytest.raises(ValueError, match="FEATURE_CONTEXT_LINEAGE_INVALID"):
-        FeatureContext("SPY", NOW, NOW, ("a",), "universe", "parameters-v1", None, "git:abcdef0")
+        FeatureContext("SPY", NOW, NOW, ("a",), "universe", "parameters-v1", None, "git:abcdef0", VALIDITY)
 
 
 def test_market_feature_calculations_and_missing_history():
@@ -160,6 +162,7 @@ def test_same_inputs_and_parameters_produce_identical_feature_and_lineage(tmp_pa
     assert body["input_manifest_ids"] == sorted([prices.manifest_id, universe.manifest_id])
     assert body["parameter_set_id"] == "parameters-v1"
     assert body["parent_state_id"] == "state-1" and body["code_revision"] == "git:abcdef0"
+    assert body["validity"] == VALIDITY.payload()
     assert manifest.retrieved_at == NOW.isoformat() and manifest.available_at == NOW.isoformat()
 
 
