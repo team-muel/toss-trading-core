@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from decimal import Decimal, localcontext
+from decimal import Decimal
 from typing import Mapping
 
 from asset_management.domain.errors import DataQualityError
@@ -27,17 +27,15 @@ def multifactor_required_return(*, instrument_id: str, risk_free_rate: Decimal,
            point.quality is not QualityStatus.VALID for name, point in premiums.items()):
         raise DataQualityError("FACTOR_PREMIUM_NOT_POINT_IN_TIME")
     annual = risk_free_rate + sum(loadings[name] * premiums[name].annualized_premium for name in FACTORS)
-    with localcontext() as context:
-        context.prec = 34
-        variance = sum((loadings[name] * premiums[name].standard_error) ** 2
-                       for name in FACTORS)
-        uncertainty = variance.sqrt()
+    # No error-covariance matrix is supplied, so use the conservative triangle bound.
+    uncertainty = sum(abs(loadings[name]) * premiums[name].standard_error for name in FACTORS)
     lower_annual = max(Decimal("-0.999999"), annual - uncertainty_z * uncertainty)
     upper_annual = annual + uncertainty_z * uncertainty
-    return PricingResult(instrument_id, horizon, annual_to_horizon(annual, horizon),
-                         annual_to_horizon(lower_annual, horizon),
-                         annual_to_horizon(upper_annual, horizon), "MULTIFACTOR",
-                         dict(loadings), uncertainty, QualityStatus.VALID, as_of)
+    point=annual_to_horizon(annual,horizon); lower=annual_to_horizon(lower_annual,horizon)
+    upper=annual_to_horizon(upper_annual,horizon)
+    horizon_uncertainty=max(point-lower,upper-point)/uncertainty_z if uncertainty_z else Decimal(0)
+    return PricingResult(instrument_id,horizon,point,lower,upper,"MULTIFACTOR",
+                         dict(loadings),horizon_uncertainty,QualityStatus.VALID,as_of)
 
 
 def require_distinct_factor_roles(*, required_return_factors: set[str],

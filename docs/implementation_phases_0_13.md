@@ -49,7 +49,7 @@
 
 ## 검증 기록
 
-- `python -m pytest -q`: **291 passed**
+- `python -m pytest -q`: **294 passed**
 - `python scripts/check_governance.py`: 통과
 - `python scripts/check_toss_openapi.py`: 통과
 - 모든 JSON schema parsing과 Python compile: 통과

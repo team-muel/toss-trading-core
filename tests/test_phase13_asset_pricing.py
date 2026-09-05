@@ -64,6 +64,12 @@ def test_black_litterman_equilibrium_views_and_gate():
     post = posterior_returns(cov,(D(".6"),D(".4")),D(2),(view,),capm_stable=True,supply_stable=True,market_caps_stable=True)
     assert post != prior
 
+def test_black_litterman_matches_closed_form_single_asset():
+    result=posterior_returns(((D(".04"),),),(D(1),),D(2),
+                             (BlackLittermanView((D(1),),D(".12"),D(".5")),),
+                             capm_stable=True,supply_stable=True,market_caps_stable=True,tau=D(".05"))
+    assert result==(D(".10"),)
+
 @pytest.mark.parametrize("field,bounds", [("revenue_growth",(D("-.2"),D(".4"))), ("operating_margin",(D(".01"),D(".5"))), ("fcf_margin",(D(".01"),D(".4"))), ("discount_rate",(D(".05"),D(".3"))), ("terminal_growth",(D("-.02"),D(".07")))])
 def test_reverse_dcf_recovers_each_assumption(field,bounds):
     original = DcfAssumptions(D(1000), D(100))
@@ -71,6 +77,11 @@ def test_reverse_dcf_recovers_each_assumption(field,bounds):
     baseline = replace(original, **{field: (bounds[0]+bounds[1])/2})
     result = solve_implied(market_price=price, assumptions=baseline, field=field, lower=bounds[0], upper=bounds[1])
     assert abs(result.implied_value-getattr(original,field)) < D(".00002")
+
+def test_reverse_dcf_uses_fcff_margin_once_and_requires_accounting_consistency():
+    assumptions=DcfAssumptions(D(1000),D(100),years=1,revenue_growth=D(0),discount_rate=D(".10"),terminal_growth=D(0))
+    assert dcf_price(assumptions)==D(10)
+    with pytest.raises(DataQualityError): dcf_price(replace(assumptions,operating_margin=D(".30")))
 
 def test_reverse_dcf_fails_closed_without_bracket():
     with pytest.raises(DataQualityError): solve_implied(market_price=D(10000), assumptions=DcfAssumptions(D(100),D(10)), field="revenue_growth", lower=D(0), upper=D(".01"))

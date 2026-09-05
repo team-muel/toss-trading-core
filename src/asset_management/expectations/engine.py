@@ -1,6 +1,6 @@
 """Expected-return aggregation with distinct asset-class paths."""
 from datetime import datetime
-from decimal import Decimal, localcontext
+from decimal import Decimal
 from typing import Mapping
 from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityStatus
@@ -26,9 +26,8 @@ def expected_return(*, instrument_id: str, asset_class: AssetClass,
     if any(item.component_name != name for name,item in zip(COMPONENTS[asset_class],ordered)):
         raise DataQualityError("EXPECTED_RETURN_COMPONENT_NAME_CONFLICT")
     gross = sum(x.point_estimate for x in ordered); net = gross-sum(costs)
-    with localcontext() as context:
-        context.prec=34
-        uncertainty = sum(x.uncertainty*x.uncertainty for x in ordered).sqrt()
+    # Correlations are not supplied, so use the conservative triangle bound.
+    uncertainty = sum(x.uncertainty for x in ordered)
     confidence = min(x.confidence for x in ordered)
     quality = QualityStatus.VALID if all(x.confidence > 0 and x.uncertainty.is_finite() for x in ordered) else QualityStatus.MISSING
     return ExpectedReturnEstimate(instrument_id, asset_class, horizon, ordered, gross,

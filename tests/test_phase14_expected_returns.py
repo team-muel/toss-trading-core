@@ -29,6 +29,14 @@ def test_gross_net_and_components():
 def test_shrinkage():
     assert shrink_estimate(D(".12"),D(".04"),D(".25"))==D(".06")
     assert shrink_estimate(D(".12"),D(".04"),D(0))==D(".04")
+    item=shrink_component(raw_estimate=D(".12"),prior=D(".04"),confidence=D(".25"),
+                          uncertainty=D(".01"),component_name="current_yield",
+                          input_features=("yield",),horizon=252)
+    assert item.point_estimate==D(".06")
+
+def test_uncertainty_is_conservative_without_correlation_matrix():
+    result=expected_return(instrument_id="X",asset_class=AssetClass.CASH,components=components(AssetClass.CASH,uncertainty=D(".01")),horizon=252,as_of=NOW,uncertainty_z=D(1))
+    assert result.upper_bound-result.net_expected_return==D(".03")
 
 def required(rate=D(".02")):
     beta=BetaEstimate(D(0),D(0),D(".001"),252,252,D(1),NOW,QualityStatus.VALID,D(1))
