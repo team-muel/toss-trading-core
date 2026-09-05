@@ -62,4 +62,21 @@
 - wheel build와 포함 파일 검사: 통과
 - `git diff --check`: 통과
 
-- 단계 13 PR #18 Python 3.11/3.12 CI: 통과
+## 변경 전달 상태
+
+단계별 변경은 의존 순서를 보존하는 stacked PR로 열려 있다.
+
+| 단계 | PR | Base | 상태 |
+|---:|---:|---|---|
+| 7 | #9 | 단계 4 settlement evidence | CLOSED, 미병합 |
+| 8 | #10 | 단계 7 | CLOSED, 미병합 |
+| 9 | #11 | 단계 8 | CLOSED, 미병합 |
+| 10 | #15 | 단계 9 | OPEN, mergeable, CI 통과 |
+| 11 | #16 | 단계 10 | OPEN, mergeable, CI 통과 |
+| 12 | #17 | 단계 11 | OPEN, mergeable, CI 통과 |
+| 13 | #18 | 단계 12 | OPEN, mergeable, CI 통과 |
+| 14 | #19 | 단계 13 | OPEN, mergeable, CI 통과 |
+| 15 | #20 | 단계 14 | OPEN, mergeable, CI 통과 |
+| 16 | #21 | 단계 15 | OPEN, mergeable, CI 통과 |
+
+문서 최신화는 단계 16 위의 별도 문서 PR로 관리한다. 단계 7~9 PR은 미병합 상태로 닫혔으므로 병합 전에 다시 열거나 대체 PR을 만들어야 한다. 모든 변경은 낮은 단계부터 순서대로 반영해야 한다. 현재 구현 브랜치에서 완료조건은 충족하지만 기본 브랜치 릴리스 완료 상태는 아니다.

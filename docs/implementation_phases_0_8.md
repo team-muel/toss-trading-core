@@ -1,5 +1,8 @@
 # 구현 단계 0~8 현황 및 완료 조건 감사
 
+> 이 문서는 단계 8 완료 당시의 역사적 감사 기록입니다. 현재 전체 상태는
+> [구현 단계 0~16 전체 감사](implementation_phases_0_16.md)를 참조하십시오.
+
 감사 기준일: 2026-09-05  
 감사 대상: `codex/phase8-immutable-datasets` (`8583f0b`)  
 운영 모드: `READ_ONLY`, `live_trading_enabled: false`
