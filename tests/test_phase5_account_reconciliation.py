@@ -67,7 +67,71 @@ def policy() -> ReconciliationPolicy:
         "account-reconciliation-v1", NOW - timedelta(days=1), None,
         "risk-owner", "initial explicit reconciliation tolerances",
         tuple(ToleranceRule(target, Decimal("0")) for target in numeric_targets),
+        60,
     )
+
+
+def decision_lineage(conn: sqlite3.Connection, runtime_id: str) -> str:
+    conn.execute(
+        "INSERT INTO am_ingestion_run VALUES (?, ?, ?, ?, ?)",
+        (f"ingest-{runtime_id}", runtime_id, "test", NOW.isoformat(), NOW.isoformat()),
+    )
+    conn.execute(
+        "INSERT INTO am_dataset_manifest VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (f"manifest-{runtime_id}", f"ingest-{runtime_id}", "silver", "test", "test",
+         f"manifest-hash-{runtime_id}", NOW.isoformat(), NOW.isoformat(), "v1", 1),
+    )
+    conn.execute(
+        "INSERT INTO am_feature_run VALUES (?, ?, ?, ?, ?, ?)",
+        (f"feature-{runtime_id}", runtime_id, f"manifest-{runtime_id}", "v1", "{}",
+         f"feature-hash-{runtime_id}"),
+    )
+    conn.execute(
+        "INSERT INTO am_state_run VALUES (?, ?, ?, ?, ?)",
+        (f"state-{runtime_id}", f"feature-{runtime_id}", "v1", "{}",
+         f"state-hash-{runtime_id}"),
+    )
+    conn.execute(
+        "INSERT INTO am_pricing_run VALUES (?, ?, ?, ?, ?)",
+        (f"pricing-{runtime_id}", f"state-{runtime_id}", "v1", "{}",
+         f"pricing-hash-{runtime_id}"),
+    )
+    conn.execute(
+        "INSERT INTO am_expectation_run VALUES (?, ?, ?, ?, ?)",
+        (f"expectation-{runtime_id}", f"pricing-{runtime_id}", "v1", "{}",
+         f"expectation-hash-{runtime_id}"),
+    )
+    conn.execute(
+        "INSERT INTO am_risk_model_run VALUES (?, ?, ?, ?, ?)",
+        (f"risk-model-{runtime_id}", f"state-{runtime_id}", "v1", "{}",
+         f"risk-model-hash-{runtime_id}"),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO am_policy_version VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("investment-v1", "investment", NOW.isoformat(), None, "owner", "test", "{}",
+         "investment-policy-hash"),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO am_policy_version VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        ("risk-v1", "risk", NOW.isoformat(), None, "owner", "test", "{}",
+         "risk-policy-hash"),
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO am_parameter_set VALUES (?, ?, ?, ?)",
+        ("params-v1", NOW.isoformat(), "{}", "params-hash"),
+    )
+    conn.execute(
+        "INSERT INTO am_portfolio_target VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (f"target-{runtime_id}", f"expectation-{runtime_id}", f"risk-model-{runtime_id}",
+         "investment-v1", "params-v1", "{}", f"target-hash-{runtime_id}"),
+    )
+    decision_id = f"decision-{runtime_id}"
+    conn.execute(
+        "INSERT INTO am_risk_decision VALUES (?, ?, ?, ?, ?, ?)",
+        (decision_id, f"target-{runtime_id}", "ALLOW", "[]", "risk-v1",
+         f"decision-hash-{runtime_id}"),
+    )
+    return decision_id
 
 
 def facts(*, holding: str = "2") -> tuple[ReconciliationFact, ...]:
@@ -110,8 +174,10 @@ def test_all_targets_match_and_gate_allows_only_latest_complete_run():
     assert run.status is ReconciliationStatus.MATCH
     assert {item.target for item in run.items} == set(ReconciliationTarget)
     assert AccountReconciler(conn).trade_gate(
-        account_id="account-1", reconciliation_run_id=run.reconciliation_run_id
+        account_id="account-1", reconciliation_run_id=run.reconciliation_run_id,
+        evaluated_at_utc=NOW,
     ).action == "ALLOW"
+    risk_decision_id = decision_lineage(conn, runtime_id)
     AccountReconciler(conn).authorize_order_intent(
         order_intent_id="intent-authorized", account_id="account-1",
         reconciliation_run_id=run.reconciliation_run_id, authorized_at_utc=NOW,
@@ -121,11 +187,32 @@ def test_all_targets_match_and_gate_allows_only_latest_complete_run():
            FROM am_order_intent_reconciliation_authorization
            WHERE order_intent_id='intent-authorized'"""
     ).fetchone() == (run.reconciliation_run_id,)
-    with pytest.raises(sqlite3.IntegrityError, match="current reconciled account"):
+    with pytest.raises(sqlite3.IntegrityError, match="fresh account-bound"):
         conn.execute(
-            """INSERT INTO am_order_intent VALUES
-               ('intent-without-auth','missing-risk','key','PAPER','{}','hash')"""
+            """INSERT INTO am_order_intent
+               (order_intent_id, risk_decision_id, idempotency_key, mode, payload_json,
+                content_hash, account_id, runtime_run_id) VALUES
+               ('intent-without-auth', ?, 'key-1', 'PAPER', '{}', 'hash-1',
+                'account-1', ?)""",
+            (risk_decision_id, runtime_id),
         )
+    with pytest.raises(sqlite3.IntegrityError, match="fresh account-bound"):
+        conn.execute(
+            """INSERT INTO am_order_intent
+               (order_intent_id, risk_decision_id, idempotency_key, mode, payload_json,
+                content_hash, account_id, runtime_run_id) VALUES
+               ('intent-authorized', ?, 'key-2', 'PAPER', '{}', 'hash-2',
+                'account-2', ?)""",
+            (risk_decision_id, runtime_id),
+        )
+    conn.execute(
+        """INSERT INTO am_order_intent
+           (order_intent_id, risk_decision_id, idempotency_key, mode, payload_json,
+            content_hash, account_id, runtime_run_id) VALUES
+           ('intent-authorized', ?, 'key-3', 'PAPER', '{}', 'hash-3',
+            'account-1', ?)""",
+        (risk_decision_id, runtime_id),
+    )
     replayed = AccountReconciler(conn).reconcile(
         runtime_run_id=runtime_id, account_snapshot_id=snapshot_id,
         account_id="account-1", as_of_utc=NOW, policy=policy(),
@@ -151,7 +238,8 @@ def test_mismatch_persists_across_next_run_until_explicit_evidenced_resolution()
     )
     assert failed.status is ReconciliationStatus.BLOCKED
     assert reconciler.trade_gate(
-        account_id="account-1", reconciliation_run_id=failed.reconciliation_run_id
+        account_id="account-1", reconciliation_run_id=failed.reconciliation_run_id,
+        evaluated_at_utc=NOW,
     ).action == "NO_NEW_TRADES"
     with pytest.raises(ReconciliationError, match="NO_NEW_TRADES"):
         reconciler.authorize_order_intent(
@@ -183,8 +271,56 @@ def test_mismatch_persists_across_next_run_until_explicit_evidenced_resolution()
         "SELECT status FROM am_reconciliation_issue_status_v2 WHERE issue_id=?", (issue_id,),
     ).fetchone() == ("RESOLVED",)
     assert reconciler.trade_gate(
-        account_id="account-1", reconciliation_run_id=clean.reconciliation_run_id
+        account_id="account-1", reconciliation_run_id=clean.reconciliation_run_id,
+        evaluated_at_utc=later,
     ).action == "ALLOW"
+
+
+def test_stale_reconciliation_blocks_application_and_direct_order_insert():
+    conn = database()
+    runtime_id, snapshot_id = snapshot(conn, 1, NOW)
+    reconciler = AccountReconciler(conn)
+    run = reconciler.reconcile(
+        runtime_run_id=runtime_id, account_snapshot_id=snapshot_id,
+        account_id="account-1", as_of_utc=NOW, policy=policy(),
+        broker_facts=facts(), internal_facts=facts(),
+    )
+    stale_at = NOW + timedelta(seconds=61)
+    gate = reconciler.trade_gate(
+        account_id="account-1", reconciliation_run_id=run.reconciliation_run_id,
+        evaluated_at_utc=stale_at,
+    )
+    assert gate.action == "NO_NEW_TRADES"
+    assert "RECONCILIATION_STALE" in gate.reason_codes
+    with pytest.raises(ReconciliationError, match="RECONCILIATION_STALE"):
+        reconciler.authorize_order_intent(
+            order_intent_id="stale-intent", account_id="account-1",
+            reconciliation_run_id=run.reconciliation_run_id,
+            authorized_at_utc=stale_at,
+        )
+    decision_id = decision_lineage(conn, runtime_id)
+    conn.execute(
+        "INSERT INTO am_order_intent_reconciliation_authorization VALUES (?, ?, ?, ?)",
+        ("stale-direct", "account-1", run.reconciliation_run_id, stale_at.isoformat()),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="fresh account-bound"):
+        conn.execute(
+            """INSERT INTO am_order_intent
+               (order_intent_id, risk_decision_id, idempotency_key, mode, payload_json,
+                content_hash, account_id, runtime_run_id) VALUES
+               ('stale-direct', ?, 'stale-key', 'PAPER', '{}', 'stale-hash',
+                'account-1', ?)""",
+            (decision_id, runtime_id),
+        )
+
+
+def test_reconciliation_policy_requires_explicit_positive_max_age():
+    values = (
+        "bad-age", NOW - timedelta(days=1), None, "owner", "reason", (),
+    )
+    for invalid in (0, -1, True, "60"):
+        with pytest.raises(ReconciliationError, match="max age"):
+            ReconciliationPolicy(*values, invalid)  # type: ignore[arg-type]
 
 
 def test_missing_or_unapproved_tolerance_is_unverifiable_and_blocks():
@@ -193,6 +329,7 @@ def test_missing_or_unapproved_tolerance_is_unverifiable_and_blocks():
     incomplete_policy = ReconciliationPolicy(
         "incomplete-v1", NOW - timedelta(days=1), None,
         "owner", "test missing tolerance", (),
+        60,
     )
     run = AccountReconciler(conn).reconcile(
         runtime_run_id=runtime_id, account_snapshot_id=snapshot_id,
@@ -220,6 +357,7 @@ def test_explicit_currency_tolerance_produces_tolerance_match():
     tolerant = ReconciliationPolicy(
         "currency-tolerance-v1", NOW - timedelta(days=1), None,
         "risk-owner", "USD broker rounding", tuple(rules),
+        60,
     )
     broker = replace_fact(
         facts(), ReconciliationTarget.BUYING_POWER, "USD", "1000.01"
@@ -252,9 +390,11 @@ def test_backup_restore_preserves_same_run_items_issues_and_gate():
     rebuilt = AccountReconciler(restored).load_run(original.reconciliation_run_id)
     assert rebuilt == original
     assert AccountReconciler(restored).trade_gate(
-        account_id="account-1", reconciliation_run_id=original.reconciliation_run_id
+        account_id="account-1", reconciliation_run_id=original.reconciliation_run_id,
+        evaluated_at_utc=NOW,
     ) == AccountReconciler(source).trade_gate(
-        account_id="account-1", reconciliation_run_id=original.reconciliation_run_id
+        account_id="account-1", reconciliation_run_id=original.reconciliation_run_id,
+        evaluated_at_utc=NOW,
     )
 
 
@@ -294,7 +434,8 @@ def test_account_truth_snapshot_is_connected_to_cash_position_and_constraints():
     )
     assert run.status is ReconciliationStatus.MATCH
     assert AccountReconciler(conn).trade_gate(
-        account_id="account-1", reconciliation_run_id=run.reconciliation_run_id
+        account_id="account-1", reconciliation_run_id=run.reconciliation_run_id,
+        evaluated_at_utc=NOW,
     ).action == "ALLOW"
 
 

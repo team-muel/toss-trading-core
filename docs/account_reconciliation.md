@@ -1,6 +1,6 @@
 # Account reconciliation
 
-Version: `account-reconciliation-v1`
+Version: `account-reconciliation-v2`
 
 Before financial calculation or a new order intent, the immutable Toss account-truth
 snapshot is compared with the event-derived internal ledger. The required targets are
@@ -30,7 +30,10 @@ never updated.
 
 The trade gate requires the named reconciliation run to be the latest for the account,
 all current items to be eligible, and every historical issue to be explicitly resolved.
-An order-intent authorization records that evidence. A database trigger rejects direct
+The approved tolerance policy also defines a positive maximum age; future-dated or
+stale reconciliation evidence blocks authorization. An order-intent authorization
+records that evidence and is bound to the same account and runtime run as the order
+intent and its risk-decision lineage. A database trigger rejects direct
 `am_order_intent` insertion without a current eligible authorization, so bypassing the
 application service cannot silently create a new order.
 

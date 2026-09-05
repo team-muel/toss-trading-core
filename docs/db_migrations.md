@@ -43,3 +43,7 @@ and item comparisons, persistent issues and explicit resolutions, the effective
 Migration 8 adds immutable normalized point-in-time observations, raw-or-manifest
 lineage, availability indexes, chronological constraints, and a non-branching
 supersession chain for replayable data revisions.
+
+Migration 9 binds every new order intent to the exact reconciled account and runtime
+lineage. It adds an approved reconciliation maximum age and blocks missing, stale,
+future-dated, cross-account, or cross-run authorizations at the database boundary.

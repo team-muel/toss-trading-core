@@ -92,6 +92,7 @@ class ReconciliationPolicy:
     approved_by: str
     approval_reason: str
     rules: tuple[ToleranceRule, ...]
+    max_age_seconds: int
 
     def __post_init__(self) -> None:
         if (not self.version.strip() or not self.approved_by.strip()
@@ -103,6 +104,9 @@ class ReconciliationPolicy:
             raise ReconciliationError("reconciliation policy times must be timezone-aware")
         if self.effective_to_utc is not None and self.effective_to_utc <= self.effective_from_utc:
             raise ReconciliationError("reconciliation policy interval is invalid")
+        if (not isinstance(self.max_age_seconds, int)
+                or isinstance(self.max_age_seconds, bool) or self.max_age_seconds <= 0):
+            raise ReconciliationError("reconciliation max age must be a positive integer")
         selectors = [(rule.target, rule.currency, rule.instrument_id) for rule in self.rules]
         if len(selectors) != len(set(selectors)):
             raise ReconciliationError("duplicate reconciliation tolerance selector")
@@ -124,6 +128,7 @@ class ReconciliationPolicy:
             "effective_to_utc": _utc(self.effective_to_utc) if self.effective_to_utc else None,
             "approved_by": self.approved_by,
             "approval_reason": self.approval_reason,
+            "max_age_seconds": self.max_age_seconds,
             "rules": [
                 {
                     "target": rule.target.value,
@@ -179,11 +184,11 @@ class AccountReconciler:
             _utc(policy.effective_from_utc),
             _utc(policy.effective_to_utc) if policy.effective_to_utc else None,
             policy.approved_by, policy.approval_reason,
-            _canonical(policy_payload["rules"]), digest,
+            _canonical(policy_payload["rules"]), digest, policy.max_age_seconds,
         )
         existing = self._conn.execute(
             """SELECT effective_from_utc, effective_to_utc, approved_by,
-                      approval_reason, rules_json, content_hash
+                      approval_reason, rules_json, content_hash, max_age_seconds
                FROM am_reconciliation_tolerance_policy
                WHERE tolerance_policy_version=?""", (policy.version,),
         ).fetchone()
@@ -192,7 +197,10 @@ class AccountReconciler:
                 raise ReconciliationError("reconciliation policy version is immutable")
             return
         self._conn.execute(
-            "INSERT INTO am_reconciliation_tolerance_policy VALUES (?, ?, ?, ?, ?, ?, ?)",
+            """INSERT INTO am_reconciliation_tolerance_policy (
+                 tolerance_policy_version, effective_from_utc, effective_to_utc,
+                 approved_by, approval_reason, rules_json, content_hash, max_age_seconds
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (policy.version, *values),
         )
 
@@ -498,14 +506,31 @@ class AccountReconciler:
              resolution_note.strip(), approved_by.strip()),
         )
 
-    def trade_gate(self, *, account_id: str, reconciliation_run_id: str) -> TradeGate:
+    def trade_gate(
+        self, *, account_id: str, reconciliation_run_id: str,
+        evaluated_at_utc: datetime,
+    ) -> TradeGate:
+        if evaluated_at_utc.tzinfo is None:
+            return TradeGate("NO_NEW_TRADES", ("EVALUATION_TIME_INVALID",))
+        evaluated_at = evaluated_at_utc.astimezone(timezone.utc)
         run = self._conn.execute(
-            "SELECT status FROM am_account_reconciliation_v2 WHERE reconciliation_run_id=? AND account_id=?",
+            """SELECT rr.status, rr.completed_at_utc, policy.max_age_seconds
+               FROM am_account_reconciliation_v2 rr
+               JOIN am_reconciliation_tolerance_policy policy
+                 ON policy.tolerance_policy_version=rr.tolerance_policy_version
+               WHERE rr.reconciliation_run_id=? AND rr.account_id=?""",
             (reconciliation_run_id, account_id),
         ).fetchone()
         if run is None:
             return TradeGate("NO_NEW_TRADES", ("RECONCILIATION_RUN_MISSING",))
         reasons = []
+        completed_at = datetime.fromisoformat(str(run[1])).astimezone(timezone.utc)
+        max_age_seconds = int(run[2]) if run[2] is not None else None
+        age_seconds = (evaluated_at - completed_at).total_seconds()
+        if age_seconds < 0:
+            reasons.append("RECONCILIATION_FROM_FUTURE")
+        if max_age_seconds is None or age_seconds > max_age_seconds:
+            reasons.append("RECONCILIATION_STALE")
         latest = self._conn.execute(
             """SELECT reconciliation_run_id FROM am_account_reconciliation_v2
                WHERE account_id=? ORDER BY completed_at_utc DESC, reconciliation_run_id DESC LIMIT 1""",
@@ -538,7 +563,8 @@ class AccountReconciler:
         if not order_intent_id.strip() or authorized_at_utc.tzinfo is None:
             raise ReconciliationError("order-intent authorization is incomplete")
         gate = self.trade_gate(
-            account_id=account_id, reconciliation_run_id=reconciliation_run_id
+            account_id=account_id, reconciliation_run_id=reconciliation_run_id,
+            evaluated_at_utc=authorized_at_utc,
         )
         if gate.action != "ALLOW":
             raise ReconciliationError(
