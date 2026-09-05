@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pricing_result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instrument_id", "horizon", "required_return", "lower_bound", "upper_bound", "model_name", "factor_loadings", "estimation_uncertainty", "quality_status", "as_of"],
+  "properties": {
+    "instrument_id": {"type": "string", "minLength": 1},
+    "horizon": {"enum": [21, 63, 126, 252]},
+    "required_return": {"type": "string"},
+    "lower_bound": {"type": "string"},
+    "upper_bound": {"type": "string"},
+    "model_name": {"type": "string", "minLength": 1},
+    "factor_loadings": {"type": "object", "additionalProperties": {"type": "string"}},
+    "estimation_uncertainty": {"type": "string"},
+    "quality_status": {"enum": ["VALID", "ESTIMATED"]},
+    "as_of": {"type": "string", "format": "date-time"}
+  }
+}
