@@ -23,21 +23,27 @@ class AsOfRepository:
         self._conn = conn
 
     def get_latest(
-        self, *, entity_id: str, field: str, context: AsOfContext
+        self, *, entity_id: str, field: str, context: AsOfContext,
+        dataset_manifest_id: str | None = None,
     ) -> TemporalObservation:
         context = require_as_of_context(context)
         if not entity_id.strip() or not field.strip():
             raise DataQualityError("entity_id and field are required")
+        manifest_clause = " AND dataset_manifest_id = ?" if dataset_manifest_id else ""
+        parameters = [entity_id, field, context.information_cutoff_utc.isoformat()]
+        if dataset_manifest_id:
+            parameters.append(dataset_manifest_id)
         rows = self._conn.execute(
             f"""
             SELECT {_COLUMNS}
             FROM am_temporal_observation
             WHERE entity_id = ? AND field_name = ? AND available_at_utc <= ?
+              {manifest_clause}
             ORDER BY available_at_utc DESC, event_time_utc DESC,
                      reference_period DESC, observation_id DESC
             LIMIT 2
             """,
-            (entity_id, field, context.information_cutoff_utc.isoformat()),
+            tuple(parameters),
         ).fetchall()
         if not rows:
             raise DataQualityError(
@@ -54,6 +60,54 @@ class AsOfRepository:
                     f"CONFLICT: ambiguous {entity_id}.{field} observations at cutoff"
                 )
         return first
+
+    def series(
+        self, *, entity_id: str, field: str, context: AsOfContext,
+        dataset_manifest_id: str | None = None,
+    ) -> tuple[TemporalObservation, ...]:
+        """Return one latest-known vintage per period, ordered by event time.
+
+        A manifest filter binds the read to the immutable dataset selected by the
+        caller. Revisions unavailable at the information cutoff remain invisible.
+        """
+        context = require_as_of_context(context)
+        if not entity_id.strip() or not field.strip():
+            raise DataQualityError("entity_id and field are required")
+        manifest_clause = " AND dataset_manifest_id = ?" if dataset_manifest_id else ""
+        parameters = [entity_id, field, context.information_cutoff_utc.isoformat()]
+        if dataset_manifest_id:
+            parameters.append(dataset_manifest_id)
+        rows = self._conn.execute(
+            f"""
+            SELECT {_COLUMNS} FROM am_temporal_observation
+            WHERE entity_id = ? AND field_name = ? AND available_at_utc <= ?
+              {manifest_clause}
+            ORDER BY reference_period, available_at_utc DESC, observation_id DESC
+            """,
+            tuple(parameters),
+        ).fetchall()
+        latest: dict[str, TemporalObservation] = {}
+        for row in rows:
+            observation = observation_from_row(row)
+            current = latest.get(observation.reference_period)
+            if current is None:
+                context.require_known_at(
+                    observation.available_at, label=f"{entity_id}.{field}"
+                )
+                latest[observation.reference_period] = observation
+            elif current.available_at == observation.available_at \
+                    and current.content_hash != observation.content_hash:
+                raise DataQualityError(
+                    f"CONFLICT: ambiguous {entity_id}.{field} vintage at cutoff"
+                )
+        if not latest:
+            raise DataQualityError(
+                f"MISSING: no {entity_id}.{field} series was available at cutoff"
+            )
+        return tuple(sorted(
+            latest.values(),
+            key=lambda item: (item.event_time, item.reference_period, item.observation_id),
+        ))
 
     def get_vintage(
         self, *, entity_id: str, field: str, reference_period: str,

@@ -7,7 +7,7 @@ The alpha package may read validated values through explicit adapters, but it
 must never call a broker or create an order directly.
 """
 
-from .datafields import AssetDataSource, RepositoryDataFields
+from .datafields import AssetDataSource, PointInTimeDataSource, RepositoryDataFields
 from .expression import Alpha, AlphaPositions, AlphaSimulationSettings, simulate_cross_section
 from .metrics import SimulationResult, evaluate, fitness
 from . import operators
@@ -19,6 +19,7 @@ __all__ = [
     "AlphaSimulationSettings",
     "simulate_cross_section",
     "AssetDataSource",
+    "PointInTimeDataSource",
     "RepositoryDataFields",
     "SimulationResult",
     "evaluate",
