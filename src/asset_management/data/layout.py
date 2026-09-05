@@ -18,11 +18,21 @@ class DataLakeLayout:
     def manifests(self) -> Path:
         return self.root / "manifests"
 
+    def catalog(self) -> Path:
+        return self.root / "catalog"
+
     def resolve(self, layer: str, relative: str) -> Path:
-        if layer not in {"bronze", "silver", "gold", "manifests"}:
+        if layer not in {"bronze", "silver", "gold", "manifests", "catalog"}:
             raise ValueError("unknown data layer")
-        candidate = (self.root / layer / relative).resolve()
         layer_root = (self.root / layer).resolve()
+        unresolved = self.root / layer / relative
+        if unresolved.name in {".", "..", ""}:
+            raise ValueError("data path requires a file or directory name")
+        # Resolving an existing hard-link leaf on Windows can race publication.
+        # Resolve its directory and reject leaf symlinks rather than follow them.
+        candidate = unresolved.parent.resolve() / unresolved.name
+        if candidate.is_symlink():
+            raise ValueError("data path cannot be a symbolic link")
         if candidate != layer_root and layer_root not in candidate.parents:
             raise ValueError("data path escapes its configured layer")
         return candidate

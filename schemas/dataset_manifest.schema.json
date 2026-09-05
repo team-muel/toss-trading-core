@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "StoredDatasetManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_id",
+    "source",
+    "dataset",
+    "schema_version",
+    "retrieved_at",
+    "available_at",
+    "content_sha256",
+    "license_tag",
+    "code_revision",
+    "quality_status",
+    "layer",
+    "provider_timestamp",
+    "request_hash",
+    "row_count",
+    "parent_manifest_ids"
+  ],
+  "properties": {
+    "manifest_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dataset": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "retrieved_at": {
+      "type": "string",
+      "minLength": 1,
+      "format": "date-time"
+    },
+    "available_at": {
+      "type": "string",
+      "minLength": 1,
+      "format": "date-time"
+    },
+    "content_sha256": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "license_tag": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code_revision": {
+      "type": "string",
+      "minLength": 1
+    },
+    "quality_status": {
+      "enum": [
+        "RAW",
+        "VALID"
+      ]
+    },
+    "layer": {
+      "enum": [
+        "bronze",
+        "silver",
+        "gold"
+      ]
+    },
+    "provider_timestamp": {
+      "type": "string",
+      "minLength": 1,
+      "format": "date-time"
+    },
+    "request_hash": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "row_count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "parent_manifest_ids": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  }
+}
