@@ -158,6 +158,7 @@ def test_history_delay_uses_prior_trading_session_and_preserves_lineage():
     assert result.points[1].signal_time_utc == context(1).as_of_utc
     assert result.points[1].information_cutoff_utc == context(1).information_cutoff_utc
     assert result.points[1].dataset_manifest_ids == ("manifest-1",)
+    assert result.points[1].signal_universe_version == "universe-v1"
     assert result.points[1].source_run_id == "run-1"
     assert result.points[1].code_revision == "revision-1"
     assert result.expression_hash == expression.expression_hash
@@ -188,3 +189,30 @@ def test_position_decay_is_after_cross_section_and_requires_full_window():
     assert result.position_panel["a"][2] == pytest.approx(1 / 6)
     assert result.position_panel["a"][3] == pytest.approx(1 / 3)
     assert result.position_panel["b"][2] == pytest.approx(-1 / 6)
+
+
+def test_history_group_neutralization_uses_delayed_session_groups():
+    expression = compile_expression("close", data_fields={"close"})
+    source = sessions([
+        {"a": 1, "b": 3, "c": 10},
+        {"a": 9, "b": 2, "c": 1},
+    ])
+    source[0] = HistoricalSession(
+        effective_time_utc=source[0].effective_time_utc,
+        context=source[0].context,
+        resolver=source[0].resolver,
+        instrument_ids=source[0].instrument_ids,
+        dataset_manifest_ids=source[0].dataset_manifest_ids,
+        universe_version=source[0].universe_version,
+        neutralization_groups={"a": "x", "b": "x", "c": "y"},
+    )
+    settings = AlphaSimulationSettings(
+        universe="test", delay=1, neutralization="group",
+        truncation=1, long_only=False,
+    )
+    result = simulate_history(expression, source, settings)
+    assert result.position_panel == {
+        "a": [None, -0.5],
+        "b": [None, 0.5],
+        "c": [None, 0.0],
+    }

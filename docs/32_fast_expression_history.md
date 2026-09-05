@@ -29,5 +29,6 @@ transform.
 
 Every historical result records the canonical expression and hash, settings,
 effective time, source signal time, information cutoff, dataset manifest IDs,
-universe version, run ID, and code revision.  This output is research-only and
-does not create orders or call brokers.
+effective and signal-universe versions, point-in-time neutralization groups,
+run ID, and code revision.  This output is research-only and does not create
+orders or call brokers.

@@ -8,7 +8,7 @@ The module is research-only and deliberately has no order/execution boundary.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from asset_management.time.asof import AsOfContext, require_as_of_context
@@ -32,6 +32,7 @@ class HistoricalSession:
     instrument_ids: tuple[str, ...]
     dataset_manifest_ids: tuple[str, ...] = ()
     universe_version: str = "unspecified"
+    neutralization_groups: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _require_utc(self.effective_time_utc, "effective_time_utc")
@@ -56,6 +57,7 @@ class HistoryPoint:
     weights: Mapping[str, float | None]
     dataset_manifest_ids: tuple[str, ...]
     universe_version: str
+    signal_universe_version: str | None
     source_run_id: str | None
     code_revision: str | None
 
@@ -123,8 +125,6 @@ def simulate_history(
     expression: CompiledExpression,
     sessions: Sequence[HistoricalSession],
     settings: AlphaSimulationSettings,
-    *,
-    groups: Mapping[str, str] | None = None,
 ) -> HistorySimulationResult:
     """Evaluate delay and decay over explicitly ordered trading sessions.
 
@@ -162,7 +162,7 @@ def simulate_history(
                     alpha,
                     {},
                     settings,
-                    groups=groups,
+                    groups=source.neutralization_groups,
                 ).weights
             else:
                 transformed = {}
@@ -181,6 +181,7 @@ def simulate_history(
             weights=weights,
             dataset_manifest_ids=() if source is None else source.dataset_manifest_ids,
             universe_version=effective_session.universe_version,
+            signal_universe_version=None if source is None else source.universe_version,
             source_run_id=None if source is None else source.context.run_id,
             code_revision=None if source is None else source.context.code_revision,
         ))
