@@ -1,4 +1,4 @@
-# 구현 단계 0~16 전체 감사
+# 구현 단계 0~17 전체 감사
 
 감사 기준일: 2026-09-05  
 운영 설정: `READ_ONLY`, `live_trading_enabled: false`
@@ -28,6 +28,7 @@
 | 14 | 기대수익률과 Alpha | 완료 | 자산군별 component, gross/net, 구간과 ABSTAIN |
 | 15 | 위험모형 | 완료 | 공분산·tail·stress·exposure·risk contribution |
 | 16 | 포트폴리오 구성 | 완료 | 6계층 target, 제약, 비용, no-trade, fail-safe |
+| 17 | Risk Governor | 완료 | hard block 우선, 정책 축소, 5개 결정 상태, 승인된 결정과 주문 binding |
 
 런타임 순서는 `investment policy -> account truth -> time truth -> data truth -> financial calculation -> target portfolio -> risk control -> order`로 보존한다.
 
