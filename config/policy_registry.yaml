@@ -1,0 +1,59 @@
+registry_version: governance-v0
+live_trading_enabled: false
+policies:
+  investment:
+    version: investment-v0-draft
+    status: DRAFT
+    document: docs/investment_policy.md
+    document_hash: 51eeb4fc0ea461a46ddebc4b277bf59d6a5fccb90e83016f0a99ec1c11551954
+    effective_from: null
+    effective_to: null
+    approved_by: null
+  risk:
+    version: risk-v0-draft
+    status: DRAFT
+    document: docs/risk_policy.md
+    document_hash: 8b8f7d0aca9f64bbabcb723c73bf4492f81708fc90726c1b63d8bedd002f3111
+    effective_from: null
+    effective_to: null
+    approved_by: null
+  data:
+    version: data-v1
+    status: ACCEPTED
+    document: docs/data_policy.md
+    document_hash: fa3dd9728fe3974e14fa7f3888589d0a7bcb81cb341c7ce0f0ed10d15dd3a937
+    effective_from: 2026-09-04T00:00:00Z
+    effective_to: null
+    approved_by: user-design-stage-6
+  temporal:
+    version: temporal-v1
+    status: ACCEPTED
+    document: docs/temporal_policy.md
+    document_hash: 7fde07fd0af43f65eb1a430dd9a8e6656b4f6dc51da3dacb3bec3eb9e05be731
+    effective_from: 2026-09-04T00:00:00Z
+    effective_to: null
+    approved_by: user-design-stage-6
+  execution:
+    version: execution-v0-draft
+    status: DRAFT
+    document: docs/execution_policy.md
+    document_hash: f3e279c13978e47650705aa21f2172d87b731dd9c501588258f3d82e9200a97d
+    effective_from: null
+    effective_to: null
+    approved_by: null
+  promotion:
+    version: promotion-v0
+    status: ACCEPTED
+    document: docs/promotion_policy.md
+    document_hash: c614a5c18f725d38636f9257f617e74e26d5d508dee274731d117bc0f3ceac3b
+    effective_from: 2026-09-04T00:00:00Z
+    effective_to: null
+    approved_by: user-design-stage-0
+  tax:
+    version: tax-v0-draft
+    status: DRAFT
+    document: docs/investment_policy.md
+    document_hash: 51eeb4fc0ea461a46ddebc4b277bf59d6a5fccb90e83016f0a99ec1c11551954
+    effective_from: null
+    effective_to: null
+    approved_by: null

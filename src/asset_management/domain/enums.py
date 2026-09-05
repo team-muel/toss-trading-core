@@ -1,0 +1,41 @@
+from enum import StrEnum
+
+
+class DataStatus(StrEnum):
+    KNOWN = "KNOWN"
+    UNKNOWN = "UNKNOWN"
+    MISSING = "MISSING"
+    STALE = "STALE"
+    CONFLICT = "CONFLICT"
+    UNRECONCILED = "UNRECONCILED"
+
+
+class DecisionAction(StrEnum):
+    ALLOW = "ALLOW"
+    REDUCE = "REDUCE"
+    BLOCK = "BLOCK"
+
+
+class ExecutionMode(StrEnum):
+    READ_ONLY = "READ_ONLY"
+    REPLAY = "REPLAY"
+    PAPER = "PAPER"
+    SHADOW = "SHADOW"
+    LIVE = "LIVE"
+
+
+class OrderState(StrEnum):
+    PLANNED = "PLANNED"
+    SUBMITTING = "SUBMITTING"
+    SUBMITTED = "SUBMITTED"
+    ACKNOWLEDGED = "ACKNOWLEDGED"
+    OPEN = "OPEN"
+    PARTIALLY_FILLED = "PARTIALLY_FILLED"
+    FILLED = "FILLED"
+    CANCEL_PENDING = "CANCEL_PENDING"
+    CANCELED = "CANCELED"
+    REPLACE_PENDING = "REPLACE_PENDING"
+    REPLACED = "REPLACED"
+    REJECTED = "REJECTED"
+    UNKNOWN = "UNKNOWN"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"

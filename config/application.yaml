@@ -1,0 +1,14 @@
+runtime_mode: READ_ONLY
+base_currency: USD
+reporting_currency: KRW
+enabled_data_sources: [TOSS]
+data_sources:
+  TOSS:
+    kind: broker
+    schema_version: 1.2.14
+parameter_set:
+  id: read-only-foundation-v1
+  status: APPROVED
+risk_limits:
+  max_open_orders: "1"
+live_trading_enabled: false
