@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object", "additionalProperties": false,
-  "required": ["instrument_id", "asset_class", "horizon", "components", "gross_expected_return", "expected_transaction_cost", "expected_tax_drag", "expected_fx_cost", "net_expected_return", "lower_bound", "upper_bound", "confidence", "quality_status", "as_of"],
+  "required": ["instrument_id", "asset_class", "horizon", "components", "gross_expected_return", "expected_transaction_cost", "expected_tax_drag", "expected_fx_cost", "net_expected_return", "lower_bound", "upper_bound", "confidence", "quality_status", "as_of", "validity"],
   "properties": {
     "instrument_id": {"type": "string", "minLength": 1},
     "asset_class": {"enum": ["EQUITY", "EQUITY_ETF", "BOND_ETF", "CASH", "COMMODITY_ETF"]},
@@ -11,12 +11,14 @@
     "expected_tax_drag": {"type": "string"}, "expected_fx_cost": {"type": "string"},
     "net_expected_return": {"type": "string"}, "lower_bound": {"type": "string"},
     "upper_bound": {"type": "string"}, "confidence": {"type": "string"},
-    "quality_status": {"type": "string"}, "as_of": {"type": "string", "format": "date-time"}
+    "quality_status": {"type": "string"}, "as_of": {"type": "string", "format": "date-time"},
+    "validity": {"$ref": "decision_horizon.schema.json"}
   },
   "$defs": {"component": {"type": "object", "additionalProperties": false,
-    "required": ["component_name", "point_estimate", "uncertainty", "confidence", "input_features", "horizon"],
+    "required": ["component_name", "point_estimate", "uncertainty", "confidence", "input_features", "horizon", "validity"],
     "properties": {"component_name": {"type": "string", "minLength": 1}, "point_estimate": {"type": "string"},
       "uncertainty": {"type": "string"}, "confidence": {"type": "string"},
       "input_features": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-      "horizon": {"enum": [21, 63, 126, 252]}}}}
+      "horizon": {"enum": [21, 63, 126, 252]},
+      "validity": {"$ref": "decision_horizon.schema.json"}}}}
 }

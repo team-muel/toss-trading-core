@@ -4,12 +4,14 @@ from dataclasses import replace
 import pytest
 
 from asset_management.domain.errors import DataQualityError
+from asset_management.domain.horizon import DecayProfile, SignalValidity
 from asset_management.pricing import *
 from asset_management.pricing.factors import require_separate_timing_overlay
 from asset_management.quality.models import QualityStatus
 
 D = Decimal
 NOW = datetime(2026, 1, 2, tzinfo=timezone.utc)
+VALIDITY = SignalValidity(252, 63, NOW + timedelta(days=30), DecayProfile.LINEAR)
 
 def test_horizons_and_compounding():
     assert HORIZONS == (21, 63, 126, 252)
@@ -26,7 +28,8 @@ def test_risk_free_curve_is_complete_and_point_in_time():
 def test_manual_capm_and_output_is_not_an_order():
     beta = BetaEstimate(D("1.2"), D("1.2"), D("0.1"), 252, 252, D("0.8"), NOW, QualityStatus.VALID, D(1))
     result = capm_required_return(instrument_id="ETF", risk_free_rate=D("0.03"), beta=beta,
-                                  market_risk_premium=D("0.05"), horizon=252, as_of=NOW)
+                                  market_risk_premium=D("0.05"), horizon=252, as_of=NOW,
+                                  validity=VALIDITY)
     assert result.required_return == D("0.09")
     assert not ({"order", "side", "BUY", "SELL"} & set(result.payload()))
     assert result.lower_bound <= result.required_return <= result.upper_bound
@@ -46,10 +49,11 @@ def _premiums():
 def test_multifactor_is_pit_and_preserves_uncertainty():
     loadings = {name: D(1) for name in FACTORS}
     result = multifactor_required_return(instrument_id="ETF", risk_free_rate=D(".03"), loadings=loadings,
-                                         premiums=_premiums(), horizon=252, as_of=NOW, information_cutoff=NOW)
+                                         premiums=_premiums(), horizon=252, as_of=NOW,
+                                         information_cutoff=NOW, validity=VALIDITY)
     assert result.required_return == D(".10") and result.estimation_uncertainty > 0
     future = _premiums(); future["VALUE"] = replace(future["VALUE"], available_at=NOW+timedelta(seconds=1))
-    with pytest.raises(DataQualityError): multifactor_required_return(instrument_id="ETF", risk_free_rate=D(".03"), loadings=loadings, premiums=future, horizon=252, as_of=NOW, information_cutoff=NOW)
+    with pytest.raises(DataQualityError): multifactor_required_return(instrument_id="ETF", risk_free_rate=D(".03"), loadings=loadings, premiums=future, horizon=252, as_of=NOW, information_cutoff=NOW, validity=VALIDITY)
 
 def test_overlays_cannot_double_count_and_timing_stays_separate():
     with pytest.raises(DataQualityError): require_distinct_factor_roles(required_return_factors={"MKT"}, expected_return_overlay_factors={"MKT"})

@@ -4,6 +4,11 @@
 
 각 component는 이름, point estimate, uncertainty, confidence, 입력 feature ID와 horizon을 보존한다. 최종 gross 값은 component 합과 반드시 일치한다. 거래비용, 세금 drag, FX 비용을 각각 차감해 net 값을 만들며 confidence interval을 함께 저장한다. `shrink_component`는 신뢰도가 낮은 원시 전망을 `confidence*estimate + (1-confidence)*prior`로 prior 쪽에 수축한 뒤 그 값을 저장한다.
 
+모든 component와 최종 전망은 동일한 forecast/holding horizon 계약을 가져야 한다.
+`valid_until` 뒤 weight는 0이며 alpha는 `SIGNAL_EXPIRED`로 ABSTAIN한다. STEP,
+LINEAR, EXPONENTIAL decay는 시간이 지날수록 weight를 유지 또는 감소시키며 미래
+시각 평가와 서로 다른 horizon의 직접 결합은 실패로 닫힌다.
+
 Component 오차의 상관행렬이 없을 때는 독립성을 임의 가정하지 않고 uncertainty 합을 보수적 상한으로 쓴다. Alpha는 `net expected return - required return`이며 두 원본 값을 함께 보존한다. 기대수익 하한에서 요구수익 상한을 뺀 값과 기대수익 상한에서 요구수익 하한을 뺀 값이 alpha 구간이다. 이 구간이 0을 포함하거나 데이터 품질 저하, 모델 불일치, 이벤트 직전, feature 충돌, 비용과 불확실성 buffer를 넘지 못하는 경우 `ABSTAIN`과 복수 reason code를 반환한다. 결과는 주문 방향이나 주문을 만들지 않는다.
 
 ## 완료조건 점검

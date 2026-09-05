@@ -8,6 +8,7 @@ from typing import Sequence
 
 from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityStatus
+from asset_management.domain.horizon import SignalValidity
 
 from .models import BetaEstimate, PricingResult
 from .risk_free import annual_to_horizon
@@ -50,6 +51,7 @@ def estimate_beta(asset_returns: Sequence[Decimal], market_returns: Sequence[Dec
 def capm_required_return(*, instrument_id: str, risk_free_rate: Decimal,
                          beta: BetaEstimate, market_risk_premium: Decimal,
                          horizon: int, as_of: datetime,
+                         validity: SignalValidity,
                          uncertainty_z: Decimal = Decimal("1.96")) -> PricingResult:
     if (as_of.tzinfo is None or as_of.utcoffset() is None or
             not risk_free_rate.is_finite() or not market_risk_premium.is_finite() or
@@ -69,4 +71,5 @@ def capm_required_return(*, instrument_id: str, risk_free_rate: Decimal,
     return PricingResult(
         instrument_id, horizon, point, lower, upper,
         "CAPM", {"MKT": beta.beta}, horizon_uncertainty, beta.quality, as_of,
+        validity,
     )

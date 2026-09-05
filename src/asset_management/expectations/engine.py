@@ -30,7 +30,8 @@ def expected_return(*, instrument_id: str, asset_class: AssetClass,
     uncertainty = sum(x.uncertainty for x in ordered)
     confidence = min(x.confidence for x in ordered)
     quality = QualityStatus.VALID if all(x.confidence > 0 and x.uncertainty.is_finite() for x in ordered) else QualityStatus.MISSING
+    validity = ordered[0].validity
     return ExpectedReturnEstimate(instrument_id, asset_class, horizon, ordered, gross,
                                   transaction_cost, tax_drag, fx_cost, net,
                                   net-uncertainty_z*uncertainty, net+uncertainty_z*uncertainty,
-                                  confidence, quality, as_of)
+                                  confidence, quality, as_of, validity)
