@@ -53,4 +53,4 @@
 - wheel build와 포함 파일 검사: 통과
 - `git diff --check`: 통과
 
-단계 13 PR CI는 원격 PR 생성 뒤 최종 확인한다.
+- 단계 13 PR #18 Python 3.11/3.12 CI: 통과
