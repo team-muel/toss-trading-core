@@ -8,10 +8,16 @@ from .temporal_truth import (
     REQUIRED_TEMPORAL_CHECKS, TemporalTruthGateInput, TemporalTruthGateResult,
     evaluate_temporal_truth_gate,
 )
+from .data_truth import (
+    REQUIRED_DATA_CHECKS, DataTruthGateInput, DataTruthGateResult,
+    evaluate_data_truth_gate,
+)
 
 __all__ = [
     "REQUIRED_CHECKS", "AcceptanceDecision", "AccountTruthGateInput",
     "AccountTruthGateResult", "CheckEvidence", "evaluate_account_truth_gate",
     "REQUIRED_TEMPORAL_CHECKS", "TemporalTruthGateInput", "TemporalTruthGateResult",
     "evaluate_temporal_truth_gate",
+    "REQUIRED_DATA_CHECKS", "DataTruthGateInput", "DataTruthGateResult",
+    "evaluate_data_truth_gate",
 ]
