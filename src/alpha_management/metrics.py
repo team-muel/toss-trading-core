@@ -10,6 +10,12 @@ TRADING_DAYS = 252
 TURNOVER_FLOOR = 0.125
 Panel = Mapping[str, Sequence[float]]
 
+__all__ = [
+    "TRADING_DAYS", "TURNOVER_FLOOR", "Panel", "daily_pnl", "sharpe",
+    "annualized_returns", "turnover", "max_drawdown", "fitness",
+    "information_ratio", "is_os_split", "SimulationResult", "evaluate",
+]
+
 
 def _panel_length(panel: Panel) -> int:
     lengths = {len(series) for series in panel.values()}
@@ -83,6 +89,8 @@ def max_drawdown(pnl: Sequence[float]) -> float:
     peak = 0.0
     worst = 0.0
     for value in pnl:
+        if value is None:
+            continue
         cumulative += float(value)
         peak = max(peak, cumulative)
         worst = min(worst, cumulative - peak)
@@ -93,6 +101,17 @@ def fitness(sharpe_value: float, returns: float, turnover_value: float) -> float
     """WorldQuant BRAIN-style fitness score."""
 
     return sharpe_value * sqrt(abs(returns) / max(turnover_value, TURNOVER_FLOOR))
+
+
+def information_ratio(pnl: Sequence[float]) -> float:
+    """Non-annualised mean/std of research PnL."""
+    values = [float(value) for value in pnl if value is not None]
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
+    std = sqrt(variance)
+    return 0.0 if std == 0 else mean / std
 
 
 def is_os_split(length: int, os_fraction: float = 0.25) -> tuple[range, range]:
@@ -113,6 +132,13 @@ class SimulationResult:
     fitness: float
     max_drawdown: float
     periods: int
+
+    def summary(self) -> str:
+        return (
+            f"sharpe={self.sharpe:.2f} returns={self.returns:.2%} "
+            f"turnover={self.turnover:.2%} fitness={self.fitness:.2f} "
+            f"max_drawdown={self.max_drawdown:.4f} periods={self.periods}"
+        )
 
 
 def evaluate(positions: Panel, forward_returns: Panel, book_size: float) -> SimulationResult:
