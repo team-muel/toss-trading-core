@@ -58,13 +58,21 @@ protection against an administrator changing files. Readers verify every manifes
 blob hash, and ancestor, rejecting missing or modified history.
 
 Derived artifacts require existing parents from a lower layer and cannot become
-available before them. Source and license must match parents; cross-provider gold
-aggregation needs an explicit combined licensing contract and is rejected here.
+available before them. Source and license must match parents by default. A cross-provider
+gold artifact must explicitly opt into mixed parent contracts, record a combined source
+and structured license, and cannot mark redistribution permitted when any parent forbids it.
 Use `store.read(silver_manifest_id)` and its `parent_manifest_ids` to trace rows
 back to bronze. `store.write(..., layer="gold", parent_manifest_ids=(silver_id,))`
 supports validated features, states, and verification results. The caller owns gold
 validation; the store enforces integrity and lineage. This repository capability
 does not activate network fetching, the trading pipeline, or real orders.
+
+A provider contract can map a provider series, currency pair, curve, exchange, or
+company key by supplying `provider_entity_field` and `canonical_entity_field`;
+instrument IDs remain the default. A verified empty result is accepted only when a
+dataset-specific adapter explicitly opts into `allow_verified_empty`. This is used
+for valid empty corporate-action and filing responses and cannot turn an ordinary
+empty normalization result into success.
 
 `asset_management.data.adapters.toss.TossDatasetAdapter` is the concrete bridge to
 `TossReadOnlyAdapter`. It invokes only a named read `get_*` operation, requires the

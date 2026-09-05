@@ -62,6 +62,7 @@ Git에 저장하지 않고 GCP Secret Manager에서 로드합니다.
 
 ## 문서
 
+- [구현 단계 9 Point-in-time 데이터 수집](docs/data_collection_phase9.md)
 - [구현 단계 0~8 현황 및 완료 조건 감사](docs/implementation_phases_0_8.md)
 - [불변 데이터 저장소와 공급자 공통 계약](docs/immutable_datasets.md)
 - [API 키와 어댑터](docs/07_toss_api_key_and_adapter.md)

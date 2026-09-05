@@ -16,6 +16,7 @@ from typing import Callable, Mapping
 
 from asset_management.broker.redaction import SENSITIVE_KEYS
 from asset_management.data.layout import DataLakeLayout
+from asset_management.domain.errors import DataQualityError
 
 
 def canonical(value: object) -> bytes:
@@ -60,7 +61,7 @@ def _assert_no_secret(value: object, secrets: tuple[str, ...]) -> None:
         raise ValueError("SECRET_REDACTION_FAILED")
     patterns = (
         r"(?i)Bearer\s+(?!\*\*\*REDACTED\*\*\*)\S+",
-        r"(?i)(?:sk|pk|api)[-_][A-Za-z0-9_-]{16,}",
+        r"(?i)(?:^|[^A-Za-z0-9])(?:sk|pk|api)[-_][A-Za-z0-9_-]{16,}",
         r"eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}",
     )
     if any(re.search(pattern, encoded) for pattern in patterns):
@@ -161,7 +162,8 @@ class ImmutableDatasetStore:
               schema_version: str, retrieved_at: datetime, available_at: datetime,
               provider_timestamp: datetime, license_tag: str, code_revision: str,
               request_hash: str, parent_manifest_ids: tuple[str, ...] = (),
-              quality_status: str = "VALID") -> StoredDatasetManifest:
+              quality_status: str = "VALID", allow_verified_empty: bool = False,
+              allow_mixed_parent_contracts: bool = False) -> StoredDatasetManifest:
         if layer not in {"bronze", "silver", "gold"}:
             raise ValueError("INVALID_LAYER")
         if quality_status not in {"RAW", "VALID"} or (layer != "bronze" and quality_status != "VALID"):
@@ -178,17 +180,27 @@ class ImmutableDatasetStore:
         if (layer == "bronze") != (not parent_manifest_ids):
             raise ValueError("MISSING_OR_INVALID_LINEAGE")
         parents = tuple(sorted(set(parent_manifest_ids)))
+        parent_manifests = []
         for parent_id in parents:
             parent, _ = self.read(parent_id)
+            parent_manifests.append(parent)
             if {"bronze": 0, "silver": 1, "gold": 2}[parent.layer] >= {"bronze": 0, "silver": 1, "gold": 2}[layer]:
                 raise ValueError("INVALID_LINEAGE_LAYER")
             if datetime.fromisoformat(parent.available_at) > available_at:
                 raise ValueError("PARENT_NOT_AVAILABLE")
-            if parent.source != source or parent.license_tag != license_tag:
+        if parent_manifests and any(
+            parent.source != source or parent.license_tag != license_tag
+            for parent in parent_manifests
+        ):
+            if layer != "gold" or not allow_mixed_parent_contracts:
                 raise ValueError("CONFLICTING_SOURCE_OR_LICENSE")
+            if "redistribution=permitted" in license_tag and any(
+                "redistribution=forbidden" in parent.license_tag for parent in parent_manifests
+            ):
+                raise ValueError("COMBINED_LICENSE_WEAKENS_PARENT")
         safe = sanitize(body, self.secrets)
         _assert_no_secret(safe, self.secrets)
-        if layer != "bronze" and (safe is None or safe == [] or safe == {}):
+        if layer != "bronze" and not allow_verified_empty and (safe is None or safe == [] or safe == {}):
             raise ValueError("EMPTY_DERIVED_DATASET")
         content = canonical(safe)
         content_hash = digest(content)
@@ -245,7 +257,10 @@ class ProviderDatasetAdapter:
                license_tag: str, code_revision: str, schema_version: str,
                raw_schema: Mapping[str, str], schema: Mapping[str, str],
                instrument_mapping: Mapping[str, str],
-               normalize: Callable[[object], list[dict]], status_code: int = 200) -> IngestionResult:
+               normalize: Callable[[object], list[dict]], status_code: int = 200,
+               provider_entity_field: str = "provider_instrument_id",
+               canonical_entity_field: str = "instrument_id",
+               allow_verified_empty: bool = False) -> IngestionResult:
         bronze = None
         silver = None
         reason = "RAW_STORAGE_FAILED"
@@ -283,21 +298,26 @@ class ProviderDatasetAdapter:
             normalizer_hash = digest(inspect.getsource(normalize).encode("utf-8"))
             rows = normalize(raw)
             reason = "SCHEMA_VALIDATION_FAILED"
-            if not isinstance(rows, list) or not rows:
+            if not isinstance(rows, list) or (not rows and not allow_verified_empty):
                 raise ValueError(reason)
             for row in rows:
                 validate_object(row, schema)
                 reason = "UNKNOWN_INSTRUMENT"
-                symbol = row.get("provider_instrument_id")
+                symbol = row.get(provider_entity_field)
                 if not isinstance(symbol, str) or not instrument_mapping.get(symbol, "").strip():
                     raise ValueError(reason)
-                row["instrument_id"] = instrument_mapping[symbol]
+                row[canonical_entity_field] = instrument_mapping[symbol]
                 reason = "SCHEMA_VALIDATION_FAILED"
             metadata["code_revision"] = f"{code_revision}:normalizer:{normalizer_hash}:mapping:{mapping_hash}"
             reason = "NORMALIZED_STORAGE_FAILED"
             silver = self.store.write(rows, layer="silver", schema_version=f"{schema_version}:{schema_hash}",
-                                      parent_manifest_ids=(bronze.manifest_id,), **metadata)
+                                      parent_manifest_ids=(bronze.manifest_id,),
+                                      allow_verified_empty=allow_verified_empty, **metadata)
             reason = "OK"
+        except DataQualityError as exc:
+            candidate = str(exc)
+            if re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", candidate):
+                reason = candidate
         except Exception:
             # Never persist provider/normalizer exception text: it can contain credentials.
             pass
