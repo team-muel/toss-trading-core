@@ -1,13 +1,12 @@
-"""Research-only alpha authoring layer.
+"""Compatibility and integration surface for alpha research.
 
-A small, dependency-free vocabulary for writing and scoring *fast-expression*
-alphas (in the spirit of WorldQuant BRAIN) on top of this repository's Toss
-foundation.  See ``docs/18_alpha_expression_language.md`` for the concept map
-between the terms used here and the existing foundation terms.
+The canonical expression, operator, simulation, and evaluation implementation
+lives in :mod:`alpha_management`. Existing callers may keep this import path;
+the only runtime-specific behavior retained here is position-to-Signal adaptation
+and provider-specific legacy datafield compatibility.
 
-This layer only produces decision inputs and ``Signal`` proposals.  It never
-enables live trading; the existing ``RiskHub`` and live gates remain the sole
-authority over execution.
+This surface never enables live trading. ``RiskHub`` and the normal execution
+gates remain authoritative.
 """
 
 from . import metrics, operators
