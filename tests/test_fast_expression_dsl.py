@@ -17,6 +17,7 @@ from alpha_management import (
     simulate_history,
 )
 from asset_management.time.asof import AsOfContext
+from asset_management.domain.errors import TemporalViolation
 
 
 @dataclass
@@ -189,6 +190,77 @@ def test_position_decay_is_after_cross_section_and_requires_full_window():
     assert result.position_panel["a"][2] == pytest.approx(1 / 6)
     assert result.position_panel["a"][3] == pytest.approx(1 / 3)
     assert result.position_panel["b"][2] == pytest.approx(-1 / 6)
+
+
+def test_expression_decay_and_simulation_decay_are_independent():
+    expression = compile_expression("ts_decay_linear(close, 2)", data_fields={"close"})
+    feature = expression.evaluate(Resolver({"close": {"a": [1, 2, 3]}}))
+    assert feature["a"] == [None, pytest.approx(5 / 3), pytest.approx(8 / 3)]
+    result = simulate_history(
+        compile_expression("sign(close)", data_fields={"close"}),
+        sessions([{"a": 1}, {"a": -1}]),
+        history_settings(decay=0),
+    )
+    assert result.settings.decay == 0
+    assert result.position_panel["a"] == [1.0, -1.0]
+
+
+def test_history_delay_zero_matches_cross_section_and_long_only_stays_a_setting():
+    expression = compile_expression("close", data_fields={"close"})
+    timeline = sessions([{"a": 2, "b": -1}])
+    research = simulate_history(expression, timeline, history_settings(delay=0))
+    direct = simulate_cross_section(
+        Alpha("close", lambda _context: {"a": 2.0, "b": -1.0}),
+        {},
+        history_settings(delay=0),
+    )
+    assert research.points[0].base_weights == direct.weights
+    live_shaped = simulate_history(
+        expression,
+        timeline,
+        AlphaSimulationSettings(
+            universe="test", delay=0, neutralization="none",
+            truncation=1, long_only=True,
+        ),
+    )
+    assert research.position_panel["b"] == [pytest.approx(-1 / 3)]
+    assert live_shaped.position_panel == {"a": [1.0], "b": [0.0]}
+
+
+def test_history_rejects_information_after_source_cutoff():
+    ctx = context(1)
+
+    class FutureSource:
+        def time_series(self, field, *, instrument_id, context):
+            context.require_known_at(
+                context.information_cutoff_utc + timedelta(seconds=1),
+                label="future close",
+            )
+
+        def cross_section(self, field, *, universe, context):
+            raise AssertionError
+
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(FutureSource()), ("a",), ctx, {}
+    )
+    session = HistoricalSession(ctx.as_of_utc, ctx, resolver, ("a",))
+    with pytest.raises(TemporalViolation, match="after information_cutoff_utc"):
+        simulate_history(
+            compile_expression("close", data_fields={"close"}),
+            [session],
+            history_settings(),
+        )
+
+
+def test_history_can_attach_existing_metric_bundle():
+    result = simulate_history(
+        compile_expression("sign(close)", data_fields={"close"}),
+        sessions([{"a": 1}, {"a": 1}, {"a": -1}]),
+        history_settings(),
+        forward_returns={"a": [0.01, -0.02, 0.03]},
+    )
+    assert result.metrics is not None
+    assert result.metrics.periods == 3
 
 
 def test_history_group_neutralization_uses_delayed_session_groups():

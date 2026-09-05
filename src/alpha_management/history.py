@@ -13,8 +13,9 @@ from datetime import datetime, timezone
 
 from asset_management.time.asof import AsOfContext, require_as_of_context
 
-from .dsl import CompiledExpression, PanelResolver
+from .dsl import CompiledExpression, Panel, PanelResolver
 from .expression import Alpha, AlphaSimulationSettings, simulate_cross_section
+from .metrics import SimulationResult, evaluate
 
 
 def _require_utc(value: datetime, name: str) -> None:
@@ -70,6 +71,7 @@ class HistorySimulationResult:
     expression_hash: str
     settings: AlphaSimulationSettings
     points: tuple[HistoryPoint, ...]
+    metrics: SimulationResult | None = None
 
     @property
     def position_panel(self) -> dict[str, list[float | None]]:
@@ -125,6 +127,8 @@ def simulate_history(
     expression: CompiledExpression,
     sessions: Sequence[HistoricalSession],
     settings: AlphaSimulationSettings,
+    *,
+    forward_returns: Panel | None = None,
 ) -> HistorySimulationResult:
     """Evaluate delay and decay over explicitly ordered trading sessions.
 
@@ -185,9 +189,18 @@ def simulate_history(
             source_run_id=None if source is None else source.context.run_id,
             code_revision=None if source is None else source.context.code_revision,
         ))
-    return HistorySimulationResult(
+    result = HistorySimulationResult(
         expression=expression.canonical,
         expression_hash=expression.expression_hash,
         settings=settings,
         points=tuple(points),
+    )
+    if forward_returns is None:
+        return result
+    return HistorySimulationResult(
+        expression=result.expression,
+        expression_hash=result.expression_hash,
+        settings=result.settings,
+        points=result.points,
+        metrics=evaluate(result.position_panel, forward_returns, settings.book_size),
     )

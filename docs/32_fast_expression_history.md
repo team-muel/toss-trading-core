@@ -31,4 +31,5 @@ Every historical result records the canonical expression and hash, settings,
 effective time, source signal time, information cutoff, dataset manifest IDs,
 effective and signal-universe versions, point-in-time neutralization groups,
 run ID, and code revision.  This output is research-only and does not create
-orders or call brokers.
+orders or call brokers.  When a matching forward-return panel is supplied,
+the result also carries the canonical research metric bundle.
