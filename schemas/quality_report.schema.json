@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "quality_report.schema.json",
+  "title": "Phase 10 Quality Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "issues", "checked_at"],
+  "properties": {
+    "status": {
+      "enum": ["VALID", "STALE", "MISSING", "CONFLICT", "PRIMARY_PENDING", "VENDOR_DELAY", "ESTIMATED", "MANUAL", "BLOCKED", "QUARANTINED"]
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "status", "message"],
+        "properties": {
+          "code": {"type": "string", "minLength": 1},
+          "status": {"$ref": "#/$defs/qualityStatus"},
+          "message": {"type": "string", "minLength": 1},
+          "field": {"type": ["string", "null"]},
+          "row_key": {"type": ["string", "null"]},
+          "details": {"type": "object"}
+        }
+      }
+    },
+    "checked_at": {"type": "string", "format": "date-time"}
+  },
+  "$defs": {
+    "qualityStatus": {
+      "enum": ["VALID", "STALE", "MISSING", "CONFLICT", "PRIMARY_PENDING", "VENDOR_DELAY", "ESTIMATED", "MANUAL", "BLOCKED", "QUARANTINED"]
+    }
+  }
+}
