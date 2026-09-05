@@ -55,7 +55,7 @@
     },
     "license_tag": {
       "type": "string",
-      "minLength": 1
+      "pattern": "^purpose=[^;]+;redistribution=(forbidden|permitted);retention=[^;]+$"
     },
     "code_revision": {
       "type": "string",

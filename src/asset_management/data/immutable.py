@@ -54,6 +54,59 @@ def sanitize(value: object, secrets: tuple[str, ...]) -> object:
     return value
 
 
+def _assert_no_secret(value: object, secrets: tuple[str, ...]) -> None:
+    encoded = canonical(value).decode("utf-8")
+    if any(secret and secret in encoded for secret in secrets):
+        raise ValueError("SECRET_REDACTION_FAILED")
+    patterns = (
+        r"(?i)Bearer\s+(?!\*\*\*REDACTED\*\*\*)\S+",
+        r"(?i)(?:sk|pk|api)[-_][A-Za-z0-9_-]{16,}",
+        r"eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{12,}",
+    )
+    if any(re.search(pattern, encoded) for pattern in patterns):
+        raise ValueError("UNCLASSIFIED_SECRET")
+
+
+def _type(name: str) -> type:
+    types = {"string": str, "integer": int, "number": float, "boolean": bool,
+             "object": dict, "array": list}
+    try:
+        return types[name]
+    except KeyError:
+        raise ValueError("INVALID_SCHEMA_TYPE") from None
+
+
+def validate_object(value: object, schema: Mapping[str, str]) -> None:
+    if not isinstance(value, dict) or not schema:
+        raise ValueError("SCHEMA_VALIDATION_FAILED")
+    if any(key not in value or type(value[key]) is not _type(kind) for key, kind in schema.items()):
+        raise ValueError("SCHEMA_VALIDATION_FAILED")
+
+
+def dataset_row_count(value: object) -> int:
+    """Count the sole recognized row collection; reject ambiguous envelopes."""
+    if isinstance(value, list):
+        return len(value)
+    candidates: list[list] = []
+    if isinstance(value, dict):
+        for container in (value, value.get("result")):
+            if isinstance(container, list):
+                candidates.append(container)
+            elif isinstance(container, dict):
+                candidates.extend(item for key, item in container.items()
+                                  if key in {"items", "orders", "rows", "data"} and isinstance(item, list))
+    if len(candidates) > 1:
+        raise ValueError("AMBIGUOUS_ROW_COUNT")
+    return len(candidates[0]) if candidates else (0 if value in ({}, None) else 1)
+
+
+def validate_license_tag(value: str) -> None:
+    if not re.fullmatch(
+        r"purpose=[^;]+;redistribution=(?:forbidden|permitted);retention=[^;]+", value
+    ):
+        raise ValueError("INVALID_LICENSE_TAG")
+
+
 @dataclass(frozen=True)
 class StoredDatasetManifest:
     manifest_id: str
@@ -74,9 +127,11 @@ class StoredDatasetManifest:
 
 
 class ImmutableDatasetStore:
-    def __init__(self, root: Path, *, secrets: tuple[str, ...] = ()):
+    def __init__(self, root: Path, *, secrets: tuple[str, ...] = (),
+                 credentials_classified: bool = False):
         self.layout = DataLakeLayout(root)
         self.secrets = secrets
+        self.credentials_classified = credentials_classified
 
     def _publish(self, path: Path, content: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,7 +150,9 @@ class ImmutableDatasetStore:
             Path(temporary).unlink(missing_ok=True)
 
     def catalog(self, kind: str, value: object) -> str:
-        content = canonical(sanitize(value, self.secrets))
+        safe = sanitize(value, self.secrets)
+        _assert_no_secret(safe, self.secrets)
+        content = canonical(safe)
         identifier = digest(content)
         self._publish(self.layout.resolve("catalog", f"{kind}/{identifier}.json"), content)
         return identifier
@@ -112,6 +169,7 @@ class ImmutableDatasetStore:
         for value in (source, dataset, schema_version, license_tag, code_revision):
             if not value.strip() or sanitize(value, self.secrets) != value:
                 raise ValueError("INVALID_METADATA")
+        validate_license_tag(license_tag)
         if not re.fullmatch(r"[0-9a-f]{64}", request_hash):
             raise ValueError("INVALID_REQUEST_HASH")
         received, available, provider = map(utc, (retrieved_at, available_at, provider_timestamp))
@@ -129,14 +187,16 @@ class ImmutableDatasetStore:
             if parent.source != source or parent.license_tag != license_tag:
                 raise ValueError("CONFLICTING_SOURCE_OR_LICENSE")
         safe = sanitize(body, self.secrets)
+        _assert_no_secret(safe, self.secrets)
         if layer != "bronze" and (safe is None or safe == [] or safe == {}):
             raise ValueError("EMPTY_DERIVED_DATASET")
         content = canonical(safe)
         content_hash = digest(content)
+        row_count = dataset_row_count(safe)
         self._publish(self.layout.resolve(layer, f"{content_hash}.json"), content)
         fields = dict(source=source, dataset=dataset, schema_version=schema_version,
                       retrieved_at=received, available_at=available, content_sha256=content_hash,
-                      row_count=len(safe) if isinstance(safe, list) else 1,
+                      row_count=row_count,
                       license_tag=license_tag, code_revision=code_revision,
                       parent_manifest_ids=parents, quality_status=quality_status, layer=layer,
                       provider_timestamp=provider, request_hash=request_hash)
@@ -180,40 +240,53 @@ class ProviderDatasetAdapter:
         self.store = store
 
     def ingest(self, *, body: object, request: object, source: str, dataset: str,
+               endpoint: str, http_method: str,
                retrieved_at: datetime, available_at: datetime, provider_timestamp: datetime,
                license_tag: str, code_revision: str, schema_version: str,
-               schema: Mapping[str, str], instrument_mapping: Mapping[str, str],
+               raw_schema: Mapping[str, str], schema: Mapping[str, str],
+               instrument_mapping: Mapping[str, str],
                normalize: Callable[[object], list[dict]], status_code: int = 200) -> IngestionResult:
         bronze = None
         silver = None
         reason = "RAW_STORAGE_FAILED"
         try:
+            reason = "CREDENTIALS_NOT_CLASSIFIED"
+            if not self.store.credentials_classified:
+                raise ValueError("CREDENTIALS_NOT_CLASSIFIED")
+            reason = "INVALID_REQUEST_IDENTITY"
+            method = http_method.upper()
+            if method not in {"GET", "POST"} or not endpoint.startswith("/"):
+                raise ValueError("INVALID_REQUEST_IDENTITY")
+            reason = "INVALID_CODE_REVISION"
+            if not re.fullmatch(r"git:[0-9a-f]{7,40}", code_revision):
+                raise ValueError("INVALID_CODE_REVISION")
+            raw_schema_hash = self.store.catalog("schemas", dict(raw_schema))
+            reason = "RAW_STORAGE_FAILED"
             metadata = dict(source=source, dataset=dataset, retrieved_at=retrieved_at,
                             available_at=available_at, provider_timestamp=provider_timestamp,
                             license_tag=license_tag, code_revision=code_revision,
                             request_hash=digest(canonical(sanitize(
-                                dict(source=source, dataset=dataset, request=request), self.store.secrets))))
-            bronze = self.store.write(body, layer="bronze", schema_version="provider-json-v1",
+                                dict(source=source, dataset=dataset, endpoint=endpoint,
+                                     http_method=method, request=request), self.store.secrets))))
+            bronze = self.store.write(body, layer="bronze",
+                                      schema_version=f"{schema_version}:raw:{raw_schema_hash}",
                                       quality_status="RAW", **metadata)
             reason = "PROVIDER_HTTP_ERROR"
             if not 200 <= status_code < 300:
                 raise ValueError(reason)
             reason = "SCHEMA_VALIDATION_FAILED"
-            types = {"string": str, "integer": int, "number": float, "boolean": bool}
-            if not schema or any(t not in types for t in schema.values()):
-                raise ValueError(reason)
+            _, raw = self.store.read(bronze.manifest_id)
+            validate_object(raw, raw_schema)
             schema_hash = self.store.catalog("schemas", dict(schema))
             mapping_hash = self.store.catalog("instrument-mappings", dict(instrument_mapping))
             reason = "NORMALIZATION_FAILED"
             normalizer_hash = digest(inspect.getsource(normalize).encode("utf-8"))
-            _, raw = self.store.read(bronze.manifest_id)
             rows = normalize(raw)
             reason = "SCHEMA_VALIDATION_FAILED"
             if not isinstance(rows, list) or not rows:
                 raise ValueError(reason)
             for row in rows:
-                if not isinstance(row, dict) or any(k not in row or type(row[k]) is not types[t] for k, t in schema.items()):
-                    raise ValueError(reason)
+                validate_object(row, schema)
                 reason = "UNKNOWN_INSTRUMENT"
                 symbol = row.get("provider_instrument_id")
                 if not isinstance(symbol, str) or not instrument_mapping.get(symbol, "").strip():
