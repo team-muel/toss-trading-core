@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from datetime import datetime
 from enum import Enum
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -7,16 +6,6 @@ from typing import Any, Mapping, Sequence, TypeVar
 
 from asset_management.domain.enums import DataStatus
 from asset_management.domain.errors import DataQualityError, UnknownBrokerState
-
-
-@dataclass(frozen=True, slots=True)
-class BrokerSnapshot:
-    account_id: str
-    observed_at_utc: datetime
-    balances: Mapping[str, str]
-    positions: Sequence[Mapping[str, object]]
-    open_orders: Sequence[Mapping[str, object]]
-    source_response_ids: tuple[str, ...]
 
 
 E = TypeVar("E", bound=Enum)

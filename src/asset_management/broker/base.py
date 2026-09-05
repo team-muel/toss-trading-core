@@ -1,10 +1,11 @@
-from typing import Mapping, Protocol
+from typing import TYPE_CHECKING, Mapping, Protocol
 
-from .contracts import BrokerSnapshot
+if TYPE_CHECKING:
+    from asset_management.account.snapshots import AccountTruthSnapshot
 
 
 class BrokerReadPort(Protocol):
-    def account_snapshot(self) -> BrokerSnapshot: ...
+    def collect_account_truth(self, *, runtime_run_id: str) -> "AccountTruthSnapshot": ...
 
 
 class BrokerWritePort(Protocol):

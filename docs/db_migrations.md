@@ -51,3 +51,7 @@ future-dated, cross-account, or cross-run authorizations at the database boundar
 Migration 10 adds the immutable pipeline-stage evidence ledger. Each stage must be
 contiguous and resolve to the exact persisted artifact and runtime lineage. New order
 intents additionally require the matching verified risk-control evidence.
+
+Migration 11 rejects account snapshots with blank ownership, timezone-naive or
+non-UTC observation times, future runtime observations, or raw evidence received
+after the claimed observation time.

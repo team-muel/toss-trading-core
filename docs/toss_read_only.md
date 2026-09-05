@@ -1,6 +1,11 @@
 # Toss read-only layer
 
-Version: `toss-read-v1`
+Version: `toss-read-v2`
+
+The broker read port exposes only the complete account-truth collection operation.
+Partial holdings/open-order/buying-power snapshots are not valid account truth and
+cannot replace the full account, order, execution, fee, sellable-quantity, calendar,
+and instrument-reference collection.
 
 The enabled boundary is OAuth token acquisition plus GET operations for accounts,
 holdings, open and closed orders, order detail and executions, buying power,

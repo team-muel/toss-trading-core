@@ -1,11 +1,11 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import hashlib
 import json
 import sqlite3
 from typing import Mapping, Sequence
 
-from asset_management.broker.contracts import BrokerSnapshot
+from asset_management.domain.errors import InvariantViolation, TemporalViolation
 
 
 @dataclass(frozen=True, slots=True)
@@ -24,6 +24,16 @@ class AccountTruthSnapshot:
     market_calendars: Sequence[object]
     instrument_reference: object
     raw_response_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not self.runtime_run_id.strip() or not self.account_id.strip():
+            raise InvariantViolation("account truth requires runtime and account identifiers")
+        if self.observed_at_utc.tzinfo is None:
+            raise TemporalViolation("account truth observation time must be timezone-aware")
+        object.__setattr__(self, "observed_at_utc", self.observed_at_utc.astimezone(timezone.utc))
+        if (not self.raw_response_ids or any(not item.strip() for item in self.raw_response_ids)
+                or len(self.raw_response_ids) != len(set(self.raw_response_ids))):
+            raise InvariantViolation("account truth requires unique raw-response evidence")
 
     def payload(self) -> dict[str, object]:
         return {
@@ -56,8 +66,20 @@ class AccountTruthRepository:
         self._conn = conn
 
     def append(self, snapshot: AccountTruthSnapshot) -> str:
-        if not snapshot.raw_response_ids:
-            raise ValueError("account truth requires raw response evidence")
+        runtime = self._conn.execute(
+            "SELECT as_of_utc FROM am_runtime_run WHERE runtime_run_id=?",
+            (snapshot.runtime_run_id,),
+        ).fetchone()
+        if runtime is None:
+            raise InvariantViolation("account truth runtime does not exist")
+        try:
+            runtime_as_of = datetime.fromisoformat(str(runtime[0]).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise TemporalViolation("runtime as-of timestamp is invalid") from exc
+        if runtime_as_of.tzinfo is None:
+            raise TemporalViolation("runtime as-of timestamp must be timezone-aware")
+        if snapshot.observed_at_utc > runtime_as_of.astimezone(timezone.utc):
+            raise TemporalViolation("account truth observation is after runtime as-of")
         identifier = f"account-truth:{snapshot.runtime_run_id}:{snapshot.content_hash}"
         payload = json.dumps(snapshot.payload(), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         with self._conn:
@@ -80,4 +102,4 @@ class AccountTruthRepository:
             )
         return identifier
 
-__all__ = ["AccountTruthRepository", "AccountTruthSnapshot", "BrokerSnapshot"]
+__all__ = ["AccountTruthRepository", "AccountTruthSnapshot"]

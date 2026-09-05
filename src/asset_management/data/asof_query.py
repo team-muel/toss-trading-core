@@ -82,14 +82,17 @@ class AsOfRepository:
         return first
 
     def history(
-        self, *, entity_id: str, field: str, reference_period: str
+        self, *, entity_id: str, field: str, reference_period: str,
+        context: AsOfContext,
     ) -> tuple[TemporalObservation, ...]:
+        context = require_as_of_context(context)
         rows = self._conn.execute(
             f"""
             SELECT {_COLUMNS} FROM am_temporal_observation
             WHERE entity_id = ? AND field_name = ? AND reference_period = ?
+              AND available_at_utc <= ?
             ORDER BY available_at_utc, observation_id
             """,
-            (entity_id, field, reference_period),
+            (entity_id, field, reference_period, context.information_cutoff_utc.isoformat()),
         ).fetchall()
         return tuple(observation_from_row(row) for row in rows)

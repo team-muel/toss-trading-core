@@ -114,8 +114,13 @@ def test_revision_vintage_replays_original_before_revision_release(pit):
         context=context(at(9, 2)),
     ).observation_id == revision.observation_id
     assert repository.history(
-        entity_id="SERIES", field="value", reference_period="2026-Q2"
+        entity_id="SERIES", field="value", reference_period="2026-Q2",
+        context=context(at(9, 2)),
     ) == (original, revision)
+    assert repository.history(
+        entity_id="SERIES", field="value", reference_period="2026-Q2",
+        context=context(at(8, 1)),
+    ) == (original,)
 
 
 def test_delayed_receipt_and_ingestion_define_actual_availability(pit):
@@ -210,5 +215,22 @@ def test_database_rejects_non_utc_text_even_when_application_is_bypassed(pit):
               'bad-hash'
             )
             """,
+            (raw_id,),
+        )
+
+
+def test_database_rejects_timezone_naive_account_truth(pit):
+    conn, _, _, evidence = pit
+    raw_id = evidence("account", at(1, 2))
+    conn.execute(
+        "INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+        ("account-run", at(1, 2).isoformat(), at(1, 2).isoformat(), "sha",
+         at(1, 2).isoformat()),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="chronological UTC"):
+        conn.execute(
+            """INSERT INTO am_account_snapshot VALUES
+               ('bad-account','account-run','account-1','2026-01-02T00:00:00',?,
+                '{}','hash')""",
             (raw_id,),
         )

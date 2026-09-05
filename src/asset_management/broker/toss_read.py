@@ -16,9 +16,6 @@ from asset_management.broker.contracts import require_decimal_string, require_re
 from asset_management.domain.errors import DataQualityError, ReconciliationError, UnknownBrokerState
 from asset_management.time.clock import Clock, SystemClock
 
-from .contracts import BrokerSnapshot
-
-
 class TossReadAdapter:
     """Anti-corruption layer around the existing verified Toss client."""
 
@@ -27,25 +24,6 @@ class TossReadAdapter:
             raise ValueError("Toss read adapter requires an append-only raw-response ledger")
         self._client = client
         self._clock = clock or SystemClock()
-
-    def account_snapshot(self) -> BrokerSnapshot:
-        holdings = self._client.get_holdings()
-        orders = self._client.get_all_orders("OPEN")
-        buying_power = self._client.get_buying_power()
-        holding_rows = holdings_items(holdings.body)
-        order_rows = []
-        for page in orders:
-            rows, _cursor, _has_next = orders_page(page.body, status="OPEN")
-            order_rows.extend(rows)
-        buying_power_row = require_buying_power(buying_power.body)
-        return BrokerSnapshot(
-            account_id=self._client.credentials.account_seq or "",
-            observed_at_utc=self._clock.now_utc(),
-            balances=buying_power_row,
-            positions=tuple(holding_rows),
-            open_orders=tuple(order_rows),
-            source_response_ids=(holdings.raw_response_id, buying_power.raw_response_id, *(page.raw_response_id for page in orders)),
-        )
 
     def accounts(self) -> tuple[dict, ...]:
         return tuple(require_accounts(self._client.get_accounts().body))

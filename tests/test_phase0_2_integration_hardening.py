@@ -17,7 +17,7 @@ from asset_management.account.snapshots import AccountTruthRepository
 from asset_management.broker.toss_read import TossReadAdapter
 from asset_management.broker.rate_limit import PriorityTokenBucket, TokenBucket
 from asset_management.data.raw_store import SQLiteRawResponseStore
-from asset_management.domain.errors import ReconciliationError, UnknownBrokerState
+from asset_management.domain.errors import ReconciliationError, TemporalViolation, UnknownBrokerState
 from asset_management.replay.engine import RawReplayEngine
 from asset_management.time.clock import FrozenClock
 from toss_trading.broker.credentials import TossCredentials
@@ -153,6 +153,24 @@ def test_full_account_truth_collector_covers_every_required_read():
     assert len(snapshot.sellable_quantities) == 1 and len(snapshot.commissions) == 1
     assert len(snapshot.market_calendars) == 2 and snapshot.instrument_reference
     assert len(snapshot.raw_response_ids) == len(client.calls)
+    assert not hasattr(TossReadAdapter(client, FrozenClock(NOW)), "account_snapshot")
+
+
+def test_account_truth_rejects_naive_or_future_observation_time():
+    conn = database()
+    conn.execute(
+        "INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+        ("run", NOW.isoformat(), NOW.isoformat(), "sha", NOW.isoformat()),
+    )
+    snapshot = TossReadAdapter(FakeCollectorClient(), FrozenClock(NOW)).collect_account_truth(
+        runtime_run_id="run"
+    )
+    with pytest.raises(TemporalViolation, match="timezone-aware"):
+        replace(snapshot, observed_at_utc=NOW.replace(tzinfo=None))
+    with pytest.raises(TemporalViolation, match="after runtime"):
+        AccountTruthRepository(conn).append(
+            replace(snapshot, observed_at_utc=NOW + timedelta(seconds=1))
+        )
 
 
 def test_unknown_broker_status_blocks_account_truth():

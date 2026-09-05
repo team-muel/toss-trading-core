@@ -20,8 +20,10 @@ latest(t)      := arg max eligible(x, t) by available_at
 No-result and ambiguous-result cases are `MISSING` and `CONFLICT` failures. Revisions
 append a new row linked to the exact earlier vintage. Updates, deletes, cross-series
 supersession, and branching revision histories are blocked at the database boundary.
-Historical replay therefore returns the vintage knowable at the historical cutoff;
-current runs return the newer vintage only after its availability time.
+Both latest and history queries require an explicit `AsOfContext`; history is limited
+to vintages knowable at that cutoff. Historical replay therefore returns the vintage
+knowable at the historical cutoff; current runs return the newer vintage only after
+its availability time.
 
 Mandatory adversarial tests cover future sentinels, morning use of same-day closes,
 pre-release economic revisions, US daylight-saving conversion, delayed receipt,
