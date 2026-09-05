@@ -1,4 +1,4 @@
-from dataclasses import replace
+from dataclasses import fields, replace
 from decimal import Decimal
 
 import pytest
@@ -27,6 +27,23 @@ def inputs(**changes: bool) -> RiskInputs:
         evidence_ids=("account-17", "risk-model-17", "target-17"),
     )
     return replace(base, **changes)
+
+
+RISK_FLAGS = tuple(field.name for field in fields(RiskInputs) if field.type == "bool")
+
+
+@pytest.mark.parametrize("field", RISK_FLAGS)
+@pytest.mark.parametrize("value", [None, 0, 1, "", "false", "true", [], {}])
+def test_unknown_or_coerced_risk_flags_cannot_authorize(field, value):
+    with pytest.raises(NoTrade, match=f"RISK_INPUT_INVALID: {field}"):
+        RiskGovernor(policy()).decide(inputs(**{field: value})).authorize()
+
+
+@pytest.mark.parametrize("field", RISK_FLAGS)
+def test_explicit_boolean_risk_flags_preserve_decisions(field):
+    governor = RiskGovernor(policy())
+    assert governor.decide(inputs(**{field: False})).state is DecisionState.ALLOW
+    assert governor.decide(inputs(**{field: True})).state is not DecisionState.ALLOW
 
 
 @pytest.mark.parametrize("field,reason", HARD_BLOCKS)
