@@ -1,28 +1,53 @@
 {
-  "schema_version": "toss-openapi-contract-review-v1",
-  "approved_at": "2026-08-20",
+  "schema_version": "toss-openapi-contract-review-v2",
+  "approved_at": "2026-09-03",
   "approved_version": "1.2.14",
-  "approved_sha256": "fccf49abd11f37f557bdd349138f4a03c42b829ebd8b5c14ab4907116fb84c7a",
+  "approved_sha256": "a7b32ba754401d13fa649ba91eebd212420eb1afab28e9c2c0d6ea8d43055fed",
   "source": "https://openapi.tossinvest.com/openapi-docs/latest/openapi.json",
   "required_operations": {
+    "/oauth2/token": ["post"],
     "/api/v1/accounts": ["get"],
     "/api/v1/buying-power": ["get"],
     "/api/v1/candles": ["get"],
+    "/api/v1/commissions": ["get"],
+    "/api/v1/exchange-rate": ["get"],
     "/api/v1/holdings": ["get"],
-    "/api/v1/orders": ["get", "post"],
-    "/api/v1/orders/{orderId}": ["get"]
+    "/api/v1/market-calendar/KR": ["get"],
+    "/api/v1/market-calendar/US": ["get"],
+    "/api/v1/market-indicators/prices": ["get"],
+    "/api/v1/market-indicators/{symbol}/candles": ["get"],
+    "/api/v1/market-indicators/{symbol}/investor-trading": ["get"],
+    "/api/v1/orderbook": ["get"],
+    "/api/v1/orders": ["get"],
+    "/api/v1/orders/{orderId}": ["get"],
+    "/api/v1/price-limits": ["get"],
+    "/api/v1/prices": ["get"],
+    "/api/v1/rankings": ["get"],
+    "/api/v1/sellable-quantity": ["get"],
+    "/api/v1/stocks": ["get"],
+    "/api/v1/stocks/all": ["get"],
+    "/api/v1/stocks/{symbol}/credit-trades": ["get"],
+    "/api/v1/stocks/{symbol}/investor-trading": ["get"],
+    "/api/v1/stocks/{symbol}/program-trades": ["get"],
+    "/api/v1/stocks/{symbol}/securities-lending": ["get"],
+    "/api/v1/stocks/{symbol}/short-selling": ["get"],
+    "/api/v1/stocks/{symbol}/warnings": ["get"],
+    "/api/v1/trades": ["get"]
   },
   "documented_but_disabled_operations": {
-    "/api/v1/orders/{orderId}/cancel": ["post"],
-    "/api/v1/orders/{orderId}/modify": ["post"],
     "/api/v1/conditional-orders": ["get", "post"],
     "/api/v1/conditional-orders/{conditionalOrderId}": ["delete", "get"],
-    "/api/v1/conditional-orders/{conditionalOrderId}/modify": ["post"]
+    "/api/v1/conditional-orders/{conditionalOrderId}/modify": ["post"],
+    "/api/v1/orders": ["post"],
+    "/api/v1/orders/{orderId}/cancel": ["post"],
+    "/api/v1/orders/{orderId}/modify": ["post"]
   },
   "review_notes": [
-    "The 2026-08-20 canonical document is version 1.2.14 and retains every reviewed path and method.",
-    "Conditional SINGLE, OCO, and OTO order contracts are present in 1.2.14.",
-    "No conditional-order write operation is enabled by this approval.",
-    "The live adapter remains read-only and live_trading_enabled remains false."
+    "The 2026-09-03 canonical REST document is OpenAPI 3.1.0, version 1.2.14, with 33 paths.",
+    "Every documented REST path and HTTP method is classified as required or explicitly disabled.",
+    "Required operations are connected read-only endpoints plus OAuth token issuance.",
+    "Standard and conditional order writes remain disabled by runtime policy.",
+    "Conditional-order reads remain disabled until an account-state ingestion contract is implemented.",
+    "The canonical REST document links the separately published AsyncAPI 3.0 WebSocket contract; streaming is not enabled in this Foundation runtime."
   ]
 }
