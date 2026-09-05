@@ -12,6 +12,18 @@ from typing import Any
 import yaml
 
 
+HTTP_METHODS = {
+    "get",
+    "post",
+    "put",
+    "patch",
+    "delete",
+    "head",
+    "options",
+    "trace",
+}
+
+
 def verify_openapi_document(
     policy: dict[str, Any],
     review: dict[str, Any],
@@ -45,6 +57,7 @@ def verify_openapi_document(
     if not isinstance(paths, dict):
         errors.append("document paths are missing")
         return errors
+    reviewed_operations: dict[tuple[str, str], str] = {}
     for section in ("required_operations", "documented_but_disabled_operations"):
         operations = review.get(section)
         if not isinstance(operations, dict):
@@ -56,8 +69,34 @@ def verify_openapi_document(
                 errors.append(f"missing path {path}")
                 continue
             for method in methods:
-                if str(method).lower() not in actual_methods:
-                    errors.append(f"missing operation {str(method).upper()} {path}")
+                normalized_method = str(method).lower()
+                key = (path, normalized_method)
+                if key in reviewed_operations:
+                    errors.append(
+                        f"operation classified twice: {normalized_method.upper()} {path}"
+                    )
+                else:
+                    reviewed_operations[key] = section
+                if normalized_method not in actual_methods:
+                    errors.append(f"missing operation {normalized_method.upper()} {path}")
+
+    official_operations = {
+        (path, method.lower())
+        for path, operations in paths.items()
+        if isinstance(operations, dict)
+        for method in operations
+        if method.lower() in HTTP_METHODS
+    }
+    for path, method in sorted(official_operations - set(reviewed_operations)):
+        errors.append(f"unreviewed operation {method.upper()} {path}")
+    for path, method in sorted(set(reviewed_operations) - official_operations):
+        errors.append(f"obsolete reviewed operation {method.upper()} {path}")
+
+    for (path, method), section in reviewed_operations.items():
+        if section != "required_operations":
+            continue
+        if method != "get" and (path, method) != ("/oauth2/token", "post"):
+            errors.append(f"write operation cannot be required: {method.upper()} {path}")
 
     capabilities = runtime.get("broker_capabilities", {})
     for name in (
