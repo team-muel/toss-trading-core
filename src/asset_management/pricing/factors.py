@@ -39,7 +39,7 @@ def multifactor_required_return(*, instrument_id: str, risk_free_rate: Decimal,
     point=annual_to_horizon(annual,horizon); lower=annual_to_horizon(lower_annual,horizon)
     upper=annual_to_horizon(upper_annual,horizon)
     horizon_uncertainty=max(point-lower,upper-point)/uncertainty_z if uncertainty_z else Decimal(0)
-    return PricingResult(instrument_id,horizon,point,lower,upper,"MULTIFACTOR",
+    return PricingResult(instrument_id,horizon,point,lower,upper,"MULTIFACTOR","MULTIFACTOR@1",
                          dict(loadings),horizon_uncertainty,QualityStatus.VALID,as_of,validity)
 
 

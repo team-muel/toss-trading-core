@@ -12,6 +12,10 @@ from .data_truth import (
     REQUIRED_DATA_CHECKS, DataTruthGateInput, DataTruthGateResult,
     evaluate_data_truth_gate,
 )
+from .feature_state_model_integrity import (
+    REQUIRED_FEATURE_STATE_MODEL_CHECKS, FeatureStateModelIntegrityGateInput,
+    FeatureStateModelIntegrityGateResult, evaluate_feature_state_model_integrity_gate,
+)
 
 __all__ = [
     "REQUIRED_CHECKS", "AcceptanceDecision", "AccountTruthGateInput",
@@ -20,4 +24,6 @@ __all__ = [
     "evaluate_temporal_truth_gate",
     "REQUIRED_DATA_CHECKS", "DataTruthGateInput", "DataTruthGateResult",
     "evaluate_data_truth_gate",
+    "REQUIRED_FEATURE_STATE_MODEL_CHECKS", "FeatureStateModelIntegrityGateInput",
+    "FeatureStateModelIntegrityGateResult", "evaluate_feature_state_model_integrity_gate",
 ]

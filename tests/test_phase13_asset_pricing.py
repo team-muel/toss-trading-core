@@ -45,8 +45,23 @@ def test_manual_capm_and_output_is_not_an_order():
                                   validity=VALIDITY,model_registry=CAPM_REGISTRY,
                                   authorization=CAPM_AUTH)
     assert result.required_return == D("0.09")
+    assert result.model_key == "CAPM@1" and len(result.output_hash) == 64
     assert not ({"order", "side", "BUY", "SELL"} & set(result.payload()))
     assert result.lower_bound <= result.required_return <= result.upper_bound
+
+
+def test_pricing_output_hash_is_deterministic_and_bound_to_model_version():
+    beta = BetaEstimate(D("1.2"), D("1.2"), D("0.1"), 252, 252, D("0.8"), NOW,
+                        QualityStatus.VALID, D(1))
+    arguments = dict(
+        instrument_id="ETF", risk_free_rate=D("0.03"), beta=beta,
+        market_risk_premium=D("0.05"), horizon=252, as_of=NOW, validity=VALIDITY,
+        model_registry=CAPM_REGISTRY, authorization=CAPM_AUTH,
+    )
+    first = capm_required_return(**arguments)
+    second = capm_required_return(**arguments)
+    assert first.output_hash == second.output_hash
+    assert first.payload()["output_hash"] == first.output_hash
 
 def test_capm_cannot_run_without_matching_registry_authorization():
     beta = BetaEstimate(D("1.2"), D("1.2"), D("0.1"), 252, 252, D("0.8"), NOW,
