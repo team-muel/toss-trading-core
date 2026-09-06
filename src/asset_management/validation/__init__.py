@@ -20,6 +20,9 @@ from .signal_forecast_integrity import (
     REQUIRED_SIGNAL_FORECAST_CHECKS, SignalForecastIntegrityGateInput,
     SignalForecastIntegrityGateResult, evaluate_signal_forecast_integrity_gate,
 )
+from .backtest_run_specification import (
+    BacktestPeriod, BacktestRunEvent, BacktestRunRegistry, BacktestRunSpec, BacktestRunStatus,
+)
 
 __all__ = [
     "REQUIRED_CHECKS", "AcceptanceDecision", "AccountTruthGateInput",
@@ -32,4 +35,6 @@ __all__ = [
     "FeatureStateModelIntegrityGateResult", "evaluate_feature_state_model_integrity_gate",
     "REQUIRED_SIGNAL_FORECAST_CHECKS", "SignalForecastIntegrityGateInput",
     "SignalForecastIntegrityGateResult", "evaluate_signal_forecast_integrity_gate",
+    "BacktestPeriod", "BacktestRunEvent", "BacktestRunRegistry", "BacktestRunSpec",
+    "BacktestRunStatus",
 ]

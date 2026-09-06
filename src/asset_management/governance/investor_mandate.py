@@ -248,6 +248,18 @@ class InvestorMandateRegistry:
             raise InvariantViolation("MANDATE_OR_BENCHMARK_NOT_EFFECTIVE")
         return benchmark
 
+    def require_backtest_context(self, mandate_key: str, *, benchmark_key: str,
+                                 objective: MandateObjective, reporting_currency: str,
+                                 at: datetime) -> tuple[InvestorMandate, BenchmarkDefinition]:
+        """Return the effective mandate context that a preregistered run must copy."""
+        if not isinstance(objective, MandateObjective) or not isinstance(reporting_currency, str) or not reporting_currency.strip():
+            raise InvariantViolation("BACKTEST_MANDATE_CONTEXT_INVALID")
+        benchmark = self.require_performance_benchmark(mandate_key, benchmark_key=benchmark_key, at=at)
+        mandate = self._mandates[mandate_key]
+        if mandate.objective is not objective or mandate.reporting_currency != reporting_currency:
+            raise InvariantViolation("BACKTEST_MANDATE_CONTEXT_MISMATCH")
+        return mandate, benchmark
+
     def require_optimizer_authorization(self, authorization: OptimizerMandateAuthorization, *, risk_aversion: Decimal,
                                         active_risk_aversion: Decimal, at: datetime) -> None:
         if not isinstance(authorization, OptimizerMandateAuthorization):
