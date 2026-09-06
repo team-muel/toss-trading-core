@@ -16,6 +16,8 @@ Repository panels align every instrument by explicit `reference_period` and
 pad missing observations with `None`; list offsets are never treated as dates.
 Cross-sectional operators mask each period to its contemporaneous universe,
 and group operators use that period's classification mapping.
+This permits exited instruments to remain in historical lookbacks without
+requiring them to be active at the resolver's current cutoff.
 Time-series windows are bounded at 10,000 observations before evaluation.
 
 ## Evaluation order
@@ -41,3 +43,5 @@ orders or call brokers.  When a matching forward-return panel is supplied,
 the result also carries the canonical research metric bundle.
 All-unavailable warm-up periods are removed, with their matching returns,
 before those metrics are calculated.
+Repository-backed resolvers pin their selected immutable manifest before any
+field read, and forward-return panels must cover every instrument ever held.

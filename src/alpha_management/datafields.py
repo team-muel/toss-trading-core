@@ -39,6 +39,7 @@ class AssetDataSource(Protocol):
         *,
         instrument_id: str,
         context: AsOfContext,
+        dataset_manifest_id: str | None = None,
     ) -> Sequence[NumericInput]: ...
 
     def time_series_observations(
@@ -47,6 +48,7 @@ class AssetDataSource(Protocol):
         *,
         instrument_id: str,
         context: AsOfContext,
+        dataset_manifest_id: str | None = None,
     ) -> Sequence[tuple[str, NumericInput]]: ...
 
 
@@ -92,22 +94,35 @@ class PointInTimeDataSource:
         return values
 
     def time_series(
-        self, field: str, *, instrument_id: str, context: AsOfContext,
+        self,
+        field: str,
+        *,
+        instrument_id: str,
+        context: AsOfContext,
+        dataset_manifest_id: str | None = None,
     ) -> Sequence[NumericInput]:
         return [
             value
             for _, value in self.time_series_observations(
-                field, instrument_id=instrument_id, context=context
+                field,
+                instrument_id=instrument_id,
+                context=context,
+                dataset_manifest_id=dataset_manifest_id,
             )
         ]
 
     def time_series_observations(
-        self, field: str, *, instrument_id: str, context: AsOfContext,
+        self,
+        field: str,
+        *,
+        instrument_id: str,
+        context: AsOfContext,
+        dataset_manifest_id: str | None = None,
     ) -> Sequence[tuple[str, NumericInput]]:
-        manifest_id = self._manifest_id(context)
-        # Membership is not required for a historical single-name read, but the
-        # instrument must exist and be active at the requested as-of instant.
-        self.universes.get(instrument_id, context)
+        manifest_id = dataset_manifest_id or self._manifest_id(context)
+        # Historical universe membership is applied on the resolver's period
+        # axis. Requiring the instrument to remain active at the current cutoff
+        # would drop delisted names and introduce survivor bias.
         observations = self.observations.series(
             entity_id=instrument_id,
             field=field,
@@ -177,6 +192,7 @@ class RepositoryDataFields:
         *,
         instrument_id: str,
         context: AsOfContext,
+        dataset_manifest_id: str | None = None,
     ) -> list[tuple[str, float]]:
         """Return values with their repository reference periods for alignment."""
 
@@ -186,7 +202,15 @@ class RepositoryDataFields:
         reader = getattr(self.source, "time_series_observations", None)
         if reader is None:
             raise DataQualityError("ALPHA_REFERENCE_PERIODS_UNAVAILABLE")
-        observations = reader(field, instrument_id=instrument_id, context=context)
+        if dataset_manifest_id is None:
+            observations = reader(field, instrument_id=instrument_id, context=context)
+        else:
+            observations = reader(
+                field,
+                instrument_id=instrument_id,
+                context=context,
+                dataset_manifest_id=dataset_manifest_id,
+            )
         periods: set[str] = set()
         result: list[tuple[str, float]] = []
         for period, value in observations:

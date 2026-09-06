@@ -67,8 +67,7 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
             return ("i-1", "i-2")
 
         def get(self, instrument_id, context):
-            calls.append(("instrument", instrument_id, context.as_of_utc))
-            return {"instrument_id": instrument_id}
+            raise AssertionError("historical reads must allow instruments that later delisted")
 
     class Observations:
         def get_latest(self, **kwargs):

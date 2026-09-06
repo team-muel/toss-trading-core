@@ -7,7 +7,7 @@ Apache-2.0 expression grammar. Its Zipline runtime is intentionally not used.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from hashlib import sha256
@@ -217,6 +217,7 @@ class RepositoryPanelResolver:
     groups: Mapping[str, Mapping[str, Mapping[str, str]]]
     reference_periods: tuple[str, ...]
     universe_membership: Mapping[str, frozenset[str]]
+    dataset_manifest_ids: tuple[str, ...] = field(init=False)
 
     def __post_init__(self) -> None:
         if not self.reference_periods or len(set(self.reference_periods)) != len(self.reference_periods):
@@ -224,6 +225,11 @@ class RepositoryPanelResolver:
         missing = set(self.reference_periods) - set(self.universe_membership)
         if missing:
             raise ExpressionError(f"universe membership misses periods: {sorted(missing)}")
+        object.__setattr__(
+            self,
+            "dataset_manifest_ids",
+            self.fields.dataset_manifest_ids(self.context),
+        )
 
     def field(self, name: str) -> PanelValue:
         require_as_of_context(self.context)
@@ -231,7 +237,14 @@ class RepositoryPanelResolver:
             raise ExpressionError("repository panel requires instruments")
         observations = {
             instrument_id: self.fields.time_series_observations(
-                name, instrument_id=instrument_id, context=self.context
+                name,
+                instrument_id=instrument_id,
+                context=self.context,
+                dataset_manifest_id=(
+                    self.dataset_manifest_ids[0]
+                    if len(self.dataset_manifest_ids) == 1
+                    else None
+                ),
             )
             for instrument_id in self.instrument_ids
         }

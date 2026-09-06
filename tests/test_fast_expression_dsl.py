@@ -176,6 +176,36 @@ def test_history_rejects_repository_resolver_from_another_cutoff():
         HistoricalSession(earlier.as_of_utc, earlier, resolver, ("a",))
 
 
+def test_repository_resolver_pins_manifest_for_all_field_reads():
+    class Source:
+        def manifest_id(self, context):
+            return "manifest-pinned"
+
+        def time_series_observations(
+            self, field, *, instrument_id, context, dataset_manifest_id=None
+        ):
+            assert dataset_manifest_id == "manifest-pinned"
+            return [("p1", 1)]
+
+        def time_series(self, field, *, instrument_id, context, dataset_manifest_id=None):
+            raise AssertionError
+
+        def cross_section(self, field, *, universe, context):
+            raise AssertionError
+
+    ctx = context(1)
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(Source()),
+        ("a",),
+        ctx,
+        {},
+        ("p1",),
+        {"p1": frozenset({"a"})},
+    )
+    assert resolver.dataset_manifest_ids == ("manifest-pinned",)
+    assert resolver.field("close") == {"a": [1.0]}
+
+
 def test_callable_alpha_api_remains_compatible():
     alpha = Alpha("callable", lambda values: values["signal"])
     settings = AlphaSimulationSettings(
@@ -339,6 +369,16 @@ def test_history_can_attach_existing_metric_bundle():
     )
     assert result.metrics is not None
     assert result.metrics.periods == 2
+
+
+def test_history_metrics_reject_missing_returns_for_a_held_instrument():
+    with pytest.raises(ValueError, match="misses held instruments.*b"):
+        simulate_history(
+            compile_expression("sign(close)", data_fields={"close"}),
+            sessions([{"a": 1, "b": -1}]),
+            history_settings(),
+            forward_returns={"a": [0.01]},
+        )
 
 
 def test_repository_cross_sections_use_historical_universe_membership():

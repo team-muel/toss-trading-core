@@ -44,7 +44,7 @@ class HistoricalSession:
         ):
             raise ValueError("repository resolver context must match session context")
         if isinstance(self.resolver, RepositoryPanelResolver):
-            derived = self.resolver.fields.dataset_manifest_ids(self.context)
+            derived = self.resolver.dataset_manifest_ids
             if derived and self.dataset_manifest_ids and derived != self.dataset_manifest_ids:
                 raise ValueError("session manifest IDs do not match repository resolver")
             if derived:
@@ -214,6 +214,16 @@ def simulate_history(
     expected_length = len(result.points)
     if any(len(series) != expected_length for series in forward_returns.values()):
         raise ValueError("forward_returns must align with the simulation timeline")
+    held_instruments = {
+        instrument_id
+        for instrument_id, series in panel.items()
+        if any(value is not None for value in series)
+    }
+    missing_returns = held_instruments - set(forward_returns)
+    if missing_returns:
+        raise ValueError(
+            f"forward_returns misses held instruments: {sorted(missing_returns)}"
+        )
     available = [
         index
         for index in range(expected_length)
