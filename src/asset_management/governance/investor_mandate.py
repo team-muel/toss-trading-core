@@ -231,6 +231,23 @@ class InvestorMandateRegistry:
         return OptimizerMandateAuthorization(mandate_key, mandate.primary_benchmark_key, risk_aversion,
                                              active_risk_aversion, self.registry_hash, instant.isoformat(), digest(canonical(body)))
 
+    def require_performance_benchmark(self, mandate_key: str, *, benchmark_key: str,
+                                      at: datetime) -> BenchmarkDefinition:
+        """Return only the precommitted primary benchmark effective at ``at``."""
+        if not isinstance(at, datetime) or at.tzinfo is None or at.utcoffset() is None:
+            raise InvariantViolation("MANDATE_AUTHORIZATION_TIME_NOT_AWARE")
+        try:
+            mandate = self._mandates[mandate_key]
+        except KeyError:
+            raise InvariantViolation("INVESTOR_MANDATE_NOT_REGISTERED") from None
+        if benchmark_key != mandate.primary_benchmark_key:
+            raise InvariantViolation("PERFORMANCE_BENCHMARK_NOT_MANDATED")
+        benchmark = self._benchmarks[benchmark_key]
+        instant = at.astimezone(timezone.utc)
+        if not mandate.effective_from <= instant < mandate.effective_to or not benchmark.effective_from <= instant < benchmark.effective_to:
+            raise InvariantViolation("MANDATE_OR_BENCHMARK_NOT_EFFECTIVE")
+        return benchmark
+
     def require_optimizer_authorization(self, authorization: OptimizerMandateAuthorization, *, risk_aversion: Decimal,
                                         active_risk_aversion: Decimal, at: datetime) -> None:
         if not isinstance(authorization, OptimizerMandateAuthorization):

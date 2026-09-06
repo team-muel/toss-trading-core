@@ -1,0 +1,4 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false,
+  "required": ["strategy_key", "decision_id", "mandate_key", "benchmark_key", "benchmark_total_return", "evaluated_at", "forecast_version", "optimizer_policy_key", "execution_policy_key", "lineage_ids", "reference_expected_active_return", "portfolio_expected_active_return", "executed_expected_active_return", "realized_active_return", "constraint_drag", "execution_drag", "realization_gap", "portfolio_transfer_efficiency", "execution_efficiency", "pnl_contributions"]
+}
