@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["specs", "events", "registry_hash"],
+  "$defs": {
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"]
+    },
+    "spec": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hypothesis_id", "experiment_id", "run_version", "strategy_key", "mandate_key", "objective", "reporting_currency", "universe_version", "pit_universe_rule_key", "universe_manifest_id", "dataset_manifest_ids", "information_cutoff", "train_period", "validation_period", "test_period", "forecast_horizon", "holding_horizon", "rebalance_horizon", "benchmark_key", "benchmark_total_return", "benchmark_currency", "benchmark_rebalance_horizon", "primary_oos_objective", "strategic_risk_budget", "active_risk_budget", "tracking_error_budget", "max_stress_loss", "risk_aversion_policy_key", "risk_aversion_min", "risk_aversion_max", "active_risk_aversion_min", "active_risk_aversion_max", "hard_constraint_policy_key", "acceptance_thresholds", "transaction_cost_model_key", "tax_model_key", "fx_model_key", "execution_fidelity_model_key", "parameter_search_space_key", "parameter_search_budget", "purge_observations", "embargo_observations", "robustness_test_keys", "seed_policy_key", "code_revision", "parent_spec_hash", "spec_hash"]
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_key", "spec_hash", "status", "recorded_at", "evidence_ids", "output_hash", "reason_code", "event_hash"]
+    }
+  }
+}
