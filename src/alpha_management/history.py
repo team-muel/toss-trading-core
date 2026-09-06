@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from hashlib import sha256
 
 from asset_management.time.asof import AsOfContext, require_as_of_context
 
@@ -49,6 +50,16 @@ class HistoricalSession:
                 raise ValueError("session manifest IDs do not match repository resolver")
             if derived:
                 object.__setattr__(self, "dataset_manifest_ids", derived)
+            if self.universe_version == "unspecified":
+                membership_identity = ";".join(
+                    f"{period}:{','.join(sorted(self.resolver.universe_membership[period]))}"
+                    for period in self.resolver.reference_periods
+                )
+                object.__setattr__(
+                    self,
+                    "universe_version",
+                    f"sha256:{sha256(membership_identity.encode('utf-8')).hexdigest()}",
+                )
         if self.context.as_of_utc != self.effective_time_utc:
             raise ValueError("session effective time must equal context.as_of_utc")
         if not self.instrument_ids or len(set(self.instrument_ids)) != len(self.instrument_ids):
@@ -223,6 +234,16 @@ def simulate_history(
     if missing_returns:
         raise ValueError(
             f"forward_returns misses held instruments: {sorted(missing_returns)}"
+        )
+    missing_return_cells = [
+        (instrument_id, index)
+        for instrument_id in held_instruments
+        for index, weight in enumerate(panel[instrument_id])
+        if weight is not None and forward_returns[instrument_id][index] is None
+    ]
+    if missing_return_cells:
+        raise ValueError(
+            f"forward_returns unavailable for held positions: {missing_return_cells}"
         )
     available = [
         index

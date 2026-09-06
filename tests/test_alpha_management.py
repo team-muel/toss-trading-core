@@ -111,6 +111,8 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
         )
         session = HistoricalSession(ctx.as_of_utc, ctx, resolver, ("i-1",))
         assert session.dataset_manifest_ids == ("manifest-at-cutoff",)
+        assert session.universe_version.startswith("sha256:")
+        assert session.universe_version != "sha256:"
 
     assert ("latest", "i-1", "manifest-at-cutoff") in calls
     assert ("latest", "i-2", "manifest-at-cutoff") in calls

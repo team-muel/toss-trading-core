@@ -222,6 +222,8 @@ class RepositoryPanelResolver:
     def __post_init__(self) -> None:
         if not self.reference_periods or len(set(self.reference_periods)) != len(self.reference_periods):
             raise ExpressionError("reference_periods must be non-empty and unique")
+        if self.reference_periods != tuple(sorted(self.reference_periods)):
+            raise ExpressionError("reference_periods must be chronological oldest-to-newest")
         missing = set(self.reference_periods) - set(self.universe_membership)
         if missing:
             raise ExpressionError(f"universe membership misses periods: {sorted(missing)}")

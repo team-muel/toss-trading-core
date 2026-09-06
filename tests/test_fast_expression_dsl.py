@@ -151,6 +151,22 @@ def test_repository_panel_aligns_uneven_histories_by_reference_period():
     }
 
 
+def test_repository_panel_rejects_non_chronological_period_axis():
+    ctx = context(1)
+    with pytest.raises(ExpressionError, match="chronological"):
+        RepositoryPanelResolver(
+            RepositoryDataFields(object()),
+            ("a",),
+            ctx,
+            {},
+            ("2026-01-02", "2026-01-01"),
+            {
+                "2026-01-01": frozenset({"a"}),
+                "2026-01-02": frozenset({"a"}),
+            },
+        )
+
+
 def test_history_rejects_repository_resolver_from_another_cutoff():
     class Source:
         def time_series_observations(self, field, *, instrument_id, context):
@@ -378,6 +394,16 @@ def test_history_metrics_reject_missing_returns_for_a_held_instrument():
             sessions([{"a": 1, "b": -1}]),
             history_settings(),
             forward_returns={"a": [0.01]},
+        )
+
+
+def test_history_metrics_reject_missing_return_for_a_held_period():
+    with pytest.raises(ValueError, match="unavailable for held positions"):
+        simulate_history(
+            compile_expression("sign(close)", data_fields={"close"}),
+            sessions([{"a": 1}, {"a": -1}]),
+            history_settings(),
+            forward_returns={"a": [0.01, None]},
         )
 
 
