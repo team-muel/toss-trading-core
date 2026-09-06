@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
+from math import isfinite
 from types import MappingProxyType
 
 from asset_management.time.asof import AsOfContext, require_as_of_context
@@ -250,6 +251,16 @@ def simulate_history(
     if missing_return_cells:
         raise ValueError(
             f"forward_returns unavailable for held positions: {missing_return_cells}"
+        )
+    non_finite_return_cells = [
+        (instrument_id, index)
+        for instrument_id in held_instruments
+        for index, weight in enumerate(panel[instrument_id])
+        if weight is not None and not isfinite(float(forward_returns[instrument_id][index]))
+    ]
+    if non_finite_return_cells:
+        raise ValueError(
+            f"forward_returns non-finite for held positions: {non_finite_return_cells}"
         )
     available = [
         index

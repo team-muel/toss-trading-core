@@ -14,7 +14,8 @@ point-in-time data adapters.
 
 Repository panels align every instrument by explicit `reference_period` and
 pad missing observations with `None`; list offsets are never treated as dates.
-The shared period axis must be strictly chronological from oldest to newest.
+The shared period axis accepts ISO dates/datetimes, `YYYY-MM`, or `YYYY-QN`
+and must be strictly chronological from oldest to newest by parsed time value.
 Cross-sectional operators mask each period to its contemporaneous universe,
 and group operators use that period's classification mapping.
 This permits exited instruments to remain in historical lookbacks without
@@ -49,6 +50,7 @@ field read, and forward-return panels must cover every instrument ever held.
 They also derive a stable universe identity from the complete period-membership
 history when no catalog version is supplied.  Every held instrument-period
 must have a realized forward return before metrics can be attached.
+Realized returns for held cells must also be finite.
 Resolver and session construction snapshot their point-in-time classification
 mappings, and the resolver requires the instrument axis to cover every
 historical member. Delayed signals are

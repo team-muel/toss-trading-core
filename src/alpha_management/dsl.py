@@ -6,8 +6,10 @@ Apache-2.0 expression grammar. Its Zipline runtime is intentionally not used.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from hashlib import sha256
@@ -209,6 +211,27 @@ class PanelResolver(Protocol):
     def group(self, name: str) -> Mapping[str, str | Sequence[str | None]]: ...
 
 
+def _reference_period_key(period: str) -> datetime:
+    quarter = re.fullmatch(r"(\d{4})-Q([1-4])", period)
+    if quarter:
+        return datetime(int(quarter.group(1)), (int(quarter.group(2)) - 1) * 3 + 1, 1)
+    month = re.fullmatch(r"(\d{4})-(\d{2})", period)
+    if month:
+        try:
+            return datetime(int(month.group(1)), int(month.group(2)), 1)
+        except ValueError as exc:
+            raise ExpressionError(f"invalid reference period: {period}") from exc
+    try:
+        parsed = datetime.fromisoformat(period.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ExpressionError(
+            "reference periods must use ISO date/datetime, YYYY-MM, or YYYY-QN format"
+        ) from exc
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 @dataclass(frozen=True, slots=True)
 class RepositoryPanelResolver:
     """Resolve DSL fields exclusively through the validated repository bridge."""
@@ -224,7 +247,8 @@ class RepositoryPanelResolver:
     def __post_init__(self) -> None:
         if not self.reference_periods or len(set(self.reference_periods)) != len(self.reference_periods):
             raise ExpressionError("reference_periods must be non-empty and unique")
-        if self.reference_periods != tuple(sorted(self.reference_periods)):
+        period_keys = tuple(_reference_period_key(period) for period in self.reference_periods)
+        if any(current >= following for current, following in zip(period_keys, period_keys[1:])):
             raise ExpressionError("reference_periods must be chronological oldest-to-newest")
         missing = set(self.reference_periods) - set(self.universe_membership)
         if missing:
