@@ -102,6 +102,11 @@ def test_repository_panel_resolver_uses_explicit_pit_context():
         instrument_ids=("a", "b"),
         context=ctx,
         groups={},
+        reference_periods=("2026-01-01", "2026-01-02", "2026-01-03"),
+        universe_membership={
+            period: frozenset({"a", "b"})
+            for period in ("2026-01-01", "2026-01-02", "2026-01-03")
+        },
     )
     expression = compile_expression("rank(ts_delta(close, 2))", data_fields={"close"})
     assert expression.evaluate(resolver) == {
@@ -130,7 +135,15 @@ def test_repository_panel_aligns_uneven_histories_by_reference_period():
 
     ctx = context(1)
     resolver = RepositoryPanelResolver(
-        RepositoryDataFields(Source()), ("a", "b"), ctx, {}
+        RepositoryDataFields(Source()),
+        ("a", "b"),
+        ctx,
+        {},
+        ("2026-01-01", "2026-01-02", "2026-01-03"),
+        {
+            period: frozenset({"a", "b"})
+            for period in ("2026-01-01", "2026-01-02", "2026-01-03")
+        },
     )
     assert resolver.field("close") == {
         "a": [1.0, None, 3.0],
@@ -152,7 +165,12 @@ def test_history_rejects_repository_resolver_from_another_cutoff():
     earlier = context(1)
     later = context(2)
     resolver = RepositoryPanelResolver(
-        RepositoryDataFields(Source()), ("a",), later, {}
+        RepositoryDataFields(Source()),
+        ("a",),
+        later,
+        {},
+        ("2026-01-01",),
+        {"2026-01-01": frozenset({"a"})},
     )
     with pytest.raises(ValueError, match="resolver context must match"):
         HistoricalSession(earlier.as_of_utc, earlier, resolver, ("a",))
@@ -213,6 +231,7 @@ def test_history_delay_uses_prior_trading_session_and_preserves_lineage():
     assert result.points[1].signal_universe_version == "universe-v1"
     assert result.points[1].source_run_id == "run-1"
     assert result.points[1].code_revision == "revision-1"
+    assert result.points[1].neutralization_groups == {}
     assert result.expression_hash == expression.expression_hash
 
 
@@ -295,7 +314,12 @@ def test_history_rejects_information_after_source_cutoff():
             raise AssertionError
 
     resolver = RepositoryPanelResolver(
-        RepositoryDataFields(FutureSource()), ("a",), ctx, {}
+        RepositoryDataFields(FutureSource()),
+        ("a",),
+        ctx,
+        {},
+        ("2026-01-01",),
+        {"2026-01-01": frozenset({"a"})},
     )
     session = HistoricalSession(ctx.as_of_utc, ctx, resolver, ("a",))
     with pytest.raises(TemporalViolation, match="after information_cutoff_utc"):
@@ -310,11 +334,69 @@ def test_history_can_attach_existing_metric_bundle():
     result = simulate_history(
         compile_expression("sign(close)", data_fields={"close"}),
         sessions([{"a": 1}, {"a": 1}, {"a": -1}]),
-        history_settings(),
+        history_settings(delay=1),
         forward_returns={"a": [0.01, -0.02, 0.03]},
     )
     assert result.metrics is not None
-    assert result.metrics.periods == 3
+    assert result.metrics.periods == 2
+
+
+def test_repository_cross_sections_use_historical_universe_membership():
+    class Source:
+        def time_series_observations(self, field, *, instrument_id, context):
+            return [("p1", 1 if instrument_id == "a" else 9),
+                    ("p2", 2 if instrument_id == "a" else 3)]
+
+        def time_series(self, field, *, instrument_id, context):
+            raise AssertionError
+
+        def cross_section(self, field, *, universe, context):
+            raise AssertionError
+
+    ctx = context(1)
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(Source()),
+        ("a", "b"),
+        ctx,
+        {},
+        ("p1", "p2"),
+        {"p1": frozenset({"a"}), "p2": frozenset({"a", "b"})},
+    )
+    assert resolver.field("close")["b"] == [None, 3.0]
+    result = compile_expression("rank(close)", data_fields={"close"}).evaluate(resolver)
+    assert result == {"a": [0.5, 0.0], "b": [None, 1.0]}
+    nested = compile_expression("ts_mean(rank(close), 2)", data_fields={"close"})
+    assert nested.evaluate(resolver) == {"a": [None, 0.25], "b": [None, None]}
+
+
+def test_repository_group_operators_use_historical_classifications():
+    class Source:
+        def time_series_observations(self, field, *, instrument_id, context):
+            values = {"a": [1, 1], "b": [3, 4], "c": [8, 9]}
+            return list(zip(("p1", "p2"), values[instrument_id]))
+
+        def time_series(self, field, *, instrument_id, context):
+            raise AssertionError
+
+        def cross_section(self, field, *, universe, context):
+            raise AssertionError
+
+    ctx = context(1)
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(Source()),
+        ("a", "b", "c"),
+        ctx,
+        {"sector": {
+            "p1": {"a": "x", "b": "x", "c": "y"},
+            "p2": {"a": "x", "b": "y", "c": "y"},
+        }},
+        ("p1", "p2"),
+        {"p1": frozenset({"a", "b", "c"}), "p2": frozenset({"a", "b", "c"})},
+    )
+    result = compile_expression(
+        "group_rank(close, sector)", data_fields={"close"}, group_fields={"sector"}
+    ).evaluate(resolver)
+    assert result == {"a": [0.0, 0.5], "b": [1.0, 0.0], "c": [0.5, 1.0]}
 
 
 def test_history_group_neutralization_uses_delayed_session_groups():

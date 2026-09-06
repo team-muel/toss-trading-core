@@ -68,6 +68,11 @@ class PointInTimeDataSource:
             cutoff=context.information_cutoff_utc,
         ).manifest_id
 
+    def manifest_id(self, context: AsOfContext) -> str:
+        """Expose the immutable dataset identity selected at this cutoff."""
+
+        return self._manifest_id(context)
+
     def cross_section(
         self, field: str, *, universe: str, context: AsOfContext,
     ) -> Mapping[str, NumericInput]:
@@ -132,6 +137,13 @@ class RepositoryDataFields:
     """
 
     source: AssetDataSource
+
+    def dataset_manifest_ids(self, context: AsOfContext) -> tuple[str, ...]:
+        """Return manifest lineage when the repository source provides it."""
+
+        require_as_of_context(context)
+        reader = getattr(self.source, "manifest_id", None)
+        return () if reader is None else (str(reader(context)),)
 
     def cross_section(
         self,

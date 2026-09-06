@@ -5,6 +5,8 @@ from alpha_management import (
     AlphaSimulationSettings,
     PointInTimeDataSource,
     RepositoryDataFields,
+    RepositoryPanelResolver,
+    HistoricalSession,
     simulate_cross_section,
 )
 from alpha_management import operators as ops
@@ -96,6 +98,20 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
         assert fields.time_series_observations(
             "close", instrument_id="i-1", context=asof()
         ) == [("2026-09-04", 90.0), ("2026-09-05", 100.0)]
+        ctx = asof()
+        resolver = RepositoryPanelResolver(
+            fields,
+            ("i-1",),
+            ctx,
+            {},
+            ("2026-09-04", "2026-09-05"),
+            {
+                "2026-09-04": frozenset({"i-1"}),
+                "2026-09-05": frozenset({"i-1"}),
+            },
+        )
+        session = HistoricalSession(ctx.as_of_utc, ctx, resolver, ("i-1",))
+        assert session.dataset_manifest_ids == ("manifest-at-cutoff",)
 
     assert ("latest", "i-1", "manifest-at-cutoff") in calls
     assert ("latest", "i-2", "manifest-at-cutoff") in calls

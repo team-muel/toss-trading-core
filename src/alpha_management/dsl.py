@@ -204,7 +204,7 @@ def expression_hash(node: ExpressionNode) -> str:
 
 class PanelResolver(Protocol):
     def field(self, name: str) -> Panel: ...
-    def group(self, name: str) -> Mapping[str, str]: ...
+    def group(self, name: str) -> Mapping[str, str | Sequence[str | None]]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +214,16 @@ class RepositoryPanelResolver:
     fields: RepositoryDataFields
     instrument_ids: tuple[str, ...]
     context: AsOfContext
-    groups: Mapping[str, Mapping[str, str]]
+    groups: Mapping[str, Mapping[str, Mapping[str, str]]]
+    reference_periods: tuple[str, ...]
+    universe_membership: Mapping[str, frozenset[str]]
+
+    def __post_init__(self) -> None:
+        if not self.reference_periods or len(set(self.reference_periods)) != len(self.reference_periods):
+            raise ExpressionError("reference_periods must be non-empty and unique")
+        missing = set(self.reference_periods) - set(self.universe_membership)
+        if missing:
+            raise ExpressionError(f"universe membership misses periods: {sorted(missing)}")
 
     def field(self, name: str) -> PanelValue:
         require_as_of_context(self.context)
@@ -226,23 +235,32 @@ class RepositoryPanelResolver:
             )
             for instrument_id in self.instrument_ids
         }
-        periods = sorted({period for values in observations.values() for period, _ in values})
-        if not periods:
-            raise ExpressionError(f"datafield {name} has no observations")
+        indexed = {instrument_id: dict(values) for instrument_id, values in observations.items()}
         return {
-            instrument_id: [dict(values).get(period) for period in periods]
-            for instrument_id, values in observations.items()
+            instrument_id: [
+                indexed[instrument_id].get(period)
+                if instrument_id in self.universe_membership[period]
+                else None
+                for period in self.reference_periods
+            ]
+            for instrument_id in self.instrument_ids
         }
 
-    def group(self, name: str) -> Mapping[str, str]:
+    def group(self, name: str) -> Mapping[str, Sequence[str | None]]:
         try:
-            mapping = self.groups[name]
+            history = self.groups[name]
         except KeyError as exc:
             raise ExpressionError(f"unknown group datafield: {name}") from exc
-        missing = set(self.instrument_ids) - set(mapping)
+        missing = set(self.reference_periods) - set(history)
         if missing:
-            raise ExpressionError(f"group datafield {name} misses instruments: {sorted(missing)}")
-        return mapping
+            raise ExpressionError(f"group datafield {name} misses periods: {sorted(missing)}")
+        return {
+            instrument_id: [history[period].get(instrument_id) for period in self.reference_periods]
+            for instrument_id in self.instrument_ids
+        }
+
+    def members_at(self, index: int) -> frozenset[str]:
+        return self.universe_membership[self.reference_periods[index]]
 
 
 def _copy_panel(value: Panel) -> PanelValue:
@@ -252,13 +270,19 @@ def _copy_panel(value: Panel) -> PanelValue:
     return {key: [None if item is None else float(item) for item in series] for key, series in value.items()}
 
 
-def _cross_section(panel: PanelValue, function) -> PanelValue:
+def _cross_section(panel: PanelValue, function, resolver: PanelResolver) -> PanelValue:
     if not panel:
         return {}
     length = len(next(iter(panel.values())))
     result = {key: [None] * length for key in panel}
     for index in range(length):
-        values = {key: series[index] for key, series in panel.items() if series[index] is not None}
+        membership_reader = getattr(resolver, "members_at", None)
+        members = set(panel) if membership_reader is None else set(membership_reader(index))
+        values = {
+            key: series[index]
+            for key, series in panel.items()
+            if key in members and series[index] is not None
+        }
         transformed = function(values)
         for key, value in transformed.items():
             result[key][index] = value
@@ -285,9 +309,30 @@ def evaluate_expression(node: ExpressionNode, resolver: PanelResolver):
         return {key: function(series, window) for key, series in panel.items()}
     if node.operator in {"group_neutralize", "group_rank"}:
         panel, groups = arguments
-        return _cross_section(panel, lambda values: function(values, groups))
+        first_group = next(iter(groups.values()), None)
+        if isinstance(first_group, str) or first_group is None:
+            return _cross_section(panel, lambda values: function(values, groups), resolver)
+        length = len(next(iter(panel.values()))) if panel else 0
+        result = {key: [None] * length for key in panel}
+        for index in range(length):
+            membership_reader = getattr(resolver, "members_at", None)
+            members = set(panel) if membership_reader is None else set(membership_reader(index))
+            values = {
+                key: series[index]
+                for key, series in panel.items()
+                if key in members and series[index] is not None
+            }
+            point_groups = {
+                key: series[index]
+                for key, series in groups.items()
+                if key in members and series[index] is not None
+            }
+            transformed = function(values, point_groups)
+            for key, value in transformed.items():
+                result[key][index] = value
+        return result
     if spec.axis is Axis.CROSS_SECTION:
-        return _cross_section(arguments[0], function)
+        return _cross_section(arguments[0], function, resolver)
     panel = arguments[0]
     return {key: [None if item is None else function({key: item})[key] for item in series]
             for key, series in panel.items()}

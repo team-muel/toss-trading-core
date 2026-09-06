@@ -43,6 +43,12 @@ class HistoricalSession:
             and self.resolver.context != self.context
         ):
             raise ValueError("repository resolver context must match session context")
+        if isinstance(self.resolver, RepositoryPanelResolver):
+            derived = self.resolver.fields.dataset_manifest_ids(self.context)
+            if derived and self.dataset_manifest_ids and derived != self.dataset_manifest_ids:
+                raise ValueError("session manifest IDs do not match repository resolver")
+            if derived:
+                object.__setattr__(self, "dataset_manifest_ids", derived)
         if self.context.as_of_utc != self.effective_time_utc:
             raise ValueError("session effective time must equal context.as_of_utc")
         if not self.instrument_ids or len(set(self.instrument_ids)) != len(self.instrument_ids):
@@ -66,6 +72,7 @@ class HistoryPoint:
     signal_universe_version: str | None
     source_run_id: str | None
     code_revision: str | None
+    neutralization_groups: Mapping[str, str]
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +200,7 @@ def simulate_history(
             signal_universe_version=None if source is None else source.universe_version,
             source_run_id=None if source is None else source.context.run_id,
             code_revision=None if source is None else source.context.code_revision,
+            neutralization_groups={} if source is None else dict(source.neutralization_groups),
         ))
     result = HistorySimulationResult(
         expression=expression.canonical,
@@ -202,10 +210,27 @@ def simulate_history(
     )
     if forward_returns is None:
         return result
+    panel = result.position_panel
+    expected_length = len(result.points)
+    if any(len(series) != expected_length for series in forward_returns.values()):
+        raise ValueError("forward_returns must align with the simulation timeline")
+    available = [
+        index
+        for index in range(expected_length)
+        if any(series[index] is not None for series in panel.values())
+    ]
+    scored_positions = {
+        instrument_id: [series[index] for index in available]
+        for instrument_id, series in panel.items()
+    }
+    scored_returns = {
+        instrument_id: [series[index] for index in available]
+        for instrument_id, series in forward_returns.items()
+    }
     return HistorySimulationResult(
         expression=result.expression,
         expression_hash=result.expression_hash,
         settings=result.settings,
         points=result.points,
-        metrics=evaluate(result.position_panel, forward_returns, settings.book_size),
+        metrics=evaluate(scored_positions, scored_returns, settings.book_size),
     )
