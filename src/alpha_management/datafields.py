@@ -41,6 +41,14 @@ class AssetDataSource(Protocol):
         context: AsOfContext,
     ) -> Sequence[NumericInput]: ...
 
+    def time_series_observations(
+        self,
+        field: str,
+        *,
+        instrument_id: str,
+        context: AsOfContext,
+    ) -> Sequence[tuple[str, NumericInput]]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class PointInTimeDataSource:
@@ -81,6 +89,16 @@ class PointInTimeDataSource:
     def time_series(
         self, field: str, *, instrument_id: str, context: AsOfContext,
     ) -> Sequence[NumericInput]:
+        return [
+            value
+            for _, value in self.time_series_observations(
+                field, instrument_id=instrument_id, context=context
+            )
+        ]
+
+    def time_series_observations(
+        self, field: str, *, instrument_id: str, context: AsOfContext,
+    ) -> Sequence[tuple[str, NumericInput]]:
         manifest_id = self._manifest_id(context)
         # Membership is not required for a historical single-name read, but the
         # instrument must exist and be active at the requested as-of instant.
@@ -91,7 +109,10 @@ class PointInTimeDataSource:
             context=context,
             dataset_manifest_id=manifest_id,
         )
-        return [observation.value for observation in observations]
+        return [
+            (observation.reference_period, observation.value)
+            for observation in observations
+        ]
 
 
 def _number(value: NumericInput) -> float:
@@ -137,3 +158,28 @@ class RepositoryDataFields:
             raise ValueError("field and instrument_id cannot be blank")
         values = self.source.time_series(field, instrument_id=instrument_id, context=context)
         return [_number(value) for value in values]
+
+    def time_series_observations(
+        self,
+        field: str,
+        *,
+        instrument_id: str,
+        context: AsOfContext,
+    ) -> list[tuple[str, float]]:
+        """Return values with their repository reference periods for alignment."""
+
+        require_as_of_context(context)
+        if not field.strip() or not instrument_id.strip():
+            raise ValueError("field and instrument_id cannot be blank")
+        reader = getattr(self.source, "time_series_observations", None)
+        if reader is None:
+            raise DataQualityError("ALPHA_REFERENCE_PERIODS_UNAVAILABLE")
+        observations = reader(field, instrument_id=instrument_id, context=context)
+        periods: set[str] = set()
+        result: list[tuple[str, float]] = []
+        for period, value in observations:
+            if not period.strip() or period in periods:
+                raise DataQualityError("ALPHA_REFERENCE_PERIOD_INVALID")
+            periods.add(period)
+            result.append((period, _number(value)))
+        return result

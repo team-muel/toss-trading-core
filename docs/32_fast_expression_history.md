@@ -12,6 +12,10 @@ or KunQuant code is included.  Runtime behavior is implemented only with the
 canonical operators in `alpha_management.operators` and repository-owned
 point-in-time data adapters.
 
+Repository panels align every instrument by explicit `reference_period` and
+pad missing observations with `None`; list offsets are never treated as dates.
+Time-series windows are bounded at 10,000 observations before evaluation.
+
 ## Evaluation order
 
 1. Select the signal session by trading-session `delay`.

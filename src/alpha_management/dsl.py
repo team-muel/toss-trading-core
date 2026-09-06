@@ -23,6 +23,7 @@ from .datafields import RepositoryDataFields
 
 Panel: TypeAlias = Mapping[str, Sequence[float | None]]
 PanelValue: TypeAlias = dict[str, list[float | None]]
+MAX_TIME_WINDOW = 10_000
 
 
 class ExpressionError(ValueError):
@@ -170,6 +171,10 @@ def validate_expression(
         window = node.arguments[1]
         if not isinstance(window, LiteralNode) or window.value <= 0:
             raise ExpressionError(f"{node.operator} window must be a positive integer")
+        if window.value > MAX_TIME_WINDOW:
+            raise ExpressionError(
+                f"{node.operator} window cannot exceed {MAX_TIME_WINDOW} observations"
+            )
         if node.operator in {"ts_stddev", "ts_zscore"} and window.value < 2:
             raise ExpressionError(f"{node.operator} window must be at least 2")
     return spec.result
@@ -215,11 +220,18 @@ class RepositoryPanelResolver:
         require_as_of_context(self.context)
         if not self.instrument_ids:
             raise ExpressionError("repository panel requires instruments")
-        return {
-            instrument_id: list(self.fields.time_series(
+        observations = {
+            instrument_id: self.fields.time_series_observations(
                 name, instrument_id=instrument_id, context=self.context
-            ))
+            )
             for instrument_id in self.instrument_ids
+        }
+        periods = sorted({period for values in observations.values() for period, _ in values})
+        if not periods:
+            raise ExpressionError(f"datafield {name} has no observations")
+        return {
+            instrument_id: [dict(values).get(period) for period in periods]
+            for instrument_id, values in observations.items()
         }
 
     def group(self, name: str) -> Mapping[str, str]:

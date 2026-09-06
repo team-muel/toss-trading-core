@@ -60,6 +60,7 @@ def test_nested_expression_has_deterministic_identity_and_axis_evaluation():
         ("ts_delta(close, 1.5)", "expects ['Panel', 'Integer']"),
         ("group_rank(close, close)", "GroupField"),
         ("ts_stddev(close, 1)", "at least 2"),
+        ("ts_decay_linear(close, 100000000000)", "cannot exceed 10000"),
     ],
 )
 def test_invalid_expressions_fail_closed(source, message):
@@ -82,9 +83,15 @@ def test_repository_panel_resolver_uses_explicit_pit_context():
     calls = []
 
     class Source:
-        def time_series(self, field, *, instrument_id, context):
+        def time_series_observations(self, field, *, instrument_id, context):
             calls.append((field, instrument_id, context.information_cutoff_utc))
-            return {"a": [1, 2, 4], "b": [4, 3, 1]}[instrument_id]
+            return {
+                "a": [("2026-01-01", 1), ("2026-01-02", 2), ("2026-01-03", 4)],
+                "b": [("2026-01-01", 4), ("2026-01-02", 3), ("2026-01-03", 1)],
+            }[instrument_id]
+
+        def time_series(self, field, *, instrument_id, context):
+            raise AssertionError("aligned resolver must retain reference periods")
 
         def cross_section(self, field, *, universe, context):
             raise AssertionError("panel expressions must use historical series")
@@ -105,6 +112,50 @@ def test_repository_panel_resolver_uses_explicit_pit_context():
         ("close", "a", ctx.information_cutoff_utc),
         ("close", "b", ctx.information_cutoff_utc),
     ]
+
+
+def test_repository_panel_aligns_uneven_histories_by_reference_period():
+    class Source:
+        def time_series_observations(self, field, *, instrument_id, context):
+            return {
+                "a": [("2026-01-01", 1), ("2026-01-03", 3)],
+                "b": [("2026-01-02", 2), ("2026-01-03", 4)],
+            }[instrument_id]
+
+        def time_series(self, field, *, instrument_id, context):
+            raise AssertionError
+
+        def cross_section(self, field, *, universe, context):
+            raise AssertionError
+
+    ctx = context(1)
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(Source()), ("a", "b"), ctx, {}
+    )
+    assert resolver.field("close") == {
+        "a": [1.0, None, 3.0],
+        "b": [None, 2.0, 4.0],
+    }
+
+
+def test_history_rejects_repository_resolver_from_another_cutoff():
+    class Source:
+        def time_series_observations(self, field, *, instrument_id, context):
+            return [("2026-01-01", 1)]
+
+        def time_series(self, field, *, instrument_id, context):
+            return [1]
+
+        def cross_section(self, field, *, universe, context):
+            return {"a": 1}
+
+    earlier = context(1)
+    later = context(2)
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(Source()), ("a",), later, {}
+    )
+    with pytest.raises(ValueError, match="resolver context must match"):
+        HistoricalSession(earlier.as_of_utc, earlier, resolver, ("a",))
 
 
 def test_callable_alpha_api_remains_compatible():
@@ -231,11 +282,14 @@ def test_history_rejects_information_after_source_cutoff():
     ctx = context(1)
 
     class FutureSource:
-        def time_series(self, field, *, instrument_id, context):
+        def time_series_observations(self, field, *, instrument_id, context):
             context.require_known_at(
                 context.information_cutoff_utc + timedelta(seconds=1),
                 label="future close",
             )
+
+        def time_series(self, field, *, instrument_id, context):
+            raise AssertionError
 
         def cross_section(self, field, *, universe, context):
             raise AssertionError

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from asset_management.time.asof import AsOfContext, require_as_of_context
 
-from .dsl import CompiledExpression, Panel, PanelResolver
+from .dsl import CompiledExpression, Panel, PanelResolver, RepositoryPanelResolver
 from .expression import Alpha, AlphaSimulationSettings, simulate_cross_section
 from .metrics import SimulationResult, evaluate
 
@@ -38,6 +38,11 @@ class HistoricalSession:
     def __post_init__(self) -> None:
         _require_utc(self.effective_time_utc, "effective_time_utc")
         require_as_of_context(self.context)
+        if (
+            isinstance(self.resolver, RepositoryPanelResolver)
+            and self.resolver.context != self.context
+        ):
+            raise ValueError("repository resolver context must match session context")
         if self.context.as_of_utc != self.effective_time_utc:
             raise ValueError("session effective time must equal context.as_of_utc")
         if not self.instrument_ids or len(set(self.instrument_ids)) != len(self.instrument_ids):

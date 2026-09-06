@@ -75,7 +75,10 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
 
         def series(self, **kwargs):
             calls.append(("series", kwargs["entity_id"], kwargs["dataset_manifest_id"]))
-            return tuple(type("Observation", (), {"value": value})() for value in ("90", "100"))
+            return tuple(
+                type("Observation", (), {"reference_period": period, "value": value})()
+                for period, value in (("2026-09-04", "90"), ("2026-09-05", "100"))
+            )
 
     source = PointInTimeDataSource(
         observations=Observations(), datasets=Store(), universes=Universes(),
@@ -90,6 +93,9 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
             "i-1": 100.0, "i-2": 120.0,
         }
         assert fields.time_series("close", instrument_id="i-1", context=asof()) == [90.0, 100.0]
+        assert fields.time_series_observations(
+            "close", instrument_id="i-1", context=asof()
+        ) == [("2026-09-04", 90.0), ("2026-09-05", 100.0)]
 
     assert ("latest", "i-1", "manifest-at-cutoff") in calls
     assert ("latest", "i-2", "manifest-at-cutoff") in calls
