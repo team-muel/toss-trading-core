@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "model_registry.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["models", "transitions", "registry_hash"],
+  "properties": {
+    "models": {"type": "array", "items": {"$ref": "#/$defs/model"}},
+    "transitions": {"type": "array", "items": {"$ref": "#/$defs/transition"}},
+    "registry_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "model": {"type": "object", "additionalProperties": false,
+      "required": ["model_id", "version", "purpose", "inputs", "outputs", "approved_scope", "known_failure_modes", "validation_date", "review_date", "owner", "status"],
+      "properties": {
+        "model_id": {"type": "string", "minLength": 1}, "version": {"type": "string", "minLength": 1},
+        "purpose": {"type": "string", "minLength": 1}, "inputs": {"type": "array", "minItems": 1, "uniqueItems": true},
+        "outputs": {"type": "array", "minItems": 1, "uniqueItems": true},
+        "approved_scope": {"type": "array", "minItems": 1, "uniqueItems": true,
+          "items": {"enum": ["FEATURE_CALCULATION", "STATE_INFERENCE", "REQUIRED_RETURN", "EXPECTED_RETURN", "RISK_ESTIMATION", "POSITION_SIZING", "ORDER_CREATION"]}},
+        "known_failure_modes": {"type": "array", "minItems": 1, "uniqueItems": true},
+        "validation_date": {"type": "string", "format": "date"}, "review_date": {"type": "string", "format": "date"},
+        "owner": {"type": "string", "minLength": 1},
+        "status": {"enum": ["DEVELOPMENT", "VALIDATED", "APPROVED", "ACTIVE", "DEGRADED", "SUSPENDED", "RETIRED"]}
+      }},
+    "transition": {"type": "object", "additionalProperties": false,
+      "required": ["model_key", "from_status", "to_status", "effective_at", "reason", "evidence_ids"],
+      "properties": {
+        "model_key": {"type": "string", "minLength": 1},
+        "from_status": {"enum": ["DEVELOPMENT", "VALIDATED", "APPROVED", "ACTIVE", "DEGRADED", "SUSPENDED", "RETIRED"]},
+        "to_status": {"enum": ["DEVELOPMENT", "VALIDATED", "APPROVED", "ACTIVE", "DEGRADED", "SUSPENDED", "RETIRED"]},
+        "effective_at": {"type": "string", "format": "date-time"},
+        "reason": {"type": "string", "minLength": 1},
+        "evidence_ids": {"type": "array", "minItems": 1, "uniqueItems": true}
+      }}
+  }
+}

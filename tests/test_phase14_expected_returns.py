@@ -1,8 +1,9 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import pytest
 from asset_management.domain.errors import DataQualityError
 from asset_management.domain.horizon import DecayProfile, SignalValidity
+from asset_management.governance import ModelDefinition, ModelRegistry, ModelScope, ModelStatus
 from asset_management.expectations import *
 from asset_management.expectations.engine import COMPONENTS
 from asset_management.pricing.models import BetaEstimate
@@ -11,6 +12,15 @@ from asset_management.quality.models import QualityStatus
 
 D=Decimal; NOW=datetime(2026,1,2,tzinfo=timezone.utc)
 VALIDITY=SignalValidity(252,63,NOW+timedelta(days=30),DecayProfile.LINEAR)
+CAPM_REGISTRY=ModelRegistry()
+CAPM_MODEL=ModelDefinition("CAPM","1","required return",("input",),("required_return",),
+                           (ModelScope.REQUIRED_RETURN,),("unstable",),date(2026,1,1),
+                           date(2026,12,31),"owner")
+CAPM_REGISTRY.register(CAPM_MODEL)
+for _status in (ModelStatus.VALIDATED,ModelStatus.APPROVED,ModelStatus.ACTIVE):
+    CAPM_REGISTRY.transition(CAPM_MODEL.key,_status,effective_at=NOW,
+                             reason="test promotion",evidence_ids=("test:evidence",))
+CAPM_AUTH=CAPM_REGISTRY.authorize(CAPM_MODEL.key,ModelScope.REQUIRED_RETURN,at=NOW)
 def components(kind, point=D(".01"), uncertainty=D(".001"), confidence=D(".8")):
     return {name: ExpectedReturnComponent(name,point,uncertainty,confidence,(f"feature:{name}",),252,VALIDITY) for name in COMPONENTS[kind]}
 
@@ -42,7 +52,7 @@ def test_uncertainty_is_conservative_without_correlation_matrix():
 
 def required(rate=D(".02")):
     beta=BetaEstimate(D(0),D(0),D(".001"),252,252,D(1),NOW,QualityStatus.VALID,D(1))
-    return capm_required_return(instrument_id="X",risk_free_rate=rate,beta=beta,market_risk_premium=D(".05"),horizon=252,as_of=NOW,validity=VALIDITY)
+    return capm_required_return(instrument_id="X",risk_free_rate=rate,beta=beta,market_risk_premium=D(".05"),horizon=252,as_of=NOW,validity=VALIDITY,model_registry=CAPM_REGISTRY,authorization=CAPM_AUTH)
 
 def test_alpha_keeps_inputs_separate():
     exp=expected_return(instrument_id="X",asset_class=AssetClass.CASH,components=components(AssetClass.CASH),horizon=252,as_of=NOW)
