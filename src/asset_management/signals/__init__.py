@@ -17,6 +17,10 @@ from .forecast_calibration import (
     CalibrationSample, ForecastCalibrationConfig, ForecastCalibrationRequest,
     ForecastCalibrationResult, SignalForecastCalibrator,
 )
+from .forecast_combination import (
+    ForecastCombinationParameters, ForecastCombinationRegistry, ForecastCombinationRequest,
+    ForecastCombinationResult, ForecastCombiner, ForecastSource,
+)
 
 __all__ = [
     "CostSensitivity", "SignalContext", "SignalDefinition", "SignalDirectionality",
@@ -26,4 +30,6 @@ __all__ = [
     "NeutralizationConfig", "NeutralizationInput", "NeutralizationResult", "SignalNeutralizer",
     "CalibrationSample", "ForecastCalibrationConfig", "ForecastCalibrationRequest",
     "ForecastCalibrationResult", "SignalForecastCalibrator",
+    "ForecastCombinationParameters", "ForecastCombinationRegistry", "ForecastCombinationRequest",
+    "ForecastCombinationResult", "ForecastCombiner", "ForecastSource",
 ]
