@@ -1,6 +1,8 @@
 """Convex target-weight optimization; never creates orders."""
 from decimal import Decimal
+from datetime import datetime
 from asset_management.domain.errors import DataQualityError
+from asset_management.governance import InvestorMandateRegistry, OptimizerMandateAuthorization
 from .costs import transaction_cost
 from .models import ConstructionResult,PortfolioTarget
 from .rebalance import apply_no_trade_bands,economic_trade_gate
@@ -33,6 +35,8 @@ def _project_simplex_cap(values,cap,cash_index,min_cash):
 
 def optimize_weights(*,instruments,alpha,covariance,current,cash_instrument,max_single_weight,
                      min_cash_weight,risk_aversion,linear_cost,impact_cost,
+                     mandate_registry: InvestorMandateRegistry, mandate_authorization: OptimizerMandateAuthorization,
+                     authorized_at: datetime, active_risk_aversion=Decimal(0), benchmark_weights=None,
                      turnover_penalty=Decimal(0),concentration_penalty=Decimal(0),
                      transaction_cost_includes_turnover=True,iterations=500,step=Decimal("0.05")):
     n=len(instruments)
@@ -40,14 +44,21 @@ def optimize_weights(*,instruments,alpha,covariance,current,cash_instrument,max_
             any(len(row)!=n for row in covariance) or cash_instrument not in instruments or
             any(not x.is_finite() for x in (*alpha,*current,*linear_cost,*impact_cost,
                                             *(x for row in covariance for x in row))) or
-            risk_aversion<0 or concentration_penalty<0 or step<=0 or iterations<1):
+            risk_aversion<0 or active_risk_aversion<0 or concentration_penalty<0 or step<=0 or iterations<1 or
+            (benchmark_weights is not None and (len(benchmark_weights)!=n or any(not x.is_finite() for x in benchmark_weights))) or
+            (benchmark_weights is None and active_risk_aversion != 0)):
         raise DataQualityError("OPTIMIZER_INPUT_INVALID")
+    mandate_registry.require_optimizer_authorization(
+        mandate_authorization, risk_aversion=risk_aversion,
+        active_risk_aversion=active_risk_aversion, at=authorized_at,
+    )
     # Validate economic specification before iterating.
     objective(current,alpha,covariance,current,risk_aversion=risk_aversion,linear_cost=linear_cost,
               impact_cost=impact_cost,turnover_penalty=turnover_penalty,
               concentration_penalty=concentration_penalty,
               transaction_cost_includes_turnover=transaction_cost_includes_turnover)
     weights=tuple(current); cash_index=instruments.index(cash_instrument)
+    benchmark = tuple(benchmark_weights) if benchmark_weights is not None else tuple(Decimal(0) for _ in range(n))
     for iteration in range(1,iterations+1):
         sigma_w=tuple(sum(covariance[i][j]*weights[j] for j in range(n)) for i in range(n))
         gradient=[]
@@ -55,7 +66,8 @@ def optimize_weights(*,instruments,alpha,covariance,current,cash_instrument,max_
             delta=weights[i]-current[i]; sign=Decimal(1) if delta>0 else Decimal(-1) if delta<0 else Decimal(0)
             cost_gradient=linear_cost[i]*sign+2*impact_cost[i]*delta
             if not transaction_cost_includes_turnover: cost_gradient+=turnover_penalty*sign
-            gradient.append(alpha[i]-risk_aversion*sigma_w[i]-cost_gradient-2*concentration_penalty*weights[i])
+            active_sigma = sum(covariance[i][j] * (weights[j] - benchmark[j]) for j in range(n))
+            gradient.append(alpha[i]-risk_aversion*sigma_w[i]-active_risk_aversion*active_sigma-cost_gradient-2*concentration_penalty*weights[i])
         rate=step/Decimal(iteration).sqrt()
         weights=_project_simplex_cap(tuple(weights[i]+rate*gradient[i] for i in range(n)),
                                      max_single_weight,cash_index,min_cash_weight)
