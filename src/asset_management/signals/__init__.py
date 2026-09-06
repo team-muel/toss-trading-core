@@ -13,6 +13,10 @@ from .diagnostics import (
 from .neutralization import (
     NeutralizationConfig, NeutralizationInput, NeutralizationResult, SignalNeutralizer,
 )
+from .forecast_calibration import (
+    CalibrationSample, ForecastCalibrationConfig, ForecastCalibrationRequest,
+    ForecastCalibrationResult, SignalForecastCalibrator,
+)
 
 __all__ = [
     "CostSensitivity", "SignalContext", "SignalDefinition", "SignalDirectionality",
@@ -20,4 +24,6 @@ __all__ = [
     "SignalStore", "SignalType", "CrossSectionalObservation", "DiagnosticConfig",
     "DiagnosticReport", "DiagnosticRunResult", "SignalDiagnosticsStore", "TimeSeriesObservation",
     "NeutralizationConfig", "NeutralizationInput", "NeutralizationResult", "SignalNeutralizer",
+    "CalibrationSample", "ForecastCalibrationConfig", "ForecastCalibrationRequest",
+    "ForecastCalibrationResult", "SignalForecastCalibrator",
 ]
