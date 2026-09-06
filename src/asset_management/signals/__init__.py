@@ -6,9 +6,14 @@ from .models import (
 )
 from .registry import SignalRegistry
 from .store import SignalRunResult, SignalStore
+from .diagnostics import (
+    CrossSectionalObservation, DiagnosticConfig, DiagnosticReport, DiagnosticRunResult,
+    SignalDiagnosticsStore, TimeSeriesObservation,
+)
 
 __all__ = [
     "CostSensitivity", "SignalContext", "SignalDefinition", "SignalDirectionality",
     "SignalFeatureInput", "SignalRegistry", "SignalRunResult", "SignalSnapshot",
-    "SignalStore", "SignalType",
+    "SignalStore", "SignalType", "CrossSectionalObservation", "DiagnosticConfig",
+    "DiagnosticReport", "DiagnosticRunResult", "SignalDiagnosticsStore", "TimeSeriesObservation",
 ]
