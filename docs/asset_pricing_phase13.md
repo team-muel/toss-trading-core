@@ -14,3 +14,7 @@
 각 결과는 forecast/holding horizon, `valid_until`, decay profile을 포함하는 signal
 validity 계약도 보존한다. 계산 horizon과 forecast horizon이 다르면 결과 생성을
 거부한다.
+
+CAPM과 multifactor 계산은 ACTIVE model registry에서 발급한 `REQUIRED_RETURN`
+authorization을 요구한다. 승인 scope, review 기한, registry snapshot 중 하나라도
+맞지 않으면 계산 전에 실패한다.

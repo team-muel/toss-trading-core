@@ -9,6 +9,7 @@ from typing import Sequence
 from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityStatus
 from asset_management.domain.horizon import SignalValidity
+from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
 
 from .models import BetaEstimate, PricingResult
 from .risk_free import annual_to_horizon
@@ -52,7 +53,11 @@ def capm_required_return(*, instrument_id: str, risk_free_rate: Decimal,
                          beta: BetaEstimate, market_risk_premium: Decimal,
                          horizon: int, as_of: datetime,
                          validity: SignalValidity,
+                         model_registry: ModelRegistry,
+                         authorization: ModelAuthorization,
                          uncertainty_z: Decimal = Decimal("1.96")) -> PricingResult:
+    model_registry.require_authorization(
+        authorization, model_key="CAPM@1", scope=ModelScope.REQUIRED_RETURN, at=as_of)
     if (as_of.tzinfo is None or as_of.utcoffset() is None or
             not risk_free_rate.is_finite() or not market_risk_premium.is_finite() or
             uncertainty_z < 0):
