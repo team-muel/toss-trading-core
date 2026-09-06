@@ -545,3 +545,37 @@ def test_history_group_neutralization_uses_delayed_session_groups():
         "b": [None, 0.5],
         "c": [None, 0.0],
     }
+
+
+def test_history_session_snapshots_neutralization_groups():
+    source = sessions([
+        {"a": 1, "b": 3, "c": 10},
+        {"a": 9, "b": 2, "c": 1},
+    ])
+    classifications = {"a": "x", "b": "x", "c": "y"}
+    source[0] = HistoricalSession(
+        effective_time_utc=source[0].effective_time_utc,
+        context=source[0].context,
+        resolver=source[0].resolver,
+        instrument_ids=source[0].instrument_ids,
+        dataset_manifest_ids=source[0].dataset_manifest_ids,
+        universe_version=source[0].universe_version,
+        neutralization_groups=classifications,
+    )
+    classifications["b"] = "y"
+
+    result = simulate_history(
+        compile_expression("close", data_fields={"close"}),
+        source,
+        AlphaSimulationSettings(
+            universe="test",
+            delay=1,
+            neutralization="group",
+            truncation=1,
+            long_only=False,
+        ),
+    )
+
+    assert dict(source[0].neutralization_groups) == {"a": "x", "b": "x", "c": "y"}
+    assert result.position_panel["a"][1] == pytest.approx(-0.5)
+    assert result.position_panel["b"][1] == pytest.approx(0.5)

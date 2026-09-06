@@ -11,6 +11,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
+from types import MappingProxyType
 
 from asset_management.time.asof import AsOfContext, require_as_of_context
 
@@ -39,6 +40,11 @@ class HistoricalSession:
     def __post_init__(self) -> None:
         _require_utc(self.effective_time_utc, "effective_time_utc")
         require_as_of_context(self.context)
+        object.__setattr__(
+            self,
+            "neutralization_groups",
+            MappingProxyType(dict(self.neutralization_groups)),
+        )
         if (
             isinstance(self.resolver, RepositoryPanelResolver)
             and self.resolver.context != self.context
