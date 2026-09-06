@@ -167,6 +167,40 @@ def test_repository_panel_rejects_non_chronological_period_axis():
         )
 
 
+def test_repository_panel_requires_instrument_coverage_for_historical_members():
+    ctx = context(1)
+    with pytest.raises(ExpressionError, match="miss historical universe members.*b"):
+        RepositoryPanelResolver(
+            RepositoryDataFields(object()),
+            ("a",),
+            ctx,
+            {},
+            ("p1", "p2"),
+            {"p1": frozenset({"a", "b"}), "p2": frozenset({"a"})},
+        )
+
+
+def test_repository_panel_snapshots_point_in_time_mappings():
+    ctx = context(1)
+    membership = {"p1": {"a"}}
+    groups = {"sector": {"p1": {"a": "old"}}}
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(object()),
+        ("a", "b"),
+        ctx,
+        groups,
+        ("p1",),
+        membership,
+    )
+
+    membership["p1"].add("b")
+    groups["sector"]["p1"]["a"] = "future"
+    groups["sector"]["p1"]["b"] = "future"
+
+    assert resolver.members_at(0) == frozenset({"a"})
+    assert resolver.group("sector") == {"a": ["old"], "b": [None]}
+
+
 def test_history_rejects_repository_resolver_from_another_cutoff():
     class Source:
         def time_series_observations(self, field, *, instrument_id, context):
@@ -290,6 +324,21 @@ def test_history_delay_zero_and_general_integer():
     assert delayed.position_panel["a"] == [None, None, 1.0]
 
 
+def test_history_delay_transforms_source_universe_before_effective_projection():
+    source = sessions([{"a": 1, "b": 3}, {"a": 9}])
+    result = simulate_history(
+        compile_expression("close", data_fields={"close"}),
+        source,
+        history_settings(delay=1),
+    )
+
+    assert result.points[1].raw == {"a": 1.0, "b": 3.0}
+    assert result.position_panel == {
+        "a": [None, pytest.approx(0.25)],
+        "b": [None, None],
+    }
+
+
 def test_position_decay_is_after_cross_section_and_requires_full_window():
     expression = compile_expression("sign(close)", data_fields={"close"})
     result = simulate_history(
@@ -319,6 +368,12 @@ def test_expression_decay_and_simulation_decay_are_independent():
     )
     assert result.settings.decay == 0
     assert result.position_panel["a"] == [1.0, -1.0]
+
+
+def test_expression_rejects_non_finite_operator_results():
+    expression = compile_expression("ts_sum(close, 2)", data_fields={"close"})
+    with pytest.raises(ExpressionError, match="ts_sum produced a non-finite value"):
+        expression.evaluate(Resolver({"close": {"a": [1e308, 1e308]}}))
 
 
 def test_history_delay_zero_matches_cross_section_and_long_only_stays_a_setting():

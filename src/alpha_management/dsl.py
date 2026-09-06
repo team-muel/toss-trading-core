@@ -12,6 +12,8 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from hashlib import sha256
 from importlib.resources import files
+from math import isfinite
+from types import MappingProxyType
 from typing import Protocol, TypeAlias, cast
 
 from lark import Lark, Transformer
@@ -227,6 +229,28 @@ class RepositoryPanelResolver:
         missing = set(self.reference_periods) - set(self.universe_membership)
         if missing:
             raise ExpressionError(f"universe membership misses periods: {sorted(missing)}")
+        historical_members = set().union(
+            *(self.universe_membership[period] for period in self.reference_periods)
+        )
+        missing_instruments = historical_members - set(self.instrument_ids)
+        if missing_instruments:
+            raise ExpressionError(
+                "instrument_ids miss historical universe members: "
+                f"{sorted(missing_instruments)}"
+            )
+        frozen_membership = MappingProxyType({
+            period: frozenset(self.universe_membership[period])
+            for period in self.reference_periods
+        })
+        frozen_groups = MappingProxyType({
+            name: MappingProxyType({
+                period: MappingProxyType(dict(classifications))
+                for period, classifications in history.items()
+            })
+            for name, history in self.groups.items()
+        })
+        object.__setattr__(self, "universe_membership", frozen_membership)
+        object.__setattr__(self, "groups", frozen_groups)
         object.__setattr__(
             self,
             "dataset_manifest_ids",
@@ -285,6 +309,17 @@ def _copy_panel(value: Panel) -> PanelValue:
     return {key: [None if item is None else float(item) for item in series] for key, series in value.items()}
 
 
+def _require_finite_panel(panel: PanelValue, operator: str) -> PanelValue:
+    for instrument_id, series in panel.items():
+        for index, value in enumerate(series):
+            if value is not None and not isfinite(value):
+                raise ExpressionError(
+                    f"{operator} produced a non-finite value for "
+                    f"{instrument_id} at index {index}"
+                )
+    return panel
+
+
 def _cross_section(panel: PanelValue, function, resolver: PanelResolver) -> PanelValue:
     if not panel:
         return {}
@@ -321,12 +356,18 @@ def evaluate_expression(node: ExpressionNode, resolver: PanelResolver):
     function = getattr(ops, node.operator)
     if spec.axis is Axis.TIME:
         panel, window = arguments
-        return {key: function(series, window) for key, series in panel.items()}
+        return _require_finite_panel(
+            {key: function(series, window) for key, series in panel.items()},
+            node.operator,
+        )
     if node.operator in {"group_neutralize", "group_rank"}:
         panel, groups = arguments
         first_group = next(iter(groups.values()), None)
         if isinstance(first_group, str) or first_group is None:
-            return _cross_section(panel, lambda values: function(values, groups), resolver)
+            return _require_finite_panel(
+                _cross_section(panel, lambda values: function(values, groups), resolver),
+                node.operator,
+            )
         length = len(next(iter(panel.values()))) if panel else 0
         result = {key: [None] * length for key in panel}
         for index in range(length):
@@ -345,12 +386,20 @@ def evaluate_expression(node: ExpressionNode, resolver: PanelResolver):
             transformed = function(values, point_groups)
             for key, value in transformed.items():
                 result[key][index] = value
-        return result
+        return _require_finite_panel(result, node.operator)
     if spec.axis is Axis.CROSS_SECTION:
-        return _cross_section(arguments[0], function, resolver)
+        return _require_finite_panel(
+            _cross_section(arguments[0], function, resolver),
+            node.operator,
+        )
     panel = arguments[0]
-    return {key: [None if item is None else function({key: item})[key] for item in series]
-            for key, series in panel.items()}
+    return _require_finite_panel(
+        {
+            key: [None if item is None else function({key: item})[key] for item in series]
+            for key, series in panel.items()
+        },
+        node.operator,
+    )
 
 
 @dataclass(frozen=True, slots=True)

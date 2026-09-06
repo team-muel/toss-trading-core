@@ -177,7 +177,7 @@ def simulate_history(
             source = None
         else:
             source = sessions[source_index]
-            raw = _last_cross_section(expression, source, instruments)
+            raw = _last_cross_section(expression, source, source.instrument_ids)
             available_raw = {
                 instrument_id: float(value)
                 for instrument_id, value in raw.items()

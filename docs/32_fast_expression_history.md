@@ -49,3 +49,7 @@ field read, and forward-return panels must cover every instrument ever held.
 They also derive a stable universe identity from the complete period-membership
 history when no catalog version is supplied.  Every held instrument-period
 must have a realized forward return before metrics can be attached.
+Resolver construction snapshots its nested point-in-time mappings and requires
+the instrument axis to cover every historical member. Delayed signals are
+transformed on the complete signal-session universe before their weights are
+projected onto the effective universe. Operator outputs must remain finite.
