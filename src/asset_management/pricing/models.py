@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Mapping
 
+from asset_management.data.immutable import canonical, digest
 from asset_management.quality.models import QualityStatus
 from asset_management.domain.horizon import DECISION_HORIZONS, SignalValidity
 
@@ -80,6 +81,7 @@ class PricingResult:
     lower_bound: Decimal
     upper_bound: Decimal
     model_name: str
+    model_key: str
     factor_loadings: Mapping[str, Decimal]
     estimation_uncertainty: Decimal
     quality_status: QualityStatus
@@ -90,7 +92,8 @@ class PricingResult:
         if (not isinstance(self.validity, SignalValidity) or
                 not self.instrument_id.strip() or self.horizon not in HORIZONS or
                 self.validity.forecast_horizon != self.horizon or
-                not self.model_name.strip() or self.as_of.tzinfo is None or
+                not self.model_name.strip() or not self.model_key.strip() or "@" not in self.model_key or
+                self.as_of.tzinfo is None or
                 self.as_of.utcoffset() is None or
                 self.validity.valid_until <= self.as_of.astimezone(timezone.utc)):
             raise ValueError("PRICING_RESULT_INVALID")
@@ -101,14 +104,23 @@ class PricingResult:
                 self.estimation_uncertainty < 0):
             raise ValueError("PRICING_RESULT_INVALID")
 
-    def payload(self) -> dict:
+    def _payload_without_hash(self) -> dict:
         return {
             "instrument_id": self.instrument_id, "horizon": self.horizon,
             "required_return": str(self.required_return), "lower_bound": str(self.lower_bound),
             "upper_bound": str(self.upper_bound), "model_name": self.model_name,
+            "model_key": self.model_key,
             "factor_loadings": {key: str(value) for key, value in sorted(self.factor_loadings.items())},
             "estimation_uncertainty": str(self.estimation_uncertainty),
             "quality_status": str(self.quality_status),
             "as_of": self.as_of.astimezone(timezone.utc).isoformat(),
             "validity": self.validity.payload(),
         }
+
+    @property
+    def output_hash(self) -> str:
+        """Canonical, version-bound identity of this model output."""
+        return digest(canonical(self._payload_without_hash()))
+
+    def payload(self) -> dict:
+        return {**self._payload_without_hash(), "output_hash": self.output_hash}

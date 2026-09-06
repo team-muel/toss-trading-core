@@ -75,6 +75,6 @@ def capm_required_return(*, instrument_id: str, risk_free_rate: Decimal,
     horizon_uncertainty = max(point-lower, upper-point) / uncertainty_z if uncertainty_z else Decimal(0)
     return PricingResult(
         instrument_id, horizon, point, lower, upper,
-        "CAPM", {"MKT": beta.beta}, horizon_uncertainty, beta.quality, as_of,
+        "CAPM", "CAPM@1", {"MKT": beta.beta}, horizon_uncertainty, beta.quality, as_of,
         validity,
     )
