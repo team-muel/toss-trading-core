@@ -12,6 +12,7 @@ from asset_management.governance import (
 
 
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
+ACTIVE_AT = NOW + timedelta(seconds=3)
 
 
 def definition(model_id="CAPM", scopes=(ModelScope.REQUIRED_RETURN,)):
@@ -86,11 +87,15 @@ def test_invalid_transition_and_missing_evidence_fail_closed():
 
 def test_scope_status_review_and_registry_changes_cannot_be_bypassed():
     registry = active_registry()
-    authorization = registry.authorize("CAPM@1", ModelScope.REQUIRED_RETURN, at=NOW)
+    authorization = registry.authorize("CAPM@1", ModelScope.REQUIRED_RETURN, at=ACTIVE_AT)
     registry.require_authorization(authorization, model_key="CAPM@1",
-                                   scope=ModelScope.REQUIRED_RETURN, at=NOW)
+                                   scope=ModelScope.REQUIRED_RETURN, at=ACTIVE_AT)
+    with pytest.raises(InvariantViolation, match="MODEL_AUTHORIZATION_INVALID"):
+        registry.require_authorization(
+            replace(authorization, authorized_at="not-a-timestamp"), model_key="CAPM@1",
+            scope=ModelScope.REQUIRED_RETURN, at=ACTIVE_AT)
     with pytest.raises(InvariantViolation, match="MODEL_SCOPE_NOT_APPROVED"):
-        registry.authorize("CAPM@1", ModelScope.POSITION_SIZING, at=NOW)
+        registry.authorize("CAPM@1", ModelScope.POSITION_SIZING, at=ACTIVE_AT)
     with pytest.raises(InvariantViolation, match="MODEL_REVIEW_OVERDUE"):
         registry.authorize("CAPM@1", ModelScope.REQUIRED_RETURN,
                            at=datetime(2027, 1, 1, tzinfo=timezone.utc))
@@ -99,9 +104,31 @@ def test_scope_status_review_and_registry_changes_cannot_be_bypassed():
                         evidence_ids=("monitor:beta",))
     with pytest.raises(InvariantViolation, match="MODEL_AUTHORIZATION_INVALID"):
         registry.require_authorization(authorization, model_key="CAPM@1",
-                                       scope=ModelScope.REQUIRED_RETURN, at=NOW)
+                                       scope=ModelScope.REQUIRED_RETURN, at=ACTIVE_AT)
+    registry.authorize("CAPM@1", ModelScope.REQUIRED_RETURN, at=ACTIVE_AT)
     with pytest.raises(InvariantViolation, match="MODEL_NOT_ACTIVE"):
-        registry.authorize("CAPM@1", ModelScope.REQUIRED_RETURN, at=NOW)
+        registry.authorize("CAPM@1", ModelScope.REQUIRED_RETURN,
+                           at=NOW + timedelta(minutes=1, seconds=1))
+
+
+def test_future_transition_never_activates_a_model_before_its_effective_time():
+    registry = ModelRegistry()
+    model = definition()
+    registry.register(model)
+    for index, status in enumerate((ModelStatus.VALIDATED, ModelStatus.APPROVED,
+                                    ModelStatus.ACTIVE), start=1):
+        registry.transition(model.key, status,
+                            effective_at=NOW + timedelta(hours=1, seconds=index),
+                            reason=f"schedule {status.value}", evidence_ids=(f"evidence:{index}",))
+    assert registry.models[model.key].status is ModelStatus.ACTIVE
+    assert registry.status_at(model.key, at=NOW) is ModelStatus.DEVELOPMENT
+    with pytest.raises(InvariantViolation, match="MODEL_NOT_ACTIVE"):
+        registry.authorize(model.key, ModelScope.REQUIRED_RETURN, at=NOW)
+    authorization = registry.authorize(
+        model.key, ModelScope.REQUIRED_RETURN, at=NOW + timedelta(hours=1, seconds=4))
+    registry.require_authorization(
+        authorization, model_key=model.key, scope=ModelScope.REQUIRED_RETURN,
+        at=NOW + timedelta(hours=1, seconds=4))
 
 
 def test_schema_matches_registry_and_model_contract():

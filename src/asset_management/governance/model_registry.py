@@ -171,7 +171,7 @@ class ModelRegistry:
             model = self._models[model_key]
         except KeyError:
             raise InvariantViolation("MODEL_NOT_REGISTERED") from None
-        if model.status is not ModelStatus.ACTIVE:
+        if self.status_at(model_key, at=at) is not ModelStatus.ACTIVE:
             raise InvariantViolation("MODEL_NOT_ACTIVE")
         if not isinstance(scope, ModelScope) or scope not in model.approved_scope:
             raise InvariantViolation("MODEL_SCOPE_NOT_APPROVED")
@@ -189,16 +189,40 @@ class ModelRegistry:
             raise InvariantViolation("MODEL_AUTHORIZATION_MISSING")
         if at.tzinfo is None or at.utcoffset() is None:
             raise InvariantViolation("MODEL_AUTHORIZATION_TIME_NOT_AWARE")
+        try:
+            authorized_at = datetime.fromisoformat(authorization.authorized_at)
+        except (TypeError, ValueError):
+            raise InvariantViolation("MODEL_AUTHORIZATION_INVALID") from None
+        if (authorized_at.tzinfo is None or authorized_at.utcoffset() is None or
+                authorized_at.astimezone(timezone.utc).isoformat() != authorization.authorized_at):
+            raise InvariantViolation("MODEL_AUTHORIZATION_INVALID")
         body = {"model_key": authorization.model_key, "scope": authorization.scope.value,
                 "registry_hash": authorization.registry_hash,
                 "authorized_at": authorization.authorized_at}
-        authorized_at = datetime.fromisoformat(authorization.authorized_at)
         if (authorization.authorization_hash != digest(canonical(body)) or
                 authorization.registry_hash != self.registry_hash or
                 authorization.model_key != model_key or authorization.scope is not scope or
                 authorized_at > at):
             raise InvariantViolation("MODEL_AUTHORIZATION_INVALID")
         self.authorize(model_key, scope, at=at)
+
+    def status_at(self, model_key: str, *, at: datetime) -> ModelStatus:
+        """Return the lifecycle status effective at the requested UTC instant."""
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise InvariantViolation("MODEL_AUTHORIZATION_TIME_NOT_AWARE")
+        try:
+            self._models[model_key]
+        except KeyError:
+            raise InvariantViolation("MODEL_NOT_REGISTERED") from None
+        effective_at = at.astimezone(timezone.utc)
+        status = ModelStatus.DEVELOPMENT
+        for transition in self._transitions:
+            if transition.model_key != model_key or transition.effective_at > effective_at:
+                continue
+            if transition.from_status is not status:
+                raise InvariantViolation("MODEL_LIFECYCLE_HISTORY_INVALID")
+            status = transition.to_status
+        return status
 
     @property
     def registry_hash(self) -> str:
