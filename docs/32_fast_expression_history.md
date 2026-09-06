@@ -56,3 +56,7 @@ mappings, and the resolver requires the instrument axis to cover every
 historical member. Delayed signals are
 transformed on the complete signal-session universe before their weights are
 projected onto the effective universe. Operator outputs must remain finite.
+Caller-supplied manifest pins are checked against source, dataset, quality, and
+cutoff metadata; historical series accept delisted instruments only when their
+canonical instrument history exists. Returned history-point mappings are
+immutable audit snapshots.

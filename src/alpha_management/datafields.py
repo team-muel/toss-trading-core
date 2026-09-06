@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from math import isfinite
 from typing import Protocol
 
@@ -62,13 +63,34 @@ class PointInTimeDataSource:
     source: str
     dataset: str
 
+    def _require_manifest(self, manifest, context: AsOfContext) -> str:
+        if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status) != (
+            self.source,
+            self.dataset,
+            "silver",
+            "VALID",
+        ):
+            raise DataQualityError("ALPHA_DATASET_MANIFEST_INVALID")
+        context.require_known_at(
+            datetime.fromisoformat(manifest.available_at),
+            label="dataset manifest",
+        )
+        return manifest.manifest_id
+
     def _manifest_id(self, context: AsOfContext) -> str:
         context = require_as_of_context(context)
-        return LatestSuccessfulDataset(self.datasets).get(
-            source=self.source,
-            dataset=self.dataset,
-            cutoff=context.information_cutoff_utc,
-        ).manifest_id
+        manifest = LatestSuccessfulDataset(self.datasets).get(
+            source=self.source, dataset=self.dataset, cutoff=context.information_cutoff_utc,
+        )
+        return self._require_manifest(manifest, context)
+
+    def _pinned_manifest_id(self, manifest_id: str, context: AsOfContext) -> str:
+        context = require_as_of_context(context)
+        try:
+            manifest, _ = self.datasets.read(manifest_id)
+        except (FileNotFoundError, ValueError) as exc:
+            raise DataQualityError("ALPHA_DATASET_MANIFEST_INVALID") from exc
+        return self._require_manifest(manifest, context)
 
     def manifest_id(self, context: AsOfContext) -> str:
         """Expose the immutable dataset identity selected at this cutoff."""
@@ -119,7 +141,15 @@ class PointInTimeDataSource:
         context: AsOfContext,
         dataset_manifest_id: str | None = None,
     ) -> Sequence[tuple[str, NumericInput]]:
-        manifest_id = dataset_manifest_id or self._manifest_id(context)
+        context = require_as_of_context(context)
+        known_instruments = self.universes.versions("INSTRUMENT", context)
+        if instrument_id not in known_instruments:
+            raise DataQualityError("ALPHA_INSTRUMENT_HISTORY_MISSING")
+        manifest_id = (
+            self._manifest_id(context)
+            if dataset_manifest_id is None
+            else self._pinned_manifest_id(dataset_manifest_id, context)
+        )
         # Historical universe membership is applied on the resolver's period
         # axis. Requiring the instrument to remain active at the current cutoff
         # would drop delisted names and introduce survivor bias.

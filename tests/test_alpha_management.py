@@ -1,5 +1,7 @@
 from datetime import datetime, timezone
 
+import pytest
+
 from alpha_management import (
     Alpha,
     AlphaSimulationSettings,
@@ -11,6 +13,7 @@ from alpha_management import (
 )
 from alpha_management import operators as ops
 from alpha_management.metrics import fitness, is_os_split
+from asset_management.domain.errors import DataQualityError
 from asset_management.time.asof import AsOfContext
 
 
@@ -52,9 +55,16 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
 
     class Manifest:
         manifest_id = "manifest-at-cutoff"
+        source = "TOSS"
+        dataset = "daily-prices"
+        layer = "silver"
+        quality_status = "VALID"
+        available_at = asof().information_cutoff_utc.isoformat()
 
     class Store:
-        pass
+        def read(self, manifest_id):
+            assert manifest_id == "manifest-at-cutoff"
+            return Manifest(), {}
 
     class Latest:
         def get(self, *, source, dataset, cutoff):
@@ -68,6 +78,10 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
 
         def get(self, instrument_id, context):
             raise AssertionError("historical reads must allow instruments that later delisted")
+
+        def versions(self, kind, context):
+            assert kind == "INSTRUMENT"
+            return {"i-1": object(), "i-2": object()}
 
     class Observations:
         def get_latest(self, **kwargs):
@@ -117,6 +131,50 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
     assert ("latest", "i-1", "manifest-at-cutoff") in calls
     assert ("latest", "i-2", "manifest-at-cutoff") in calls
     assert ("series", "i-1", "manifest-at-cutoff") in calls
+
+
+def test_point_in_time_source_validates_manifest_pin_and_instrument_history():
+    class Manifest:
+        manifest_id = "manifest-pin"
+        source = "OTHER"
+        dataset = "daily-prices"
+        layer = "silver"
+        quality_status = "VALID"
+        available_at = asof().information_cutoff_utc.isoformat()
+
+    class Store:
+        def read(self, manifest_id):
+            return Manifest(), {}
+
+    class Observations:
+        def series(self, **kwargs):
+            raise AssertionError("invalid boundaries must fail before observation reads")
+
+    class Universes:
+        def versions(self, kind, context):
+            return {"known": object()}
+
+    source = PointInTimeDataSource(
+        observations=Observations(),
+        datasets=Store(),
+        universes=Universes(),
+        source="TOSS",
+        dataset="daily-prices",
+    )
+    with pytest.raises(DataQualityError, match="ALPHA_DATASET_MANIFEST_INVALID"):
+        source.time_series_observations(
+            "close",
+            instrument_id="known",
+            context=asof(),
+            dataset_manifest_id="manifest-pin",
+        )
+    with pytest.raises(DataQualityError, match="ALPHA_INSTRUMENT_HISTORY_MISSING"):
+        source.time_series_observations(
+            "close",
+            instrument_id="unknown",
+            context=asof(),
+            dataset_manifest_id="manifest-pin",
+        )
 
 
 def test_brain_operator_vocabulary_is_available():

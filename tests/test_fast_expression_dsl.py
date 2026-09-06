@@ -405,6 +405,13 @@ def test_expression_rejects_non_finite_operator_results():
         expression.evaluate(Resolver({"close": {"a": [1e308, 1e308]}}))
 
 
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf")])
+def test_expression_rejects_non_finite_bare_datafields(invalid_value):
+    expression = compile_expression("close", data_fields={"close"})
+    with pytest.raises(ExpressionError, match="datafield produced a non-finite value"):
+        expression.evaluate(Resolver({"close": {"a": [invalid_value]}}))
+
+
 def test_history_delay_zero_matches_cross_section_and_long_only_stays_a_setting():
     expression = compile_expression("close", data_fields={"close"})
     timeline = sessions([{"a": 2, "b": -1}])
@@ -619,3 +626,22 @@ def test_history_session_snapshots_neutralization_groups():
     assert dict(source[0].neutralization_groups) == {"a": "x", "b": "x", "c": "y"}
     assert result.position_panel["a"][1] == pytest.approx(-0.5)
     assert result.position_panel["b"][1] == pytest.approx(0.5)
+
+
+def test_history_points_are_immutable_audit_snapshots():
+    result = simulate_history(
+        compile_expression("close", data_fields={"close"}),
+        sessions([{"a": 1, "b": -1}]),
+        history_settings(),
+        forward_returns={"a": [0.01], "b": [-0.01]},
+    )
+    point = result.points[0]
+
+    with pytest.raises(TypeError):
+        point.raw["a"] = 99
+    with pytest.raises(TypeError):
+        point.base_weights["a"] = 99
+    with pytest.raises(TypeError):
+        point.weights["a"] = 99
+    assert result.position_panel["a"] == [pytest.approx(0.5)]
+    assert result.metrics is not None

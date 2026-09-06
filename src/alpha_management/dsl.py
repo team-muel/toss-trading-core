@@ -330,7 +330,13 @@ def _copy_panel(value: Panel) -> PanelValue:
     lengths = {len(series) for series in value.values()}
     if len(lengths) > 1:
         raise ExpressionError("panel series must have equal length")
-    return {key: [None if item is None else float(item) for item in series] for key, series in value.items()}
+    return _require_finite_panel(
+        {
+            key: [None if item is None else float(item) for item in series]
+            for key, series in value.items()
+        },
+        "datafield",
+    )
 
 
 def _require_finite_panel(panel: PanelValue, operator: str) -> PanelValue:

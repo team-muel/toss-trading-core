@@ -92,6 +92,10 @@ class HistoryPoint:
     code_revision: str | None
     neutralization_groups: Mapping[str, str]
 
+    def __post_init__(self) -> None:
+        for name in ("raw", "base_weights", "weights", "neutralization_groups"):
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+
 
 @dataclass(frozen=True, slots=True)
 class HistorySimulationResult:
