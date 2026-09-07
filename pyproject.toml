@@ -51,6 +51,9 @@ where = ["src"]
 "share/toss-trading/schemas/events" = ["schemas/event_envelope.schema.json"]
 "share/toss-trading/docs/events" = ["docs/event_store_ordering.md"]
 
+"share/toss-trading/schemas/submission" = ["schemas/submission_receipt.schema.json"]
+"share/toss-trading/docs/submission" = ["docs/durable_submission.md"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
