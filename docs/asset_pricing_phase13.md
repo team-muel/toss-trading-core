@@ -1,5 +1,9 @@
 # 구현 단계 13 — 자산가격결정 엔진
 
+아래 `required return`/`REQUIRED_RETURN` 설명은 초기 v1 계약 기록이다. 신규 정규 출력은
+`pricing_baseline_return`이며 개인 hurdle이 아니다. v2 scope·출력과 기존 기록의 변환은
+[AMA-101 보정 문서](economic_semantics_remediation.md)를 따른다.
+
 이 모듈은 주문을 만들지 않고 위험을 감수하기 위한 요구수익률과 시장 내재 가정을 계산한다. 지원 horizon은 21·63·126·252 거래일이며 연율 값은 `(1+R)^(h/252)-1`로 변환한다.
 
 - 무위험금리 곡선은 `as_of`, horizon, 연율금리, source, quality를 보존하며 정보 cutoff 뒤 데이터와 비정상 품질을 거부한다.

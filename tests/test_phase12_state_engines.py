@@ -78,7 +78,8 @@ def test_portfolio_state_preserves_truth_and_risk_structures():
         "nav": Decimal("100000"), "cash_by_currency": {"USD": Decimal("1000")},
         "current_weights": {"SPY": Decimal("0.6")}, "sector_exposure": {"TECH": Decimal("0.3")},
         "factor_exposure": {"VALUE": Decimal("0.2")}, "currency_exposure": {"USD": Decimal("1")},
-        "open_orders": ["order-1"], "risk_contribution": {"SPY": Decimal("0.5")},
+        "open_orders": ["order-1"], "variance_contribution": {"SPY": Decimal("0.04")},
+        "volatility_contribution": {"SPY": Decimal("0.2")},
         "reserved_cash": Decimal("100"), "unsettled_cash": Decimal("50"),
     }
     state = PortfolioStateEngine().build(as_of=NOW, components=components(PORTFOLIO_COMPONENTS, values=values),

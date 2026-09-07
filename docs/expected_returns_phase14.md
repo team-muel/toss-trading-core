@@ -1,5 +1,9 @@
 # 구현 단계 14 — 기대수익률과 Alpha
 
+아래는 초기 v1 구현 기록이다. 현재 주식 분해는 `expected-return@2`이며 per-share 성장에는
+buyback을 별도 합산하지 않는다. aggregate 모드는 명시적으로 선택한다. 최신 의미와
+호환성·잔여 작업은 [AMA-101 보정 문서](economic_semantics_remediation.md)를 따른다.
+
 요구수익률은 단계 13의 위험 보상 기준이며 기대수익률과 별도로 저장한다. 개별주, 주식 ETF, 채권 ETF, 현금성 자산, 원자재 ETF는 각각 고정된 component 계약을 사용한다. 다른 자산군의 component를 섞으면 계산을 거부한다.
 
 각 component는 이름, point estimate, uncertainty, confidence, 입력 feature ID와 horizon을 보존한다. 최종 gross 값은 component 합과 반드시 일치한다. 거래비용, 세금 drag, FX 비용을 각각 차감해 net 값을 만들며 confidence interval을 함께 저장한다. `shrink_component`는 신뢰도가 낮은 원시 전망을 `confidence*estimate + (1-confidence)*prior`로 prior 쪽에 수축한 뒤 그 값을 저장한다.

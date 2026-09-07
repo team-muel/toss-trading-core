@@ -25,6 +25,9 @@ class ModelScope(StrEnum):
     FEATURE_CALCULATION = "FEATURE_CALCULATION"
     STATE_INFERENCE = "STATE_INFERENCE"
     REQUIRED_RETURN = "REQUIRED_RETURN"
+    PRICING_BASELINE_RETURN = "PRICING_BASELINE_RETURN"
+    MODEL_RELATIVE_ALPHA = "MODEL_RELATIVE_ALPHA"
+    EXPECTED_BENCHMARK_ACTIVE_RETURN = "EXPECTED_BENCHMARK_ACTIVE_RETURN"
     EXPECTED_RETURN = "EXPECTED_RETURN"
     RISK_ESTIMATION = "RISK_ESTIMATION"
     POSITION_SIZING = "POSITION_SIZING"
@@ -78,6 +81,12 @@ class ModelDefinition:
             self.known_failure_modes, "MODEL_FAILURE_MODES_INVALID"))
         object.__setattr__(self, "approved_scope", tuple(sorted(
             set(self.approved_scope), key=lambda item: item.value)))
+        for scope, output in (
+                (ModelScope.PRICING_BASELINE_RETURN, "pricing_baseline_return"),
+                (ModelScope.MODEL_RELATIVE_ALPHA, "model_relative_alpha"),
+                (ModelScope.EXPECTED_BENCHMARK_ACTIVE_RETURN, "expected_benchmark_active_return")):
+            if scope in self.approved_scope and (set(self.approved_scope) != {scope} or self.outputs != (output,)):
+                raise InvariantViolation("PRICING_OUTPUT_AUTHORITY_CONFLICT")
 
     @property
     def key(self) -> str:

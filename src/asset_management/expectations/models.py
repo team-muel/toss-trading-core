@@ -7,6 +7,7 @@ from enum import StrEnum
 from asset_management.pricing.models import HORIZONS
 from asset_management.quality.models import QualityStatus
 from asset_management.domain.horizon import SignalValidity, require_horizon_alignment
+from .equity import EquityGrowthBasis, EQUITY_COMPONENTS, AGGREGATE_EQUITY_COMPONENTS
 
 class AssetClass(StrEnum):
     EQUITY = "EQUITY"
@@ -51,7 +52,16 @@ class ExpectedReturnEstimate:
     quality_status: QualityStatus
     as_of: datetime
     validity: SignalValidity
+    growth_basis: EquityGrowthBasis | None = None
     def __post_init__(self) -> None:
+        if self.asset_class is AssetClass.EQUITY:
+            if not isinstance(self.growth_basis, EquityGrowthBasis):
+                raise ValueError("EQUITY_GROWTH_BASIS_REQUIRED")
+            names = EQUITY_COMPONENTS if self.growth_basis is EquityGrowthBasis.PER_SHARE else AGGREGATE_EQUITY_COMPONENTS
+            if len(self.components) != len(names) or {x.component_name for x in self.components} != set(names):
+                raise ValueError("EQUITY_COMPONENT_IDENTITY_INVALID")
+        elif self.growth_basis is not None:
+            raise ValueError("EQUITY_GROWTH_BASIS_UNEXPECTED")
         values = (self.gross_expected_return, self.expected_transaction_cost,
                   self.expected_tax_drag, self.expected_fx_cost, self.net_expected_return,
                   self.lower_bound, self.upper_bound, self.confidence)
@@ -73,7 +83,8 @@ class ExpectedReturnEstimate:
             raise ValueError("EXPECTED_RETURN_NET_CONFLICT")
 
     def payload(self) -> dict:
-        return {"instrument_id": self.instrument_id, "asset_class": self.asset_class.value,
+        return {"schema_version": "expected-return@2", "instrument_id": self.instrument_id, "asset_class": self.asset_class.value,
+                "growth_basis": None if self.growth_basis is None else self.growth_basis.value,
                 "horizon": self.horizon,
                 "components": [{"component_name": x.component_name, "point_estimate": str(x.point_estimate),
                                 "uncertainty": str(x.uncertainty), "confidence": str(x.confidence),

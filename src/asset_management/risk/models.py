@@ -43,6 +43,32 @@ class RiskContribution:
     component: tuple[Decimal,...]
     portfolio_volatility: Decimal
 
+    def __post_init__(self):
+        if (not isinstance(self.marginal, tuple) or not isinstance(self.component, tuple) or
+                not self.component or len(self.component) != len(self.marginal) or
+                any(not isinstance(v, Decimal) or not v.is_finite()
+                    for v in (*self.marginal, *self.component, self.portfolio_volatility)) or
+                self.portfolio_volatility <= 0 or
+                abs(sum(self.component)-self.portfolio_volatility) > Decimal('1e-18')):
+            raise ValueError('RISK_CONTRIBUTION_SEMANTICS_INVALID')
+
+    @property
+    def volatility_contribution(self):
+        return self.component
+
+    @property
+    def variance_contribution(self):
+        return tuple(v * self.portfolio_volatility for v in self.component)
+
+    def payload(self):
+        return {"schema_version": "risk-contribution@2",
+                "variance_contribution": [str(v) for v in self.variance_contribution],
+                "volatility_contribution": [str(v) for v in self.volatility_contribution],
+                "marginal_volatility_contribution": [str(v) for v in self.marginal],
+                "portfolio_volatility": str(self.portfolio_volatility),
+                "portfolio_variance": str(self.portfolio_volatility ** 2),
+                "variance_unit": "RETURN_SQUARED", "volatility_unit": "RETURN"}
+
 @dataclass(frozen=True)
 class TailRisk:
     confidence: Decimal

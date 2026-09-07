@@ -26,6 +26,13 @@ def multifactor_required_return(*, instrument_id: str, risk_free_rate: Decimal,
                                 uncertainty_z: Decimal = Decimal("1.96")) -> PricingResult:
     model_registry.require_authorization(
         authorization, model_key="MULTIFACTOR@1", scope=ModelScope.REQUIRED_RETURN, at=as_of)
+    return _multifactor_numeric(instrument_id=instrument_id, risk_free_rate=risk_free_rate,
+        loadings=loadings, premiums=premiums, horizon=horizon, as_of=as_of,
+        information_cutoff=information_cutoff, validity=validity, uncertainty_z=uncertainty_z)
+
+
+def _multifactor_numeric(*, instrument_id, risk_free_rate, loadings, premiums, horizon,
+                         as_of, information_cutoff, validity, uncertainty_z=Decimal("1.96")):
     if set(loadings) != set(FACTORS) or set(premiums) != set(FACTORS):
         raise DataQualityError("FACTOR_MODEL_INCOMPLETE")
     if any(point.factor != name or point.available_at > information_cutoff or point.as_of > as_of or
@@ -41,6 +48,17 @@ def multifactor_required_return(*, instrument_id: str, risk_free_rate: Decimal,
     horizon_uncertainty=max(point-lower,upper-point)/uncertainty_z if uncertainty_z else Decimal(0)
     return PricingResult(instrument_id,horizon,point,lower,upper,"MULTIFACTOR","MULTIFACTOR@1",
                          dict(loadings),horizon_uncertainty,QualityStatus.VALID,as_of,validity)
+
+
+def multifactor_pricing_baseline_return(*, currency, currency_basis, asset_scope,
+                                       model_registry, authorization, **inputs):
+    if asset_scope not in ("EQUITY", "EQUITY_ETF"):
+        raise DataQualityError("PRICING_ASSET_SCOPE_NOT_APPLICABLE")
+    model_registry.require_authorization(authorization, model_key="MULTIFACTOR@2",
+        scope=ModelScope.PRICING_BASELINE_RETURN, at=inputs['as_of'])
+    result = _multifactor_numeric(**inputs)
+    return result.economic_payload(currency=currency, currency_basis=currency_basis,
+        formula_version="multifactor-pricing-baseline@2", model_key="MULTIFACTOR@2")
 
 
 def require_distinct_factor_roles(*, required_return_factors: set[str],

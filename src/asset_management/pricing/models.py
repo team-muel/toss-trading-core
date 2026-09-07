@@ -10,6 +10,8 @@ from typing import Mapping
 from asset_management.data.immutable import canonical, digest
 from asset_management.quality.models import QualityStatus
 from asset_management.domain.horizon import DECISION_HORIZONS, SignalValidity
+from asset_management.domain.economics import EconomicValue, ReturnSemanticType, ReturnMetricStatus, ReturnUnit
+from asset_management.domain.errors import DataQualityError
 
 
 HORIZONS = DECISION_HORIZONS
@@ -124,3 +126,14 @@ class PricingResult:
 
     def payload(self) -> dict:
         return {**self._payload_without_hash(), "output_hash": self.output_hash}
+
+    def economic_payload(self, *, currency, currency_basis, formula_version, model_key):
+        if self.quality_status not in (QualityStatus.VALID, QualityStatus.ESTIMATED):
+            raise DataQualityError("PRICING_SEMANTIC_QUALITY_NOT_ELIGIBLE")
+        baseline = EconomicValue(ReturnSemanticType.PRICING_BASELINE_RETURN, self.required_return,
+            ReturnMetricStatus.AVAILABLE, currency, currency_basis, self.horizon,
+            ReturnUnit.TOTAL_RETURN, formula_version, model_key)
+        body = {**self._payload_without_hash(), "schema_version": "pricing-result@2",
+                "pricing_baseline_return": baseline.payload(), "model_key": model_key}
+        del body['required_return']
+        return body | {"output_hash": digest(canonical(body))}

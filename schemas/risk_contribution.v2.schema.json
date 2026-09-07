@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "variance_contribution",
+    "volatility_contribution",
+    "marginal_volatility_contribution",
+    "portfolio_volatility",
+    "portfolio_variance",
+    "variance_unit",
+    "volatility_unit"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "risk-contribution@2"
+    },
+    "variance_contribution": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "volatility_contribution": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "marginal_volatility_contribution": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "portfolio_volatility": {
+      "type": "string"
+    },
+    "portfolio_variance": {
+      "type": "string"
+    },
+    "variance_unit": {
+      "const": "RETURN_SQUARED"
+    },
+    "volatility_unit": {
+      "const": "RETURN"
+    }
+  },
+  "additionalProperties": false
+}

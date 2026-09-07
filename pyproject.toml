@@ -57,8 +57,8 @@ where = ["src"]
 "share/toss-trading/schemas/paper" = ["schemas/paper_order.schema.json"]
 "share/toss-trading/docs/paper" = ["docs/persistent_paper_broker.md"]
 
-"share/toss-trading/schemas/economics" = ["schemas/economic_value.schema.json"]
-"share/toss-trading/docs/economics" = ["docs/economic_semantics.md"]
+"share/toss-trading/schemas/economics" = ["schemas/economic_value.schema.json", "schemas/economic_migration.schema.json", "schemas/pricing_result.v2.schema.json", "schemas/risk_contribution.v2.schema.json", "schemas/accounting_nav_basis.schema.json", "schemas/expected_return.v1.schema.json", "schemas/decision_horizon.schema.json"]
+"share/toss-trading/docs/economics" = ["docs/economic_semantics.md", "docs/economic_semantics_remediation.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

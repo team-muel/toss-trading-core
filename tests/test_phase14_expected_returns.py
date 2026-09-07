@@ -24,7 +24,7 @@ CAPM_AUTH=CAPM_REGISTRY.authorize(CAPM_MODEL.key,ModelScope.REQUIRED_RETURN,at=N
 def components(kind, point=D(".01"), uncertainty=D(".001"), confidence=D(".8")):
     return {name: ExpectedReturnComponent(name,point,uncertainty,confidence,(f"feature:{name}",),252,VALIDITY) for name in COMPONENTS[kind]}
 
-@pytest.mark.parametrize("kind,count", [(AssetClass.EQUITY,5),(AssetClass.EQUITY_ETF,5),(AssetClass.BOND_ETF,5),(AssetClass.CASH,3),(AssetClass.COMMODITY_ETF,4)])
+@pytest.mark.parametrize("kind,count", [(AssetClass.EQUITY,4),(AssetClass.EQUITY_ETF,5),(AssetClass.BOND_ETF,5),(AssetClass.CASH,3),(AssetClass.COMMODITY_ETF,4)])
 def test_distinct_asset_contracts(kind,count):
     result=expected_return(instrument_id="X",asset_class=kind,components=components(kind),horizon=252,as_of=NOW)
     assert len(result.components)==count and result.gross_expected_return==D(".01")*count

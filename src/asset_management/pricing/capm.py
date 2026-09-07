@@ -58,6 +58,13 @@ def capm_required_return(*, instrument_id: str, risk_free_rate: Decimal,
                          uncertainty_z: Decimal = Decimal("1.96")) -> PricingResult:
     model_registry.require_authorization(
         authorization, model_key="CAPM@1", scope=ModelScope.REQUIRED_RETURN, at=as_of)
+    return _capm_numeric(instrument_id=instrument_id, risk_free_rate=risk_free_rate, beta=beta,
+                         market_risk_premium=market_risk_premium, horizon=horizon, as_of=as_of,
+                         validity=validity, uncertainty_z=uncertainty_z)
+
+
+def _capm_numeric(*, instrument_id, risk_free_rate, beta, market_risk_premium, horizon,
+                  as_of, validity, uncertainty_z=Decimal("1.96")):
     if (as_of.tzinfo is None or as_of.utcoffset() is None or
             not risk_free_rate.is_finite() or not market_risk_premium.is_finite() or
             uncertainty_z < 0):
@@ -78,3 +85,15 @@ def capm_required_return(*, instrument_id: str, risk_free_rate: Decimal,
         "CAPM", "CAPM@1", {"MKT": beta.beta}, horizon_uncertainty, beta.quality, as_of,
         validity,
     )
+
+
+def capm_pricing_baseline_return(*, currency, currency_basis, asset_scope,
+                                 model_registry, authorization, **inputs):
+    """Canonical v2 output; legacy REQUIRED_RETURN authority is insufficient."""
+    if asset_scope not in ("EQUITY", "EQUITY_ETF"):
+        raise DataQualityError("PRICING_ASSET_SCOPE_NOT_APPLICABLE")
+    model_registry.require_authorization(authorization, model_key="CAPM@2",
+        scope=ModelScope.PRICING_BASELINE_RETURN, at=inputs['as_of'])
+    result = _capm_numeric(**inputs)
+    return result.economic_payload(currency=currency, currency_basis=currency_basis,
+        formula_version="capm-pricing-baseline@2", model_key="CAPM@2")
