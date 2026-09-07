@@ -62,3 +62,7 @@ Review in this order:
 7. Maintainability.
 
 Material review findings must be fixed or explicitly dispositioned. Do not merge with unresolved correctness, security, data-integrity, or governance findings.
+
+## Merge protocol
+
+`master` is protected by a repository ruleset (2026-09-07): pull requests only, `test (3.11)` and `test (3.12)` are required status checks, review threads must be resolved, and merges go through the GitHub Merge Queue. Queue a PR with `gh pr merge <number> --merge` (or the "Merge when ready" button); the queue rebuilds it on top of `master`, runs CI on the `merge_group` event, and merges only when the required checks pass. Do not push to `master` directly. Emergency hotfixes follow the organization review-completion rule (Linear MUE-63): use the admin bypass only for a documented incident, and open the follow-up review immediately.
