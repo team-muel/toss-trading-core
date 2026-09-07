@@ -167,6 +167,69 @@ def test_repository_panel_rejects_non_chronological_period_axis():
         )
 
 
+def test_repository_panel_compares_periods_by_time_not_lexically():
+    ctx = context(1)
+    with pytest.raises(ExpressionError, match="chronological"):
+        RepositoryPanelResolver(
+            RepositoryDataFields(object()),
+            ("a",),
+            ctx,
+            {},
+            ("2026-10", "2026-02"),
+            {
+                "2026-10": frozenset({"a"}),
+                "2026-02": frozenset({"a"}),
+            },
+        )
+
+
+def test_repository_panel_rejects_ambiguous_period_formats():
+    ctx = context(1)
+    with pytest.raises(ExpressionError, match="must use ISO"):
+        RepositoryPanelResolver(
+            RepositoryDataFields(object()),
+            ("a",),
+            ctx,
+            {},
+            ("2026-2",),
+            {"2026-2": frozenset({"a"})},
+        )
+
+
+def test_repository_panel_requires_instrument_coverage_for_historical_members():
+    ctx = context(1)
+    with pytest.raises(ExpressionError, match="miss historical universe members.*b"):
+        RepositoryPanelResolver(
+            RepositoryDataFields(object()),
+            ("a",),
+            ctx,
+            {},
+            ("2026-01-01", "2026-01-02"),
+            {"2026-01-01": frozenset({"a", "b"}), "2026-01-02": frozenset({"a"})},
+        )
+
+
+def test_repository_panel_snapshots_point_in_time_mappings():
+    ctx = context(1)
+    membership = {"2026-01-01": {"a"}}
+    groups = {"sector": {"2026-01-01": {"a": "old"}}}
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(object()),
+        ("a", "b"),
+        ctx,
+        groups,
+        ("2026-01-01",),
+        membership,
+    )
+
+    membership["2026-01-01"].add("b")
+    groups["sector"]["2026-01-01"]["a"] = "future"
+    groups["sector"]["2026-01-01"]["b"] = "future"
+
+    assert resolver.members_at(0) == frozenset({"a"})
+    assert resolver.group("sector") == {"a": ["old"], "b": [None]}
+
+
 def test_history_rejects_repository_resolver_from_another_cutoff():
     class Source:
         def time_series_observations(self, field, *, instrument_id, context):
@@ -201,7 +264,7 @@ def test_repository_resolver_pins_manifest_for_all_field_reads():
             self, field, *, instrument_id, context, dataset_manifest_id=None
         ):
             assert dataset_manifest_id == "manifest-pinned"
-            return [("p1", 1)]
+            return [("2026-01-01", 1)]
 
         def time_series(self, field, *, instrument_id, context, dataset_manifest_id=None):
             raise AssertionError
@@ -215,8 +278,8 @@ def test_repository_resolver_pins_manifest_for_all_field_reads():
         ("a",),
         ctx,
         {},
-        ("p1",),
-        {"p1": frozenset({"a"})},
+        ("2026-01-01",),
+        {"2026-01-01": frozenset({"a"})},
     )
     assert resolver.dataset_manifest_ids == ("manifest-pinned",)
     assert resolver.field("close") == {"a": [1.0]}
@@ -290,6 +353,21 @@ def test_history_delay_zero_and_general_integer():
     assert delayed.position_panel["a"] == [None, None, 1.0]
 
 
+def test_history_delay_transforms_source_universe_before_effective_projection():
+    source = sessions([{"a": 1, "b": 3}, {"a": 9}])
+    result = simulate_history(
+        compile_expression("close", data_fields={"close"}),
+        source,
+        history_settings(delay=1),
+    )
+
+    assert result.points[1].raw == {"a": 1.0, "b": 3.0}
+    assert result.position_panel == {
+        "a": [None, pytest.approx(0.25)],
+        "b": [None, None],
+    }
+
+
 def test_position_decay_is_after_cross_section_and_requires_full_window():
     expression = compile_expression("sign(close)", data_fields={"close"})
     result = simulate_history(
@@ -319,6 +397,19 @@ def test_expression_decay_and_simulation_decay_are_independent():
     )
     assert result.settings.decay == 0
     assert result.position_panel["a"] == [1.0, -1.0]
+
+
+def test_expression_rejects_non_finite_operator_results():
+    expression = compile_expression("ts_sum(close, 2)", data_fields={"close"})
+    with pytest.raises(ExpressionError, match="ts_sum produced a non-finite value"):
+        expression.evaluate(Resolver({"close": {"a": [1e308, 1e308]}}))
+
+
+@pytest.mark.parametrize("invalid_value", [float("nan"), float("inf")])
+def test_expression_rejects_non_finite_bare_datafields(invalid_value):
+    expression = compile_expression("close", data_fields={"close"})
+    with pytest.raises(ExpressionError, match="datafield produced a non-finite value"):
+        expression.evaluate(Resolver({"close": {"a": [invalid_value]}}))
 
 
 def test_history_delay_zero_matches_cross_section_and_long_only_stays_a_setting():
@@ -381,7 +472,7 @@ def test_history_can_attach_existing_metric_bundle():
         compile_expression("sign(close)", data_fields={"close"}),
         sessions([{"a": 1}, {"a": 1}, {"a": -1}]),
         history_settings(delay=1),
-        forward_returns=dated_returns({"a": [0.01, -0.02, 0.03]}),
+        forward_returns={"a": [0.01, -0.02, 0.03]},
     )
     assert result.metrics is not None
     assert result.metrics.periods == 2
@@ -393,7 +484,7 @@ def test_history_metrics_reject_missing_returns_for_a_held_instrument():
             compile_expression("sign(close)", data_fields={"close"}),
             sessions([{"a": 1, "b": -1}]),
             history_settings(),
-            forward_returns=dated_returns({"a": [0.01]}),
+            forward_returns={"a": [0.01]},
         )
 
 
@@ -403,15 +494,26 @@ def test_history_metrics_reject_missing_return_for_a_held_period():
             compile_expression("sign(close)", data_fields={"close"}),
             sessions([{"a": 1}, {"a": -1}]),
             history_settings(),
-            forward_returns=dated_returns({"a": [0.01, None]}),
+            forward_returns={"a": [0.01, None]},
+        )
+
+
+@pytest.mark.parametrize("invalid_return", [float("nan"), float("inf"), -float("inf")])
+def test_history_metrics_reject_non_finite_return_for_a_held_period(invalid_return):
+    with pytest.raises(ValueError, match="non-finite for held positions"):
+        simulate_history(
+            compile_expression("sign(close)", data_fields={"close"}),
+            sessions([{"a": 1}]),
+            history_settings(),
+            forward_returns={"a": [invalid_return]},
         )
 
 
 def test_repository_cross_sections_use_historical_universe_membership():
     class Source:
         def time_series_observations(self, field, *, instrument_id, context):
-            return [("p1", 1 if instrument_id == "a" else 9),
-                    ("p2", 2 if instrument_id == "a" else 3)]
+            return [("2026-01-01", 1 if instrument_id == "a" else 9),
+                    ("2026-01-02", 2 if instrument_id == "a" else 3)]
 
         def time_series(self, field, *, instrument_id, context):
             raise AssertionError
@@ -425,8 +527,8 @@ def test_repository_cross_sections_use_historical_universe_membership():
         ("a", "b"),
         ctx,
         {},
-        ("p1", "p2"),
-        {"p1": frozenset({"a"}), "p2": frozenset({"a", "b"})},
+        ("2026-01-01", "2026-01-02"),
+        {"2026-01-01": frozenset({"a"}), "2026-01-02": frozenset({"a", "b"})},
     )
     assert resolver.field("close")["b"] == [None, 3.0]
     result = compile_expression("rank(close)", data_fields={"close"}).evaluate(resolver)
@@ -439,7 +541,7 @@ def test_repository_group_operators_use_historical_classifications():
     class Source:
         def time_series_observations(self, field, *, instrument_id, context):
             values = {"a": [1, 1], "b": [3, 4], "c": [8, 9]}
-            return list(zip(("p1", "p2"), values[instrument_id]))
+            return list(zip(("2026-01-01", "2026-01-02"), values[instrument_id]))
 
         def time_series(self, field, *, instrument_id, context):
             raise AssertionError
@@ -453,11 +555,11 @@ def test_repository_group_operators_use_historical_classifications():
         ("a", "b", "c"),
         ctx,
         {"sector": {
-            "p1": {"a": "x", "b": "x", "c": "y"},
-            "p2": {"a": "x", "b": "y", "c": "y"},
+            "2026-01-01": {"a": "x", "b": "x", "c": "y"},
+            "2026-01-02": {"a": "x", "b": "y", "c": "y"},
         }},
-        ("p1", "p2"),
-        {"p1": frozenset({"a", "b", "c"}), "p2": frozenset({"a", "b", "c"})},
+        ("2026-01-01", "2026-01-02"),
+        {"2026-01-01": frozenset({"a", "b", "c"}), "2026-01-02": frozenset({"a", "b", "c"})},
     )
     result = compile_expression(
         "group_rank(close, sector)", data_fields={"close"}, group_fields={"sector"}
@@ -492,37 +594,54 @@ def test_history_group_neutralization_uses_delayed_session_groups():
     }
 
 
-def dated_returns(panel):
-    return {symbol: {context(i + 1).as_of_utc: value for i, value in enumerate(values)}
-            for symbol, values in panel.items()}
+def test_history_session_snapshots_neutralization_groups():
+    source = sessions([
+        {"a": 1, "b": 3, "c": 10},
+        {"a": 9, "b": 2, "c": 1},
+    ])
+    classifications = {"a": "x", "b": "x", "c": "y"}
+    source[0] = HistoricalSession(
+        effective_time_utc=source[0].effective_time_utc,
+        context=source[0].context,
+        resolver=source[0].resolver,
+        instrument_ids=source[0].instrument_ids,
+        dataset_manifest_ids=source[0].dataset_manifest_ids,
+        universe_version=source[0].universe_version,
+        neutralization_groups=classifications,
+    )
+    classifications["b"] = "y"
+
+    result = simulate_history(
+        compile_expression("close", data_fields={"close"}),
+        source,
+        AlphaSimulationSettings(
+            universe="test",
+            delay=1,
+            neutralization="group",
+            truncation=1,
+            long_only=False,
+        ),
+    )
+
+    assert dict(source[0].neutralization_groups) == {"a": "x", "b": "x", "c": "y"}
+    assert result.position_panel["a"][1] == pytest.approx(-0.5)
+    assert result.position_panel["b"][1] == pytest.approx(0.5)
 
 
-def test_returns_reject_shifted_timestamps():
-    with pytest.raises(ValueError, match="timestamps must match"):
-        simulate_history(compile_expression("close", data_fields={"close"}),
-                         sessions([{"a": 1}]), history_settings(),
-                         forward_returns={"a": {context(2).as_of_utc: 0.1}})
+def test_history_points_are_immutable_audit_snapshots():
+    result = simulate_history(
+        compile_expression("close", data_fields={"close"}),
+        sessions([{"a": 1, "b": -1}]),
+        history_settings(),
+        forward_returns={"a": [0.01], "b": [-0.01]},
+    )
+    point = result.points[0]
 
-
-def test_returns_reject_metric_overflow():
-    with pytest.raises(ValueError, match="non-finite historical metrics"):
-        simulate_history(compile_expression("close", data_fields={"close"}),
-                         sessions([{"a": 1}]), history_settings(),
-                         forward_returns=dated_returns({"a": [1e308]}))
-
-
-@pytest.mark.parametrize("duplicate", [False, True])
-def test_repository_normalizes_observation_instants(duplicate):
-    class Source:
-        def time_series_observations(self, *args, **kwargs):
-            values = [("2025-12-31T19:00:00-05:00", 2)]
-            return values + ([("2026-01-01T00:00:00Z", 3)] if duplicate else [])
-    resolver = RepositoryPanelResolver(
-        RepositoryDataFields(Source()), ("a",), context(1), {},
-        ("2026-01-01T00:00:00Z",),
-        {"2026-01-01T00:00:00Z": frozenset({"a"})})
-    if duplicate:
-        with pytest.raises(ExpressionError, match="duplicate normalized"):
-            resolver.field("close")
-    else:
-        assert resolver.field("close") == {"a": [2.0]}
+    with pytest.raises(TypeError):
+        point.raw["a"] = 99
+    with pytest.raises(TypeError):
+        point.base_weights["a"] = 99
+    with pytest.raises(TypeError):
+        point.weights["a"] = 99
+    assert result.position_panel["a"] == [pytest.approx(0.5)]
+    assert result.metrics is not None
