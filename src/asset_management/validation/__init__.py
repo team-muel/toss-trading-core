@@ -20,6 +20,10 @@ from .signal_forecast_integrity import (
     REQUIRED_SIGNAL_FORECAST_CHECKS, SignalForecastIntegrityGateInput,
     SignalForecastIntegrityGateResult, evaluate_signal_forecast_integrity_gate,
 )
+from .portfolio_decision_integrity import (
+    REQUIRED_PORTFOLIO_DECISION_INTEGRITY_CHECKS, PortfolioDecisionIntegrityGateInput,
+    PortfolioDecisionIntegrityGateResult, evaluate_portfolio_decision_integrity_gate,
+)
 from .backtest_run_specification import (
     BacktestPeriod, BacktestRunEvent, BacktestRunRegistry, BacktestRunSpec, BacktestRunStatus,
 )
@@ -35,6 +39,8 @@ __all__ = [
     "FeatureStateModelIntegrityGateResult", "evaluate_feature_state_model_integrity_gate",
     "REQUIRED_SIGNAL_FORECAST_CHECKS", "SignalForecastIntegrityGateInput",
     "SignalForecastIntegrityGateResult", "evaluate_signal_forecast_integrity_gate",
+    "REQUIRED_PORTFOLIO_DECISION_INTEGRITY_CHECKS", "PortfolioDecisionIntegrityGateInput",
+    "PortfolioDecisionIntegrityGateResult", "evaluate_portfolio_decision_integrity_gate",
     "BacktestPeriod", "BacktestRunEvent", "BacktestRunRegistry", "BacktestRunSpec",
     "BacktestRunStatus",
 ]

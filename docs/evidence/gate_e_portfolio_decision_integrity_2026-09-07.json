@@ -1,0 +1,28 @@
+{
+  "decision": "PASS",
+  "reason_codes": [],
+  "evidence_artifact_ids": [
+    "pytest:tests/test_phase16_portfolio_construction.py::test_active_and_model_alpha_modes_require_a_matching_benchmark_mandate",
+    "pytest:tests/test_phase16_portfolio_construction.py::test_all_constraints_and_infeasible_are_explicit",
+    "pytest:tests/test_phase16_portfolio_construction.py::test_capital_basis_return_semantics_and_stability_evidence_fail_closed",
+    "pytest:tests/test_phase16_portfolio_construction.py::test_no_trade_band_and_economic_gate_preserve_three_targets",
+    "pytest:tests/test_phase16_portfolio_construction.py::test_objective_has_half_variance_and_no_double_counting",
+    "pytest:tests/test_phase16_portfolio_construction.py::test_optimizer_moves_toward_forecast_total_return_but_returns_weights_only",
+    "pytest:tests/test_phase17_risk_governor.py::test_every_hard_condition_blocks",
+    "pytest:tests/test_phase17_risk_governor.py::test_same_semantic_inputs_produce_same_decision_and_lineage_hash",
+    "pytest:tests/test_phase4_cash_position_settlement.py::test_sell_reservation_above_settled_quantity_blocks",
+    "pytest:tests/test_phase_m4_investor_mandate.py::test_mandate_freezes_benchmark_risk_budget_and_optimizer_ranges",
+    "pytest:tests/test_phase_m5_economic_decision_journal.py::test_journal_replays_exact_initial_record_and_keeps_outcome_pending_before_maturity",
+    "pytest:tests/test_phase_m5_economic_decision_journal.py::test_record_preserves_four_states_lineage_three_targets_and_noncollapsed_return_semantics",
+    "pytest:tests/test_phase_m5_economic_decision_journal.py::test_registry_mandate_and_benchmark_versions_must_match_ama_124_authority",
+    "pytest:tests/test_phase_m5_manual_overrides.py::test_journal_is_append_only_and_exact_replay_preserves_the_state_event",
+    "pytest:tests/test_phase_m5_portfolio_transition.py::test_immediate_plan_wins_when_forecast_decay_outweighs_staging_cost_reduction",
+    "pytest:tests/test_phase_m5_portfolio_transition.py::test_invalid_schedule_or_incomplete_cost_curve_fails_closed",
+    "pytest:tests/test_phase_m5_portfolio_transition.py::test_staged_plan_is_a_weight_plan_with_sell_settlement_buy_dependencies_and_reassessment",
+    "pytest:tests/test_phase_m5_portfolio_transition.py::test_staging_respects_per_step_liquidity_capacity_when_immediate_transition_does_not",
+    "pytest:tests/test_phase_m5_portfolio_transition.py::test_unknown_or_unexecutable_transition_inputs_defer_without_steps"
+  ],
+  "evaluated_at": "2026-09-07T00:00:00+00:00",
+  "code_revision": "gate-e@1",
+  "content_hash": "0c2f7c4028a5b5273bd2114463d74e643193a1a55d7569ace4c8bc4c5f0aa25d"
+}

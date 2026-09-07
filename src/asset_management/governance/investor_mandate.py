@@ -281,5 +281,22 @@ class InvestorMandateRegistry:
         self.authorize_optimizer(authorization.mandate_key, risk_aversion=risk_aversion,
                                 active_risk_aversion=active_risk_aversion, at=at)
 
+    def require_optimizer_objective(self, authorization: OptimizerMandateAuthorization, *,
+                                    benchmark_relative: bool, at: datetime) -> InvestorMandate:
+        """Bind the return-term mode to the immutable mandate objective and benchmark."""
+        if not isinstance(authorization, OptimizerMandateAuthorization) or type(benchmark_relative) is not bool:
+            raise InvariantViolation("OPTIMIZER_MANDATE_AUTHORIZATION_MISSING")
+        try:
+            mandate = self._mandates[authorization.mandate_key]
+        except KeyError:
+            raise InvariantViolation("INVESTOR_MANDATE_NOT_REGISTERED") from None
+        self.require_performance_benchmark(mandate.key,
+                                           benchmark_key=authorization.primary_benchmark_key, at=at)
+        acceptable = ({MandateObjective.BENCHMARK_RELATIVE, MandateObjective.MIXED}
+                      if benchmark_relative else {MandateObjective.ABSOLUTE_WEALTH, MandateObjective.MIXED})
+        if mandate.objective not in acceptable:
+            raise InvariantViolation("OPTIMIZER_OBJECTIVE_MANDATE_MISMATCH")
+        return mandate
+
     def publish(self, store: ImmutableDatasetStore) -> str:
         return store.catalog("investor-mandate-registry", self.payload())

@@ -4,13 +4,22 @@
 
 ## 목적함수 점검
 
-`maximize α'w - (γ/2)w'Σw - TC(w-w_prev) - η||w-w_prev||₁ - ξ||w||²`
+Absolute/strategic 목적함수는 `forecast_total_return'w`를, benchmark-relative 목적함수는
+`forecast_total_return'(w-b)`를 사용한다. `model_relative_alpha` 직접 사용은 pricing/factor
+baseline version과 factor-neutrality 검증이 있는 별도 mode에서만 허용한다. 따라서 일반적인
+`alpha` 입력으로 경제적 의미를 바꿔치기할 수 없다.
+
+`maximize return_term - (γ/2)w'Σw - (γ_A/2)(w-b)'Σ(w-b) - TC(w-w_prev) - η||w-w_prev||₁ - ξ||w||²`
 
 분산항의 `1/2`는 gradient를 `γΣw`로 만드는 표준 표기다. 이를 생략해도 γ 정의만 달라지지만 정책 해석이 불명확해진다. `TC`는 `linear_cost*|Δw| + impact_cost*Δw²`다. TC가 turnover를 이미 포함한다고 선언한 경우 별도 `η`를 양수로 설정하면 중복으로 거부한다. Concentration은 HHI `Σw_i²`를 벌점으로 사용한다. 모든 항은 같은 투자 horizon의 return 단위여야 한다.
 
 가중치 합 1, long-only, 단일종목, 자산군/sector, factor, 통화, 최소현금, 최대변동성, CVaR, stress loss, gross turnover `Σ|Δw|`, 최대 거래금액과 유동성 cap을 versioned policy에서 받는다. 숨은 기본 제한은 없다. Candidate가 infeasible이면 알려진 feasible 현재 포트폴리오와 candidate 사이에서 가장 먼 feasible 지점을 찾는다.
 
 No-trade band는 변동성·spread·세금·비유동성으로 계산한다. 작은 비현금 변화는 유지하고 현금으로 합계 1을 재대사한다. `ExpectedBenefit > ExpectedCost + UncertaintyBuffer`가 거짓이면 현재 비중을 유지한다.
+
+`NAV`에 이미 인식된 부채는 investable/risk capital에서 다시 차감하지 않는다. NAV 밖의
+liability reserve만 차감하며, forecast/covariance perturbation에서는 weight jump, turnover
+sensitivity, corner solution을 측정해 정책 한도를 넘는 optimum을 거부한다.
 
 Solver 실패 fallback은 현재 포트폴리오, 위험최소 허용안, 승인 fallback, 현금성 자산, NO_TRADE 순서다. 임의 equal-weight를 만들지 않는다. Raw, risk-constrained, executable target을 별도 저장하며 optimizer 출력은 목표 비중과 lot 단위 목표수량뿐이다.
 
