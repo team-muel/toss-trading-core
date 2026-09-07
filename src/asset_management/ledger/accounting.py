@@ -251,22 +251,41 @@ def account_period(*, reporting_currency: str, beginning_nav: Decimal,
                    dividends: Iterable[MoneyTranslation] = (), interest: Iterable[MoneyTranslation] = (),
                    fees: Iterable[MoneyTranslation] = (), taxes: Iterable[MoneyTranslation] = (),
                    performance_periods: Iterable[PerformancePeriod]) -> AccountingResult:
+    """Legacy cash-plus-positions contract; use account_period_with_nav for v2."""
+    reporting = _currency(reporting_currency, "reporting_currency")
+    cash_items, position_items = tuple(cash), tuple(positions)
+    if any(item.reporting_currency != reporting for item in cash_items + position_items):
+        raise ReconciliationError("PORTFOLIO_ACCOUNTING_REPORTING_CURRENCY_CONFLICT")
+    ending_nav = sum((item.amount_reporting for item in cash_items), Decimal(0)) + sum(
+        (item.market_value_reporting for item in position_items), Decimal(0))
+    return _account_period_from_nav(
+        reporting_currency=reporting, beginning_nav=beginning_nav, ending_nav=ending_nav,
+        positions=position_items, realized_lots=realized_lots, external_flows=external_flows,
+        dividends=dividends, interest=interest, fees=fees, taxes=taxes,
+        performance_periods=performance_periods)
+
+
+def _account_period_from_nav(*, reporting_currency: str, beginning_nav: Decimal,
+                             ending_nav: Decimal, positions: Iterable[PositionMark],
+                             realized_lots: Iterable[RealizedLot], external_flows: Iterable[MoneyTranslation],
+                             dividends: Iterable[MoneyTranslation], interest: Iterable[MoneyTranslation],
+                             fees: Iterable[MoneyTranslation], taxes: Iterable[MoneyTranslation],
+                             performance_periods: Iterable[PerformancePeriod]) -> AccountingResult:
+    """Shared contribution/flow equations; callers supply their reconciled NAV basis."""
     reporting = _currency(reporting_currency, "reporting_currency")
     beginning = _decimal(beginning_nav, "beginning_nav")
     if beginning < 0:
         raise ReconciliationError("PORTFOLIO_ACCOUNTING_BEGINNING_NAV_INVALID")
     groups = tuple(tuple(group) for group in
-                   (cash, positions, realized_lots, external_flows, dividends, interest, fees, taxes))
+                   (positions, realized_lots, external_flows, dividends, interest, fees, taxes))
     for group in groups:
         if any(item.reporting_currency != reporting for item in group):
             raise ReconciliationError("PORTFOLIO_ACCOUNTING_REPORTING_CURRENCY_CONFLICT")
-    cash_items, position_items, realized_items, flow_items, dividend_items, interest_items, fee_items, tax_items = groups
+    position_items, realized_items, flow_items, dividend_items, interest_items, fee_items, tax_items = groups
     period_items = tuple(performance_periods)
     if any(item.amount_native > 0 for item in fee_items + tax_items):
         raise ReconciliationError("PORTFOLIO_ACCOUNTING_COST_SIGN_INVALID")
 
-    ending_nav = sum((item.amount_reporting for item in cash_items), Decimal(0)) + sum(
-        (item.market_value_reporting for item in position_items), Decimal(0))
     net_external_flow = sum((item.amount_reporting for item in flow_items), Decimal(0))
     total_pnl = ending_nav - beginning - net_external_flow
     realized = sum((item.local_realized_pnl for item in realized_items), Decimal(0))
