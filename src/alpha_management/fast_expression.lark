@@ -1,0 +1,15 @@
+// Minimal Fast Expression grammar for alpha_management.
+// Rewritten for this project from the expression grammar structure in
+// marketneutral/alphatools (Apache-2.0, Copyright 2018 Jonathan Larkin).
+
+?start: expression
+?expression: NAME "(" [arguments] ")"  -> call
+           | SIGNED_NUMBER             -> number
+           | NAME                      -> identifier
+arguments: expression ("," expression)*
+
+NAME: /[A-Za-z_][A-Za-z0-9_]*/
+
+%import common.SIGNED_NUMBER
+%import common.WS
+%ignore WS

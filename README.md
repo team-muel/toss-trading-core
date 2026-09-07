@@ -177,6 +177,8 @@ sudo systemctl status toss-research-automation@daily.service --no-pager
 
 다방향 자율 퀀트 연구의 계열, 참신성 검사, 공통 검증 기준은
 [`docs/30_multi_direction_quant_research.md`](docs/30_multi_direction_quant_research.md)에 정리되어 있습니다.
+Fast Expression DSL과 거래 세션 기준 delay/decay 의미론은
+[`docs/32_fast_expression_history.md`](docs/32_fast_expression_history.md)에 정리되어 있습니다.
 ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙은
 [`docs/31_alfred_point_in_time_macro_regime.md`](docs/31_alfred_point_in_time_macro_regime.md)에 정리되어 있습니다.
 
