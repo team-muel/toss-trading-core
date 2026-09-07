@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["event_id", "event_type", "source", "sequence_number", "event_time", "received_at", "available_at", "payload"],
+  "properties": {
+    "event_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "event_type": {"enum": ["MARKET_BAR_CLOSED", "MACRO_RELEASED", "MACRO_REVISED", "FILING_ACCEPTED", "EARNINGS_RELEASED", "ESTIMATE_UPDATED", "CORPORATE_ACTION", "ACCOUNT_SNAPSHOT", "ORDER_ACK", "PARTIAL_FILL", "FULL_FILL", "SOURCE_DEGRADED", "SOURCE_RECOVERED", "POLICY_ACTIVATED"]},
+    "source": {"type": "string", "minLength": 1},
+    "sequence_number": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+    "event_time": {"type": "string", "format": "date-time"},
+    "received_at": {"type": "string", "format": "date-time"},
+    "available_at": {"type": "string", "format": "date-time"},
+    "payload": {"type": "object", "minProperties": 1}
+  }
+}

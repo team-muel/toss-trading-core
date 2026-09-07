@@ -48,6 +48,9 @@ where = ["src"]
 "share/toss-trading/schemas/scheduling" = ["schemas/execution_schedule.schema.json"]
 "share/toss-trading/docs/scheduling" = ["docs/execution_scheduling.md"]
 
+"share/toss-trading/schemas/events" = ["schemas/event_envelope.schema.json"]
+"share/toss-trading/docs/events" = ["docs/event_store_ordering.md"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
