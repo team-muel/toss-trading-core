@@ -13,6 +13,10 @@ from typing import Mapping
 
 from asset_management.data.immutable import canonical, digest
 from asset_management.domain.errors import InvariantViolation
+from asset_management.domain.economics import (
+    ReturnSemanticType, ReturnMetricStatus, ReturnUnit, RiskContributionType,
+    RETURN_UNITS as _UNITS,
+)
 from asset_management.governance import InvestorMandateRegistry, MandateObjective
 from asset_management.portfolio.models import PortfolioTarget
 from asset_management.risk.models import CurrencyBasis
@@ -75,29 +79,6 @@ def _target_payload(target: PortfolioTarget) -> dict[str, object]:
             "stage": target.stage, "reason_codes": list(target.reason_codes)}
 
 
-class ReturnSemanticType(StrEnum):
-    PRICING_BASELINE_RETURN = "PRICING_BASELINE_RETURN"
-    FORECAST_TOTAL_RETURN_GROSS = "FORECAST_TOTAL_RETURN_GROSS"
-    FORECAST_TOTAL_RETURN_NET = "FORECAST_TOTAL_RETURN_NET"
-    MODEL_RELATIVE_ALPHA = "MODEL_RELATIVE_ALPHA"
-    EXPECTED_BENCHMARK_ACTIVE_RETURN = "EXPECTED_BENCHMARK_ACTIVE_RETURN"
-    REALIZED_ACTIVE_RETURN = "REALIZED_ACTIVE_RETURN"
-    REGRESSION_ALPHA = "REGRESSION_ALPHA"
-
-
-class ReturnMetricStatus(StrEnum):
-    AVAILABLE = "AVAILABLE"
-    NOT_APPLICABLE = "NOT_APPLICABLE"
-    NOT_MATURED = "NOT_MATURED"
-
-
-class ReturnUnit(StrEnum):
-    TOTAL_RETURN = "TOTAL_RETURN"
-    EXCESS_RETURN = "EXCESS_RETURN"
-    ACTIVE_RETURN = "ACTIVE_RETURN"
-    REGRESSION_INTERCEPT = "REGRESSION_INTERCEPT"
-
-
 class DecisionQuality(StrEnum):
     NOT_MATURED = "NOT_MATURED"
     PENDING_OUTCOME = "PENDING_OUTCOME"
@@ -105,22 +86,6 @@ class DecisionQuality(StrEnum):
     GOOD_DECISION_BAD_OUTCOME = "GOOD_DECISION_BAD_OUTCOME"
     BAD_DECISION_GOOD_OUTCOME = "BAD_DECISION_GOOD_OUTCOME"
     BAD_DECISION_BAD_OUTCOME = "BAD_DECISION_BAD_OUTCOME"
-
-
-class RiskContributionType(StrEnum):
-    VARIANCE = "VARIANCE"
-    VOLATILITY = "VOLATILITY"
-
-
-_UNITS = {
-    ReturnSemanticType.PRICING_BASELINE_RETURN: ReturnUnit.TOTAL_RETURN,
-    ReturnSemanticType.FORECAST_TOTAL_RETURN_GROSS: ReturnUnit.TOTAL_RETURN,
-    ReturnSemanticType.FORECAST_TOTAL_RETURN_NET: ReturnUnit.TOTAL_RETURN,
-    ReturnSemanticType.MODEL_RELATIVE_ALPHA: ReturnUnit.EXCESS_RETURN,
-    ReturnSemanticType.EXPECTED_BENCHMARK_ACTIVE_RETURN: ReturnUnit.ACTIVE_RETURN,
-    ReturnSemanticType.REALIZED_ACTIVE_RETURN: ReturnUnit.ACTIVE_RETURN,
-    ReturnSemanticType.REGRESSION_ALPHA: ReturnUnit.REGRESSION_INTERCEPT,
-}
 
 
 @dataclass(frozen=True, slots=True)

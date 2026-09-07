@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Mapping
 
-class CurrencyBasis(StrEnum): LOCAL="LOCAL"; BASE="BASE"; HEDGED="HEDGED"
+from asset_management.domain.economics import CurrencyBasis
 class MissingPolicy(StrEnum): FAIL="FAIL"; DROP_ROW="DROP_ROW"
 
 @dataclass(frozen=True)
