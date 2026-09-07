@@ -25,7 +25,8 @@ from asset_management.states.models import StateType
 from .governor import DecisionState
 
 
-DECISION_JOURNAL_SCHEMA_VERSION = "decision-economic-journal@1"
+LEGACY_DECISION_JOURNAL_SCHEMA_VERSION = "decision-economic-journal@1"
+DECISION_JOURNAL_SCHEMA_VERSION = "decision-economic-journal@2"
 _HASH = re.compile(r"[0-9a-f]{64}")
 
 
@@ -136,7 +137,8 @@ class ReturnMetric:
             raise InvariantViolation("DECISION_RETURN_RECORD_INVALID") from error
 
 
-def _metrics(values: object, *, objective: MandateObjective, pretrade: bool) -> tuple[ReturnMetric, ...]:
+def _metrics(values: object, *, objective: MandateObjective, pretrade: bool,
+             allow_inapplicable_pricing: bool = False) -> tuple[ReturnMetric, ...]:
     if not isinstance(values, tuple) or len(values) != len(ReturnSemanticType):
         raise InvariantViolation("DECISION_RETURN_SET_INVALID")
     if any(not isinstance(item, ReturnMetric) for item in values):
@@ -145,11 +147,21 @@ def _metrics(values: object, *, objective: MandateObjective, pretrade: bool) -> 
     if {item.semantic_type for item in result} != set(ReturnSemanticType):
         raise InvariantViolation("DECISION_RETURN_SET_INVALID")
     by_type = {item.semantic_type: item for item in result}
-    required = (ReturnSemanticType.PRICING_BASELINE_RETURN,
-                ReturnSemanticType.FORECAST_TOTAL_RETURN_GROSS,
+    required = (ReturnSemanticType.FORECAST_TOTAL_RETURN_GROSS,
                 ReturnSemanticType.FORECAST_TOTAL_RETURN_NET)
+    if not allow_inapplicable_pricing:
+        required += (ReturnSemanticType.PRICING_BASELINE_RETURN,)
     if any(by_type[item].status is not ReturnMetricStatus.AVAILABLE for item in required):
         raise InvariantViolation("DECISION_RETURN_REQUIRED_VALUE_MISSING")
+    if allow_inapplicable_pricing:
+        baseline = by_type[ReturnSemanticType.PRICING_BASELINE_RETURN]
+        alpha = by_type[ReturnSemanticType.MODEL_RELATIVE_ALPHA]
+        if baseline.status not in {ReturnMetricStatus.AVAILABLE, ReturnMetricStatus.NOT_APPLICABLE}:
+            raise InvariantViolation("DECISION_PRICING_APPLICABILITY_INVALID")
+        if baseline.status is ReturnMetricStatus.NOT_APPLICABLE and alpha.status is not ReturnMetricStatus.NOT_APPLICABLE:
+            raise InvariantViolation("DECISION_MODEL_ALPHA_WITHOUT_PRICING")
+        if len({(item.currency_basis, item.forecast_horizon) for item in result}) != 1:
+            raise InvariantViolation("DECISION_RETURN_CONTEXT_MISMATCH")
     if by_type[ReturnSemanticType.FORECAST_TOTAL_RETURN_NET].value > by_type[ReturnSemanticType.FORECAST_TOTAL_RETURN_GROSS].value:
         raise InvariantViolation("DECISION_FORECAST_GROSS_NET_INVALID")
     expected_active = by_type[ReturnSemanticType.EXPECTED_BENCHMARK_ACTIVE_RETURN]
@@ -203,8 +215,12 @@ class EconomicDecisionRecord:
     code_revision: str
     decision_id: str | None = None
     content_hash: str | None = None
+    schema_version: str = DECISION_JOURNAL_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
+        if self.schema_version not in (LEGACY_DECISION_JOURNAL_SCHEMA_VERSION, DECISION_JOURNAL_SCHEMA_VERSION):
+            raise InvariantViolation("ECONOMIC_DECISION_SCHEMA_VERSION_UNSUPPORTED")
+        canonical_semantics = self.schema_version == DECISION_JOURNAL_SCHEMA_VERSION
         for value in (self.run_id, self.mandate_key, self.mandate_version, self.benchmark_key,
                       self.benchmark_version, self.reporting_currency, self.risk_budget_version, self.risk_aversion_policy_version,
                       self.risk_snapshot_id, self.risk_decision_id,
@@ -228,13 +244,20 @@ class EconomicDecisionRecord:
         executable = _target(self.executable_target, "ECONOMIC_DECISION_TARGET_INVALID")
         if len({item.instruments for item in (raw, constrained, executable)}) != 1:
             raise InvariantViolation("ECONOMIC_DECISION_TARGET_UNIVERSE_INVALID")
-        object.__setattr__(self, "pricing_lineage_ids", _ids(self.pricing_lineage_ids, "ECONOMIC_DECISION_LINEAGE_INVALID"))
+        metrics = _metrics(self.return_metrics, objective=self.objective, pretrade=True,
+                           allow_inapplicable_pricing=canonical_semantics)
+        pricing_applicable = next(item for item in metrics if item.semantic_type is
+                                  ReturnSemanticType.PRICING_BASELINE_RETURN).status is ReturnMetricStatus.AVAILABLE
+        object.__setattr__(self, "pricing_lineage_ids", _ids(
+            self.pricing_lineage_ids, "ECONOMIC_DECISION_LINEAGE_INVALID", required=pricing_applicable))
+        if canonical_semantics and not pricing_applicable and self.pricing_lineage_ids:
+            raise InvariantViolation("DECISION_INAPPLICABLE_PRICING_LINEAGE")
         object.__setattr__(self, "forecast_lineage_ids", _ids(self.forecast_lineage_ids, "ECONOMIC_DECISION_LINEAGE_INVALID"))
         object.__setattr__(self, "risk_lineage_ids", _ids(self.risk_lineage_ids, "ECONOMIC_DECISION_LINEAGE_INVALID"))
         object.__setattr__(self, "target_lineage_ids", _ids(self.target_lineage_ids, "ECONOMIC_DECISION_LINEAGE_INVALID"))
         object.__setattr__(self, "decision_lineage_ids", _ids(self.decision_lineage_ids, "ECONOMIC_DECISION_LINEAGE_INVALID"))
         object.__setattr__(self, "calculation_lineage_ids", _ids(self.calculation_lineage_ids, "ECONOMIC_DECISION_LINEAGE_INVALID"))
-        object.__setattr__(self, "return_metrics", _metrics(self.return_metrics, objective=self.objective, pretrade=True))
+        object.__setattr__(self, "return_metrics", metrics)
         object.__setattr__(self, "risk_values", _decimal_map(self.risk_values, "ECONOMIC_DECISION_RISK_INVALID"))
         object.__setattr__(self, "risk_contributions", _decimal_map(
             self.risk_contributions, "ECONOMIC_DECISION_RISK_CONTRIBUTION_INVALID"))
@@ -258,7 +281,7 @@ class EconomicDecisionRecord:
 
     def body(self) -> dict[str, object]:
         values = lambda source: {key: str(value) for key, value in source.items()}
-        return {"schema_version": DECISION_JOURNAL_SCHEMA_VERSION, "run_id": self.run_id,
+        return {"schema_version": self.schema_version, "run_id": self.run_id,
                 "as_of": self.as_of.isoformat(), "information_cutoff": self.information_cutoff.isoformat(),
                 "assessment_horizon_end": self.assessment_horizon_end.isoformat(), "mandate_key": self.mandate_key,
                 "mandate_version": self.mandate_version, "benchmark_key": self.benchmark_key,
@@ -287,7 +310,8 @@ class EconomicDecisionRecord:
 
     @classmethod
     def from_payload(cls, raw: object) -> EconomicDecisionRecord:
-        if not isinstance(raw, Mapping) or raw.get("schema_version") != DECISION_JOURNAL_SCHEMA_VERSION:
+        if not isinstance(raw, Mapping) or raw.get("schema_version") not in (
+                LEGACY_DECISION_JOURNAL_SCHEMA_VERSION, DECISION_JOURNAL_SCHEMA_VERSION):
             raise InvariantViolation("ECONOMIC_DECISION_SCHEMA_VERSION_UNSUPPORTED")
         try:
             target = lambda item: PortfolioTarget(tuple(item["instruments"]), tuple(Decimal(value) for value in item["weights"]), item["stage"], tuple(item["reason_codes"]))
@@ -303,7 +327,8 @@ class EconomicDecisionRecord:
                 {key: Decimal(value) for key, value in raw["risk_contributions"].items()}, target(raw["raw_target"]),
                 target(raw["constrained_target"]), target(raw["executable_target"]), raw["risk_decision_id"],
                 DecisionState(raw["risk_decision_state"]), tuple(raw["risk_reason_codes"]), raw["policy_versions"],
-                raw["parameter_versions"], raw["model_versions"], raw["code_revision"], raw["decision_id"], raw["content_hash"])
+                raw["parameter_versions"], raw["model_versions"], raw["code_revision"], raw["decision_id"], raw["content_hash"],
+                schema_version=raw["schema_version"])
             if dict(raw) != record.payload():
                 raise ValueError
             return record
@@ -353,7 +378,7 @@ class DecisionOutcomeEvent:
         object.__setattr__(self, "outcome_id", identifier)
 
     def body(self) -> dict[str, object]:
-        return {"schema_version": DECISION_JOURNAL_SCHEMA_VERSION, "decision_id": self.decision_id,
+        return {"schema_version": LEGACY_DECISION_JOURNAL_SCHEMA_VERSION, "decision_id": self.decision_id,
                 "decision_content_hash": self.decision_content_hash, "assessed_at": self.assessed_at.isoformat(),
                 "realized_active_return": self.realized_active_return.payload(),
                 "regression_alpha": self.regression_alpha.payload(), "process_good": self.process_good,
@@ -364,7 +389,7 @@ class DecisionOutcomeEvent:
 
     @classmethod
     def from_payload(cls, raw: object) -> DecisionOutcomeEvent:
-        if not isinstance(raw, Mapping) or raw.get("schema_version") != DECISION_JOURNAL_SCHEMA_VERSION:
+        if not isinstance(raw, Mapping) or raw.get("schema_version") != LEGACY_DECISION_JOURNAL_SCHEMA_VERSION:
             raise InvariantViolation("DECISION_OUTCOME_SCHEMA_VERSION_UNSUPPORTED")
         try:
             event = cls(raw["decision_id"], raw["decision_content_hash"], datetime.fromisoformat(raw["assessed_at"]),

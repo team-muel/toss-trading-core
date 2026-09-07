@@ -4,7 +4,7 @@
   "additionalProperties": false,
   "required": ["schema_version", "run_id", "as_of", "information_cutoff", "assessment_horizon_end", "mandate_key", "mandate_version", "benchmark_key", "benchmark_version", "objective", "reporting_currency", "risk_budget_version", "risk_aversion_policy_version", "state_snapshot_ids", "pricing_lineage_ids", "forecast_lineage_ids", "risk_lineage_ids", "target_lineage_ids", "decision_lineage_ids", "calculation_lineage_ids", "return_metrics", "risk_snapshot_id", "risk_values", "risk_contribution_type", "risk_contributions", "raw_target", "constrained_target", "executable_target", "risk_decision_id", "risk_decision_state", "risk_reason_codes", "policy_versions", "parameter_versions", "model_versions", "code_revision", "decision_id", "content_hash"],
   "properties": {
-    "schema_version": {"enum": ["decision-economic-journal@1", "decision-economic-journal@2"]},
+    "schema_version": {"const": "decision-economic-journal@1"},
     "run_id": {"type": "string"}, "as_of": {"type": "string", "format": "date-time"},
     "information_cutoff": {"type": "string", "format": "date-time"},
     "assessment_horizon_end": {"type": "string", "format": "date-time"},
@@ -13,7 +13,7 @@
     "objective": {"enum": ["ABSOLUTE_WEALTH", "BENCHMARK_RELATIVE", "MIXED"]}, "reporting_currency": {"type": "string"},
     "risk_budget_version": {"type": "string"}, "risk_aversion_policy_version": {"type": "string"},
     "state_snapshot_ids": {"type": "object", "required": ["MARKET", "COMPANY", "PORTFOLIO", "SYSTEM"]},
-    "pricing_lineage_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}, "forecast_lineage_ids": {"$ref": "#/$defs/ids"},
+    "pricing_lineage_ids": {"$ref": "#/$defs/ids"}, "forecast_lineage_ids": {"$ref": "#/$defs/ids"},
     "risk_lineage_ids": {"$ref": "#/$defs/ids"}, "target_lineage_ids": {"$ref": "#/$defs/ids"},
     "decision_lineage_ids": {"$ref": "#/$defs/ids"}, "calculation_lineage_ids": {"$ref": "#/$defs/ids"},
     "return_metrics": {"type": "array", "minItems": 7, "maxItems": 7, "items": {"$ref": "#/$defs/return_metric"}},
@@ -28,7 +28,6 @@
     "decision_id": {"type": "string", "pattern": "^decision-[0-9a-f]{64}$"},
     "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
-  "allOf": [{"if": {"properties": {"schema_version": {"const": "decision-economic-journal@1"}}}, "then": {"properties": {"pricing_lineage_ids": {"minItems": 1}}}}, {"if": {"properties": {"schema_version": {"const": "decision-economic-journal@2"}}}, "then": {"allOf": [{"properties": {"return_metrics": {"contains": {"properties": {"semantic_type": {"const": "PRICING_BASELINE_RETURN"}, "status": {"enum": ["AVAILABLE", "NOT_APPLICABLE"]}}, "required": ["semantic_type", "status"]}, "minContains": 1, "maxContains": 1}}}, {"if": {"properties": {"return_metrics": {"contains": {"properties": {"semantic_type": {"const": "PRICING_BASELINE_RETURN"}, "status": {"const": "NOT_APPLICABLE"}}, "required": ["semantic_type", "status"]}, "minContains": 1, "maxContains": 1}}}, "then": {"properties": {"pricing_lineage_ids": {"maxItems": 0}, "return_metrics": {"contains": {"properties": {"semantic_type": {"const": "MODEL_RELATIVE_ALPHA"}, "status": {"const": "NOT_APPLICABLE"}}, "required": ["semantic_type", "status"]}, "minContains": 1, "maxContains": 1}}}, "else": {"properties": {"pricing_lineage_ids": {"minItems": 1}}}}]}}],
   "$defs": {
     "ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
     "decimal_map": {"type": "object", "additionalProperties": {"type": "string"}},

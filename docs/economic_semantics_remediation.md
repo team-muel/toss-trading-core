@@ -44,13 +44,19 @@ AMA-100/101 stay In Progress until review, integration and remaining acceptance.
 
 ## Remaining adoption before Gate D2/E
 
+Decision Journal v2 now permits explicit inapplicable pricing with no pricing lineage and
+no model-relative alpha, while requiring aligned return contexts. Legacy v1 replay retains
+the original hashes and mandatory pricing contract. Outcome serialization is unchanged.
+This closes the journal format restriction; upstream applicability evidence still needs
+integration through the common decision path.
+
 | Area | Remaining work |
 |---|---|
 | AMA-9/10 | Bind NavComponent inclusion evidence to actual provider contracts and integrate the new NAV basis into period accounting/settlement P&L and account snapshots; helper success alone is not account-period acceptance |
 | AMA-38/41/43 | Register/approve actual v2 models; propagate currency/horizon facts from risk-free and factor inputs (AMA-40/42), beyond explicit output metadata |
 | AMA-44/45 | Migrate historical expected-return stores; wire typed canonical forecasts and applicable model-relative alpha through the common decision path; legacy calculate_alpha is not the new asset-scope entry point |
 | AMA-36/47 | Bind contribution currency/horizon/model lineage in actual state construction; migrate versioned stored datasets without changing old hashes |
-| AMA-57/60 | Recheck governor authority and cost units, and allow canonical non-equity decisions without requiring a fabricated pricing-baseline value in the journal |
+| AMA-57/60 | Recheck governor authority and cost units; bind journal applicability to upstream model/asset scope evidence in the common decision path |
 | AMA-50/61 | Build/revalidate integrated Gate D2/E evidence against current contracts; earlier fixture PASS is insufficient |
 
 expected_return.v1.schema.json preserves the prior serialization contract.

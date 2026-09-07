@@ -27,10 +27,18 @@ or altered outcome data is rejected. Decision quality is then one of
 outcome quality. Before the horizon it is `NOT_MATURED`; after the horizon with no recorded
 outcome it is `PENDING_OUTCOME`.
 
-`EconomicDecisionJournal` writes decision and outcome events as append-only JSONL. It replays only
-the current `decision-economic-journal@1` schema and recomputes every ID/hash, rejecting changed
-meaning rather than silently reinterpreting an old record. A semantic change requires a new schema
-version and an explicit migration.
+`EconomicDecisionJournal` writes decision and outcome events as append-only JSONL. New decisions
+use `decision-economic-journal@2`. All seven metrics must share currency basis and horizon.
+For a pricing model that does not apply, the baseline and model-relative alpha both carry
+`NOT_APPLICABLE`, null values and an empty pricing lineage. Available pricing still requires
+its lineage. Missing forecasts, premature pricing status and fabricated model-relative alpha
+are rejected. Applicability must come from upstream model/asset scope evidence; this journal
+does not infer it from holdings or authorize models.
+
+Explicit `schema_version="decision-economic-journal@1"` preserves legacy construction and
+replay, including its mandatory baseline and exact original IDs/hashes. Reading never upgrades
+stored rows. Outcome events retain their unchanged v1 contract and bind to either decision
+version by its exact ID/hash. Unknown versions and tampered hashes are rejected.
 
 The serialized contracts are [decision_economic_journal.schema.json](../schemas/decision_economic_journal.schema.json)
 and [decision_outcome.schema.json](../schemas/decision_outcome.schema.json). This journal records

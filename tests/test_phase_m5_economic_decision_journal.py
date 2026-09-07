@@ -194,7 +194,7 @@ def test_replay_rejects_tampered_schema_or_hash(tmp_path):
     journal = EconomicDecisionJournal(tmp_path / "economic-decisions.jsonl", mandate_registry())
     item = record(); journal.append(item)
     raw = json.loads(journal.path.read_text(encoding="utf-8"))
-    raw["payload"]["schema_version"] = "decision-economic-journal@2"
+    raw["payload"]["schema_version"] = "decision-economic-journal@999"
     journal.path.write_text(json.dumps(raw) + "\n", encoding="utf-8")
     with pytest.raises(InvariantViolation, match="ECONOMIC_DECISION_JOURNAL_RECORD_INVALID"):
         journal.records()
@@ -210,7 +210,7 @@ def test_schema_covers_complete_versioned_decision_record():
     root = __import__("pathlib").Path(__file__).parents[1]
     schema = json.loads((root / "schemas/decision_economic_journal.schema.json").read_text())
     assert set(schema["required"]) == set(record().payload())
-    assert DECISION_JOURNAL_SCHEMA_VERSION == "decision-economic-journal@1"
+    assert DECISION_JOURNAL_SCHEMA_VERSION == "decision-economic-journal@2"
 
 
 def test_outcome_schema_covers_separate_matured_event():
