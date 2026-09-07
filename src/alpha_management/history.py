@@ -11,14 +11,12 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
-from math import isfinite
-from types import MappingProxyType
 
 from asset_management.time.asof import AsOfContext, require_as_of_context
 
 from .dsl import CompiledExpression, Panel, PanelResolver, RepositoryPanelResolver
 from .expression import Alpha, AlphaSimulationSettings, simulate_cross_section
-from .metrics import SimulationResult, evaluate
+from .metrics import SimulationResult, daily_pnl, evaluate
 
 
 def _require_utc(value: datetime, name: str) -> None:
@@ -41,11 +39,6 @@ class HistoricalSession:
     def __post_init__(self) -> None:
         _require_utc(self.effective_time_utc, "effective_time_utc")
         require_as_of_context(self.context)
-        object.__setattr__(
-            self,
-            "neutralization_groups",
-            MappingProxyType(dict(self.neutralization_groups)),
-        )
         if (
             isinstance(self.resolver, RepositoryPanelResolver)
             and self.resolver.context != self.context
@@ -91,10 +84,6 @@ class HistoryPoint:
     source_run_id: str | None
     code_revision: str | None
     neutralization_groups: Mapping[str, str]
-
-    def __post_init__(self) -> None:
-        for name in ("raw", "base_weights", "weights", "neutralization_groups"):
-            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +151,7 @@ def simulate_history(
     sessions: Sequence[HistoricalSession],
     settings: AlphaSimulationSettings,
     *,
-    forward_returns: Panel | None = None,
+    forward_returns: Mapping[str, Mapping[datetime, float | None]] | None = None,
 ) -> HistorySimulationResult:
     """Evaluate delay and decay over explicitly ordered trading sessions.
 
@@ -188,7 +177,7 @@ def simulate_history(
             source = None
         else:
             source = sessions[source_index]
-            raw = _last_cross_section(expression, source, source.instrument_ids)
+            raw = _last_cross_section(expression, source, instruments)
             available_raw = {
                 instrument_id: float(value)
                 for instrument_id, value in raw.items()
@@ -234,8 +223,16 @@ def simulate_history(
         return result
     panel = result.position_panel
     expected_length = len(result.points)
-    if any(len(series) != expected_length for series in forward_returns.values()):
-        raise ValueError("forward_returns must align with the simulation timeline")
+    aligned_returns = {}
+    for instrument_id, observations in forward_returns.items():
+        if not isinstance(observations, Mapping):
+            raise ValueError("forward_returns requires timestamp-labeled observations")
+        for timestamp in observations:
+            _require_utc(timestamp, "forward return timestamp")
+        if set(observations) != set(effective_times):
+            raise ValueError("forward_returns timestamps must match the simulation timeline")
+        aligned_returns[instrument_id] = [observations[t] for t in effective_times]
+    forward_returns = aligned_returns
     held_instruments = {
         instrument_id
         for instrument_id, series in panel.items()
@@ -256,16 +253,6 @@ def simulate_history(
         raise ValueError(
             f"forward_returns unavailable for held positions: {missing_return_cells}"
         )
-    non_finite_return_cells = [
-        (instrument_id, index)
-        for instrument_id in held_instruments
-        for index, weight in enumerate(panel[instrument_id])
-        if weight is not None and not isfinite(float(forward_returns[instrument_id][index]))
-    ]
-    if non_finite_return_cells:
-        raise ValueError(
-            f"forward_returns non-finite for held positions: {non_finite_return_cells}"
-        )
     available = [
         index
         for index in range(expected_length)
@@ -279,10 +266,20 @@ def simulate_history(
         instrument_id: [series[index] for index in available]
         for instrument_id, series in forward_returns.items()
     }
+    try:
+        pnl = daily_pnl(scored_positions, scored_returns)
+        if not all(isfinite(value) for value in pnl):
+            raise ValueError("non-finite historical PnL")
+        metrics = evaluate(scored_positions, scored_returns, settings.book_size)
+        if not all(isfinite(getattr(metrics, name)) for name in
+                   ("sharpe", "returns", "turnover", "fitness", "max_drawdown")):
+            raise ValueError("non-finite historical metrics")
+    except OverflowError as exc:
+        raise ValueError("historical metrics overflow") from exc
     return HistorySimulationResult(
         expression=result.expression,
         expression_hash=result.expression_hash,
         settings=result.settings,
         points=result.points,
-        metrics=evaluate(scored_positions, scored_returns, settings.book_size),
+        metrics=metrics,
     )
