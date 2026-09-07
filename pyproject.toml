@@ -45,6 +45,9 @@ where = ["src"]
 "share/toss-trading/schemas/execution-microstructure" = ["schemas/execution_microstructure.schema.json"]
 "share/toss-trading/docs/execution-microstructure" = ["docs/execution_microstructure.md"]
 
+"share/toss-trading/schemas/scheduling" = ["schemas/execution_schedule.schema.json"]
+"share/toss-trading/docs/scheduling" = ["docs/execution_scheduling.md"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
