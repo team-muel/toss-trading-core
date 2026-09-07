@@ -60,3 +60,7 @@ Caller-supplied manifest pins are checked against source, dataset, quality, and
 cutoff metadata; historical series accept delisted instruments only when their
 canonical instrument history exists. Returned history-point mappings are
 immutable audit snapshots.
+
+Forward returns require UTC timestamp keys matching the effective session timeline.
+Observation alignment normalizes time zones and rejects duplicate instants.
+Non-finite calculated PnL and metrics are rejected.

@@ -472,7 +472,7 @@ def test_history_can_attach_existing_metric_bundle():
         compile_expression("sign(close)", data_fields={"close"}),
         sessions([{"a": 1}, {"a": 1}, {"a": -1}]),
         history_settings(delay=1),
-        forward_returns={"a": [0.01, -0.02, 0.03]},
+        forward_returns=dated_returns({"a": [0.01, -0.02, 0.03]}),
     )
     assert result.metrics is not None
     assert result.metrics.periods == 2
@@ -484,7 +484,7 @@ def test_history_metrics_reject_missing_returns_for_a_held_instrument():
             compile_expression("sign(close)", data_fields={"close"}),
             sessions([{"a": 1, "b": -1}]),
             history_settings(),
-            forward_returns={"a": [0.01]},
+            forward_returns=dated_returns({"a": [0.01]}),
         )
 
 
@@ -494,7 +494,7 @@ def test_history_metrics_reject_missing_return_for_a_held_period():
             compile_expression("sign(close)", data_fields={"close"}),
             sessions([{"a": 1}, {"a": -1}]),
             history_settings(),
-            forward_returns={"a": [0.01, None]},
+            forward_returns=dated_returns({"a": [0.01, None]}),
         )
 
 
@@ -505,7 +505,7 @@ def test_history_metrics_reject_non_finite_return_for_a_held_period(invalid_retu
             compile_expression("sign(close)", data_fields={"close"}),
             sessions([{"a": 1}]),
             history_settings(),
-            forward_returns={"a": [invalid_return]},
+            forward_returns=dated_returns({"a": [invalid_return]}),
         )
 
 
@@ -633,7 +633,7 @@ def test_history_points_are_immutable_audit_snapshots():
         compile_expression("close", data_fields={"close"}),
         sessions([{"a": 1, "b": -1}]),
         history_settings(),
-        forward_returns={"a": [0.01], "b": [-0.01]},
+        forward_returns=dated_returns({"a": [0.01], "b": [-0.01]}),
     )
     point = result.points[0]
 
@@ -645,3 +645,38 @@ def test_history_points_are_immutable_audit_snapshots():
         point.weights["a"] = 99
     assert result.position_panel["a"] == [pytest.approx(0.5)]
     assert result.metrics is not None
+
+def dated_returns(panel):
+    return {symbol: {context(i + 1).as_of_utc: value for i, value in enumerate(values)}
+            for symbol, values in panel.items()}
+
+
+def test_returns_reject_shifted_timestamps():
+    with pytest.raises(ValueError, match="timestamps must match"):
+        simulate_history(compile_expression("close", data_fields={"close"}),
+                         sessions([{"a": 1}]), history_settings(),
+                         forward_returns={"a": {context(2).as_of_utc: 0.1}})
+
+
+def test_returns_reject_metric_overflow():
+    with pytest.raises(ValueError, match="non-finite historical metrics"):
+        simulate_history(compile_expression("close", data_fields={"close"}),
+                         sessions([{"a": 1}]), history_settings(),
+                         forward_returns=dated_returns({"a": [1e308]}))
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+def test_repository_normalizes_observation_instants(duplicate):
+    class Source:
+        def time_series_observations(self, *args, **kwargs):
+            values = [("2025-12-31T19:00:00-05:00", 2)]
+            return values + ([("2026-01-01T00:00:00Z", 3)] if duplicate else [])
+    resolver = RepositoryPanelResolver(
+        RepositoryDataFields(Source()), ("a",), context(1), {},
+        ("2026-01-01T00:00:00Z",),
+        {"2026-01-01T00:00:00Z": frozenset({"a"})})
+    if duplicate:
+        with pytest.raises(ExpressionError, match="duplicate normalized"):
+            resolver.field("close")
+    else:
+        assert resolver.field("close") == {"a": [2.0]}

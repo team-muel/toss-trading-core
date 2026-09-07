@@ -298,10 +298,18 @@ class RepositoryPanelResolver:
             )
             for instrument_id in self.instrument_ids
         }
-        indexed = {instrument_id: dict(values) for instrument_id, values in observations.items()}
+        indexed = {}
+        for instrument_id, values in observations.items():
+            normalized = {}
+            for period, value in values:
+                key = _reference_period_key(period)
+                if key in normalized:
+                    raise ExpressionError("duplicate normalized observation period")
+                normalized[key] = value
+            indexed[instrument_id] = normalized
         return {
             instrument_id: [
-                indexed[instrument_id].get(period)
+                indexed[instrument_id].get(_reference_period_key(period))
                 if instrument_id in self.universe_membership[period]
                 else None
                 for period in self.reference_periods

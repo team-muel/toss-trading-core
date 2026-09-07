@@ -18,7 +18,7 @@ from asset_management.time.asof import AsOfContext, require_as_of_context
 
 from .dsl import CompiledExpression, Panel, PanelResolver, RepositoryPanelResolver
 from .expression import Alpha, AlphaSimulationSettings, simulate_cross_section
-from .metrics import SimulationResult, evaluate
+from .metrics import SimulationResult, daily_pnl, evaluate
 
 
 def _require_utc(value: datetime, name: str) -> None:
@@ -162,7 +162,7 @@ def simulate_history(
     sessions: Sequence[HistoricalSession],
     settings: AlphaSimulationSettings,
     *,
-    forward_returns: Panel | None = None,
+    forward_returns: Mapping[str, Mapping[datetime, float | None]] | None = None,
 ) -> HistorySimulationResult:
     """Evaluate delay and decay over explicitly ordered trading sessions.
 
@@ -234,8 +234,16 @@ def simulate_history(
         return result
     panel = result.position_panel
     expected_length = len(result.points)
-    if any(len(series) != expected_length for series in forward_returns.values()):
-        raise ValueError("forward_returns must align with the simulation timeline")
+    aligned_returns = {}
+    for instrument_id, observations in forward_returns.items():
+        if not isinstance(observations, Mapping):
+            raise ValueError("forward_returns requires timestamp-labeled observations")
+        for timestamp in observations:
+            _require_utc(timestamp, "forward return timestamp")
+        if set(observations) != set(effective_times):
+            raise ValueError("forward_returns timestamps must match the simulation timeline")
+        aligned_returns[instrument_id] = [observations[t] for t in effective_times]
+    forward_returns = aligned_returns
     held_instruments = {
         instrument_id
         for instrument_id, series in panel.items()
@@ -279,10 +287,20 @@ def simulate_history(
         instrument_id: [series[index] for index in available]
         for instrument_id, series in forward_returns.items()
     }
+    try:
+        pnl = daily_pnl(scored_positions, scored_returns)
+        if not all(isfinite(value) for value in pnl):
+            raise ValueError("non-finite historical PnL")
+        metrics = evaluate(scored_positions, scored_returns, settings.book_size)
+        if not all(isfinite(getattr(metrics, name)) for name in
+                   ("sharpe", "returns", "turnover", "fitness", "max_drawdown")):
+            raise ValueError("non-finite historical metrics")
+    except OverflowError as exc:
+        raise ValueError("historical metrics overflow") from exc
     return HistorySimulationResult(
         expression=result.expression,
         expression_hash=result.expression_hash,
         settings=result.settings,
         points=result.points,
-        metrics=evaluate(scored_positions, scored_returns, settings.book_size),
+        metrics=metrics,
     )
