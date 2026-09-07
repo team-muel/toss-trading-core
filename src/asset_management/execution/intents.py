@@ -15,8 +15,9 @@ class TargetWeight:
     def __post_init__(self) -> None:
         target = exact_decimal(self.target)
         current = exact_decimal(self.current)
-        if not Decimal("0") <= target <= Decimal("1"):
-            raise InvariantViolation("target weight must be between zero and one")
+        if (not isinstance(self.instrument_id, str) or not self.instrument_id.strip() or
+                not Decimal("0") <= target <= Decimal("1") or not Decimal("0") <= current <= Decimal("1")):
+            raise InvariantViolation("target and current weights must be named fractions")
         object.__setattr__(self, "target", target)
         object.__setattr__(self, "current", current)
 
@@ -43,5 +44,6 @@ class OrderIntent:
             raise InvariantViolation("risk decision belongs to a different portfolio target")
         if authorization.portfolio_target_hash != self.portfolio_target_hash:
             raise InvariantViolation("portfolio target changed after risk approval")
-        if not self.target_weights:
+        if (not self.target_weights or any(not isinstance(item, TargetWeight) for item in self.target_weights) or
+                len({item.instrument_id for item in self.target_weights}) != len(self.target_weights)):
             raise InvariantViolation("order intent requires target weights")
