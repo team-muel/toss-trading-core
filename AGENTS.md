@@ -29,17 +29,17 @@ When a Linear issue key is present in a branch, PR, or prompt, use it to underst
 
 ## Before requesting review
 
-Run the checks applicable to the change. For broad changes, the current baseline is:
+Run the checks applicable to the change. For broad changes, mirror the repository CI baseline:
 
 ```bash
 python -m pytest -q
-python scripts/check_secrets.py
-python scripts/check_governance.py
 python scripts/check_toss_openapi.py
-python -m build
+python -m toss_trading.cli.research_validate_instruments
+python -m build --wheel
+python -c "import toss_trading.runtime"
 ```
 
-For shell changes, also run syntax validation and `shellcheck` on the affected scripts.
+When packaging behavior changes, also verify the built wheel installs and can load its packaged resources outside the checkout, matching CI. For shell changes, run `bash -n` and `shellcheck` on the affected scripts.
 
 Document:
 
