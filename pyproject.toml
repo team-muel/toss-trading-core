@@ -42,6 +42,8 @@ where = ["src"]
 "share/toss-trading/docs/recovery" = ["docs/crash_recovery.md"]
 "share/toss-trading/schemas/order-intent" = ["schemas/order_intent_plan.schema.json"]
 "share/toss-trading/docs/order-intent" = ["docs/order_intent_planner.md"]
+"share/toss-trading/schemas/execution-microstructure" = ["schemas/execution_microstructure.schema.json"]
+"share/toss-trading/docs/execution-microstructure" = ["docs/execution_microstructure.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
