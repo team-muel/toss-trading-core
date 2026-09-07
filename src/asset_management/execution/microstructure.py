@@ -254,6 +254,8 @@ def assess_microstructure(*, policy: MicrostructurePolicy, side: IntentSide, dec
         reasons.append("QUOTE_STALE_OR_UNAVAILABLE")
     if arrival_quote.session is MarketSession.CLOSED:
         reasons.append("SESSION_CLOSED")
+    if calendar.session_at(at) is not arrival_quote.session:
+        reasons.append("EXECUTION_SESSION_CHANGED")
     if arrival_quote.session is MarketSession.PREMARKET and not policy.allow_premarket:
         reasons.append("PREMARKET_NOT_PERMITTED")
     if arrival_quote.session is MarketSession.AFTERHOURS and not policy.allow_afterhours:
@@ -279,8 +281,19 @@ def to_executable_quote(*, assessment: MicrostructureAssessment,
             assessment.action is not DecisionAction.ALLOW or assessment.executable_price_reference is None):
         raise DataQualityError("MICROSTRUCTURE_QUOTE_NOT_EXECUTABLE")
     quote = assessment.arrival_quote
+    fresh = assess_microstructure(policy=policy, side=assessment.side,
+                                  decision_price=assessment.decision_price, arrival_quote=quote,
+                                  calendar=assessment.calendar, evaluated_at=assessment.evaluated_at)
+    if fresh != assessment:
+        raise DataQualityError("MICROSTRUCTURE_QUOTE_NOT_EXECUTABLE")
+    calendar = assessment.calendar
+    session_end = {MarketSession.PREMARKET: calendar.regular_open_at,
+                   MarketSession.REGULAR: calendar.regular_close_at,
+                   MarketSession.AFTERHOURS: calendar.afterhours_close_at}.get(quote.session)
+    if session_end is None:
+        raise DataQualityError("MICROSTRUCTURE_QUOTE_NOT_EXECUTABLE")
     return ExecutableQuote(price=assessment.executable_price_reference, observed_at=quote.observed_at,
-                           valid_until=quote.observed_at + policy.max_quote_age,
+                           valid_until=min(quote.observed_at + policy.max_quote_age, session_end),
                            session_open=quote.session is not MarketSession.CLOSED)
 
 

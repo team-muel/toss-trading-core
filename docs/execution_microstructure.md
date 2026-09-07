@@ -22,5 +22,9 @@ sessions, auctions, volatility spikes, and excessive or flagged spreads return
 every `DEFER` or `BLOCK` assessment. It passes the side-aware arrival reference,
 never the decision price or a reference close.
 
+Session eligibility is checked at evaluation time as well as quote time. The
+planner bridge revalidates the assessment and caps expiry at session end;
+execution quote expiry is exclusive.
+
 The evidence schema is
 [`schemas/execution_microstructure.schema.json`](../schemas/execution_microstructure.schema.json).

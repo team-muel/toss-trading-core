@@ -187,7 +187,7 @@ def plan_order_intents(*, source: OrderIntent, nav: Decimal, quotes: Mapping[str
             raise DataQualityError("ORDER_SESSION_CLOSED")
         if instant < quote.observed_at:
             raise DataQualityError("ORDER_QUOTE_FROM_FUTURE")
-        if instant > quote.valid_until:
+        if instant >= quote.valid_until:
             raise DataQualityError("ORDER_QUOTE_STALE")
         desired = (nav * target.target / quote.price / rule.lot_size).to_integral_value(rounding=ROUND_DOWN) * rule.lot_size
         delta = desired - current - open_quantity
