@@ -1,0 +1,64 @@
+# Agent operating contract
+
+This repository is a high-risk trading research and execution foundation. Agents must preserve explicit authority boundaries and fail-closed behavior.
+
+## Source of truth
+
+- Linear owns scope, priority, dependencies, and delivery state.
+- GitHub owns implementation evidence: commits, pull requests, reviews, CI, releases, and deployments.
+- Notion may hold durable architecture and runbooks, but repository contracts and tests govern executable behavior.
+
+When a Linear issue key is present in a branch, PR, or prompt, use it to understand intent and acceptance criteria. Do not invent requirements that conflict with repository contracts.
+
+## Non-negotiable invariants
+
+1. Never enable live trading implicitly.
+2. Never bypass or weaken risk, authorization, reconciliation, replay, or governance gates to make a test pass.
+3. Preserve fail-closed behavior for stale, conflicting, incomplete, or unverifiable evidence.
+4. Keep research, paper, shadow, and live semantics explicit. Do not silently promote artifacts across modes.
+5. Preserve point-in-time semantics and lineage. Future information must not leak into historical or prospective calculations.
+6. Treat broker/account state and immutable evidence as authoritative where documented.
+7. Do not commit credentials, tokens, private account data, or unredacted broker responses.
+
+## Before implementation
+
+- Read the relevant docs, schemas, tests, and neighboring implementation before editing.
+- Identify the authority boundary and expected failure behavior.
+- Prefer the smallest coherent change that satisfies the requested contract.
+- Preserve deterministic replay and idempotency where the affected subsystem supports them.
+
+## Before requesting review
+
+Run the checks applicable to the change. For broad changes, the current baseline is:
+
+```bash
+python -m pytest -q
+python scripts/check_secrets.py
+python scripts/check_governance.py
+python scripts/check_toss_openapi.py
+python -m build
+```
+
+For shell changes, also run syntax validation and `shellcheck` on the affected scripts.
+
+Document:
+
+- what changed and why,
+- failure modes,
+- regression surface,
+- verification performed,
+- any known limitation or deferred work.
+
+## Review protocol
+
+Review in this order:
+
+1. Correctness and semantic invariants.
+2. Authority and fail-closed boundaries.
+3. Point-in-time data integrity and lineage.
+4. Idempotency, replay, and recovery behavior.
+5. Security and secret handling.
+6. Negative-path and regression tests.
+7. Maintainability.
+
+Material review findings must be fixed or explicitly dispositioned. Do not merge with unresolved correctness, security, data-integrity, or governance findings.
