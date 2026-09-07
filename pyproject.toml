@@ -38,6 +38,8 @@ where = ["src"]
 
 "share/toss-trading/schemas/gate-e" = ["schemas/portfolio_decision_integrity_acceptance.schema.json"]
 "share/toss-trading/docs/gate-e" = ["docs/gate_e_portfolio_decision_integrity.md", "docs/evidence/gate_e_portfolio_decision_integrity_2026-09-07.json"]
+"share/toss-trading/schemas/recovery" = ["schemas/crash_recovery.schema.json"]
+"share/toss-trading/docs/recovery" = ["docs/crash_recovery.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
