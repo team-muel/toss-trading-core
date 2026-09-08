@@ -191,6 +191,10 @@ def plan_order_intents(*, source: OrderIntent, nav: Decimal, quotes: Mapping[str
             raise DataQualityError("ORDER_QUOTE_STALE")
         desired = (nav * target.target / quote.price / rule.lot_size).to_integral_value(rounding=ROUND_DOWN) * rule.lot_size
         delta = desired - current - open_quantity
+        # Never place a new order that crosses an active order. Opposite-side work
+        # must first cancel/expire and reconcile the outstanding exposure.
+        if open_quantity != 0 and delta != 0 and ((open_quantity > 0) != (delta > 0)):
+            raise DataQualityError("OPEN_ORDER_EXPOSURE_CROSS")
         if delta == 0:
             continue
         quantity = (abs(delta) / rule.lot_size).to_integral_value(rounding=ROUND_DOWN) * rule.lot_size
