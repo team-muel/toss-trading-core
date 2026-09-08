@@ -1,0 +1,29 @@
+{
+  "decision": "FAIL",
+  "reason_codes": [
+    "CHECK_FAILED:RISK_FREE_CURRENCY_HORIZON_COMPOUNDING_VERIFIED",
+    "CHECK_FAILED:FACTOR_SPECIFIC_RISK_DECOMPOSITION_AND_FLOOR_VERIFIED",
+    "CHECK_FAILED:MODEL_SCOPE_AND_CALCULATION_LINEAGE_COMPLETE"
+  ],
+  "evidence_artifact_ids": [
+    "evidence:ama_100_economic_semantics_verified",
+    "evidence:ama_101_semantic_remediation_verified",
+    "evidence:covariance_psd_and_stability_verified",
+    "evidence:equity_pricing_baseline_scope_and_asset_applicability_verified",
+    "evidence:expected_return_components_and_per_share_growth_reconciled",
+    "evidence:factor_specific_risk_decomposition_and_floor_verified",
+    "evidence:mandate_benchmark_risk_authority_pre_registered",
+    "evidence:model_scope_and_calculation_lineage_complete",
+    "evidence:non_equity_forecasts_independent_of_pricing_baseline_verified",
+    "evidence:numeric_currency_horizon_unit_formula_context_complete",
+    "evidence:return_semantic_types_separated",
+    "evidence:risk_free_currency_horizon_compounding_verified",
+    "evidence:uncertainty_shrinkage_abstain_and_no_double_confidence_verified",
+    "evidence:var_cvar_fx_liquidity_stress_reproducible",
+    "evidence:variance_contributions_reconcile",
+    "evidence:volatility_contributions_reconcile"
+  ],
+  "evaluated_at": "2026-09-08T00:00:00+00:00",
+  "code_revision": "gate-d2@1",
+  "content_hash": "4322f18d96332dceb85932a7405444c4e06037d2610725597fe568155ddfa879"
+}
