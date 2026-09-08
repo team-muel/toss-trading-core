@@ -10,6 +10,7 @@ from typing import Mapping, Sequence
 
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest, utc
 from asset_management.domain.errors import DataQualityError, InvariantViolation
+from asset_management.domain.horizon import SignalValidity
 
 
 _HASH = re.compile(r"[0-9a-f]{64}")
@@ -86,7 +87,7 @@ class ForecastCombinationRegistry:
 
 @dataclass(frozen=True, slots=True)
 class ForecastSource:
-    """A calibrated forecast overlay with neutralization and OOS evidence lineage."""
+    """A calibrated forecast overlay with complete SignalValidity and OOS lineage."""
 
     forecast_calibration_id: str
     signal_run_id: str
@@ -98,8 +99,7 @@ class ForecastSource:
     universe_manifest_id: str
     currency: str
     unit: str
-    horizon: int
-    valid_until: datetime
+    validity: SignalValidity
     point_estimates: Mapping[str, Decimal]
     uncertainty: Decimal
     confidence: Decimal
@@ -117,13 +117,12 @@ class ForecastSource:
                 raise InvariantViolation("FORECAST_COMBINATION_LINEAGE_INVALID")
         if (not isinstance(self.signal_id, str) or not self.signal_id.strip() or
                 self.currency != "USD" or self.unit != "DECIMAL_RETURN" or
-                self.horizon not in {21, 63, 126, 252}):
+                not isinstance(self.validity, SignalValidity)):
             raise InvariantViolation("FORECAST_COMBINATION_SOURCE_INVALID")
         as_of = _aware(self.as_of, "FORECAST_COMBINATION_TIME_NOT_AWARE")
         cutoff = _aware(self.information_cutoff, "FORECAST_COMBINATION_TIME_NOT_AWARE")
         evidence = _aware(self.oos_evidence_available_at, "FORECAST_COMBINATION_TIME_NOT_AWARE")
-        valid_until = _aware(self.valid_until, "FORECAST_COMBINATION_TIME_NOT_AWARE")
-        if cutoff > as_of or valid_until <= as_of:
+        if cutoff > as_of or self.validity.valid_until <= as_of:
             raise InvariantViolation("FORECAST_COMBINATION_SOURCE_INVALID")
         estimates = dict(sorted(self.point_estimates.items()))
         if not estimates or any(not isinstance(key, str) or not key.strip() or
@@ -140,9 +139,17 @@ class ForecastSource:
             raise InvariantViolation("FORECAST_COMBINATION_SOURCE_INVALID")
         _decimal(self.incremental_ic, "FORECAST_COMBINATION_SOURCE_INVALID")
         for name, value in (("as_of", as_of), ("information_cutoff", cutoff),
-                            ("oos_evidence_available_at", evidence), ("valid_until", valid_until),
+                            ("oos_evidence_available_at", evidence),
                             ("point_estimates", MappingProxyType(estimates))):
             object.__setattr__(self, name, value)
+
+    @property
+    def horizon(self) -> int:
+        return self.validity.forecast_horizon
+
+    @property
+    def valid_until(self) -> datetime:
+        return self.validity.valid_until
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,11 +172,11 @@ class ForecastCombinationRequest:
         for source in self.sources:
             if (source.as_of != first.as_of or source.information_cutoff != first.information_cutoff or
                     source.universe_manifest_id != first.universe_manifest_id or source.currency != first.currency or
-                    source.unit != first.unit or source.horizon != first.horizon or
-                    source.valid_until != first.valid_until or set(source.point_estimates) != universe or
+                    source.unit != first.unit or source.validity != first.validity or
+                    set(source.point_estimates) != universe or
                     source.oos_evidence_available_at > first.information_cutoff or
                     source.oos_evidence_available_at > evaluated or source.as_of > evaluated or
-                    source.valid_until <= evaluated):
+                    source.validity.valid_until <= evaluated):
                 raise InvariantViolation("FORECAST_COMBINATION_LINEAGE_OR_TIME_INVALID")
         for matrix, diagonal in ((self.covariance, False), (self.correlation, True)):
             if any(len(row) != size for row in matrix):
@@ -231,6 +238,7 @@ class ForecastCombiner:
                     "currency": request.sources[0].currency, "unit": request.sources[0].unit,
                     "horizon": request.sources[0].horizon,
                     "valid_until": request.sources[0].valid_until.isoformat(),
+                    "signal_validity": request.sources[0].validity.payload(),
                 }
             contribution = {
                 source.signal_id: {
@@ -248,6 +256,7 @@ class ForecastCombiner:
                 "neutralization_lineage_ids": [source.neutralization_id for source in request.sources],
                 "universe_manifest_id": request.sources[0].universe_manifest_id,
                 "as_of": utc(request.sources[0].as_of), "information_cutoff": utc(request.sources[0].information_cutoff),
+                "signal_validity": request.sources[0].validity.payload(),
                 "parameter_registry_key": parameters.key, "formula_version": parameters.formula_version,
                 "parameter_set_id": parameters.parameter_set_id, "contributions": contribution,
                 "effective_independent_forecasts": str(effective), "combined_uncertainty": str(combined_uncertainty),
