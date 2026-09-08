@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import re
 from types import MappingProxyType
 from typing import Mapping
 
@@ -15,6 +16,7 @@ from .models import SignalSnapshot
 
 
 _GROUPS = frozenset(("sector", "industry", "size", "liquidity"))
+_HASH = re.compile(r"[0-9a-f]{64}")
 
 
 def _decimal(value: Decimal, reason: str) -> Decimal:
@@ -98,6 +100,8 @@ class NeutralizationInput:
     forward_returns: Mapping[str, Decimal]
     oos_forecast_before: Mapping[str, Decimal]
     oos_forecast_after: Mapping[str, Decimal]
+    oos_forecast_before_manifest_id: str
+    oos_forecast_after_manifest_id: str
     turnover_before: Decimal
     turnover_after: Decimal
 
@@ -110,6 +114,11 @@ class NeutralizationInput:
         available = self._aware(self.outcome_available_at)
         if cutoff > as_of or embargo <= as_of or available < embargo:
             raise InvariantViolation("NEUTRALIZATION_TEMPORAL_ORDER_INVALID")
+        for identifier in (self.oos_forecast_before_manifest_id, self.oos_forecast_after_manifest_id):
+            if not isinstance(identifier, str) or _HASH.fullmatch(identifier) is None:
+                raise InvariantViolation("NEUTRALIZATION_OOS_FORECAST_LINEAGE_INVALID")
+        if self.oos_forecast_before_manifest_id == self.oos_forecast_after_manifest_id:
+            raise InvariantViolation("NEUTRALIZATION_OOS_FORECAST_LINEAGE_INVALID")
         universe = tuple(sorted(self.universe))
         if not universe or len(set(universe)) != len(universe):
             raise InvariantViolation("NEUTRALIZATION_UNIVERSE_PIT_INVALID")
@@ -162,6 +171,8 @@ class NeutralizationInput:
             "forward_returns": {key: str(value) for key, value in self.forward_returns.items()},
             "oos_forecast_before": {key: str(value) for key, value in self.oos_forecast_before.items()},
             "oos_forecast_after": {key: str(value) for key, value in self.oos_forecast_after.items()},
+            "oos_forecast_before_manifest_id": self.oos_forecast_before_manifest_id,
+            "oos_forecast_after_manifest_id": self.oos_forecast_after_manifest_id,
             "turnover_before": str(self.turnover_before), "turnover_after": str(self.turnover_after),
         }
 
@@ -180,6 +191,30 @@ class SignalNeutralizer:
     def __init__(self, store: ImmutableDatasetStore) -> None:
         self.store = store
 
+    def _verified_oos_forecast(self, manifest_id: str, expected: Mapping[str, Decimal],
+                               inputs: NeutralizationInput) -> None:
+        try:
+            manifest, body = self.store.read(manifest_id)
+        except Exception:
+            raise DataQualityError("NEUTRALIZATION_OOS_FORECAST_LINEAGE_INVALID") from None
+        if (manifest.layer != "gold" or manifest.dataset != "oos-forecast" or
+                manifest.quality_status != "VALID" or
+                datetime.fromisoformat(manifest.available_at) > inputs.as_of or
+                not isinstance(body, dict)):
+            raise DataQualityError("NEUTRALIZATION_OOS_FORECAST_LINEAGE_INVALID")
+        try:
+            training_cutoff = NeutralizationInput._aware(datetime.fromisoformat(str(body["training_cutoff"])))
+            model_run_id = str(body["model_run_id"])
+            universe_manifest_id = str(body["universe_manifest_id"])
+            values = {str(key): Decimal(str(value)) for key, value in dict(body["values"]).items()}
+        except Exception:
+            raise DataQualityError("NEUTRALIZATION_OOS_FORECAST_LINEAGE_INVALID") from None
+        if (training_cutoff > inputs.information_cutoff or _HASH.fullmatch(model_run_id) is None or
+                universe_manifest_id != inputs.candidate.universe_manifest_id or
+                set(values) != set(inputs.universe) or any(not value.is_finite() for value in values.values()) or
+                values != dict(expected)):
+            raise DataQualityError("NEUTRALIZATION_OOS_FORECAST_LINEAGE_INVALID")
+
     def evaluate(self, inputs: NeutralizationInput, *, config: NeutralizationConfig,
                  evaluated_at: datetime) -> NeutralizationResult:
         try:
@@ -187,6 +222,10 @@ class SignalNeutralizer:
                 raise DataQualityError("NEUTRALIZATION_OUTCOME_NOT_AVAILABLE")
             if inputs.embargo_until - inputs.as_of < config.minimum_embargo:
                 raise DataQualityError("NEUTRALIZATION_EMBARGO_INSUFFICIENT")
+            self._verified_oos_forecast(inputs.oos_forecast_before_manifest_id,
+                                        inputs.oos_forecast_before, inputs)
+            self._verified_oos_forecast(inputs.oos_forecast_after_manifest_id,
+                                        inputs.oos_forecast_after, inputs)
             candidate = _signal_values(inputs.candidate, inputs.universe)
             baselines = [_signal_values(item, inputs.universe) for item in inputs.baselines]
             exposure_columns = [{item: Decimal(1) if inputs.exposures[item][group] == label else Decimal(0)
@@ -247,6 +286,8 @@ class SignalNeutralizer:
                 "partial_correlation": str(partial_ic), "incremental_ic": str(partial_ic),
                 "oos_mae_before": str(before_mae), "oos_mae_after": str(after_mae),
                 "oos_mae_improvement": str(before_mae - after_mae),
+                "oos_forecast_before_manifest_id": inputs.oos_forecast_before_manifest_id,
+                "oos_forecast_after_manifest_id": inputs.oos_forecast_after_manifest_id,
                 "coverage_before": "1", "coverage_after": "1",
                 "turnover_before": str(inputs.turnover_before), "turnover_after": str(inputs.turnover_after),
                 "cost_before": str(config.transaction_cost_per_turnover * inputs.turnover_before),
