@@ -56,7 +56,11 @@ def stress_covariance(normal: CovarianceEstimate, volatility_multiplier: Decimal
     return _estimate(tuple(matrix),"STRESS",normal.observation_count,True,normal.annualization_factor)
 
 def is_psd(matrix, tolerance=Decimal("1e-18")):
-    n=len(matrix); lower=[[Decimal(0)]*n for _ in range(n)]
+    n=len(matrix)
+    if (not n or any(len(row)!=n for row in matrix) or
+            any(matrix[i][j] != matrix[j][i] for i in range(n) for j in range(i+1,n))):
+        return False
+    lower=[[Decimal(0)]*n for _ in range(n)]
     for i in range(n):
         for j in range(i+1):
             residual=matrix[i][j]-sum(lower[i][k]*lower[j][k] for k in range(j))
