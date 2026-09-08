@@ -27,8 +27,14 @@ jobs:
           jq -e --arg head "$EXPECTED_HEAD" '.data.repository.pullRequest as $p | $p.headRefOid == $head and $p.baseRefName == "master" and $p.state == "OPEN" and ($p.isDraft | not) and $p.isMergeQueueEnabled and ($p.reviewThreads.pageInfo.hasNextPage | not) and all($p.reviewThreads.nodes[]; .isResolved == true) and any($p.reviews.nodes[]; .commit.oid == $head and .state == "COMMENTED")' "$RUNNER_TEMP/pr.json"
           jq '.data.repository.pullRequest | {headRefOid,baseRefName,state,isDraft,isMergeQueueEnabled,isInMergeQueue,unresolved:([.reviewThreads.nodes[] | select(.isResolved == false)] | length)}' "$RUNNER_TEMP/pr.json"
           gh pr checks 62 --required --json name,state,bucket > "$RUNNER_TEMP/checks.json"
-          jq -e 'length >= 2 and all(.[]; .bucket == "pass") and any(.[]; .name == "test (3.11)") and any(.[]; .name == "test (3.12)")' "$RUNNER_TEMP/checks.json"
           cat "$RUNNER_TEMP/checks.json"
+          jq -e 'all(.[]; .bucket == "pass")' "$RUNNER_TEMP/checks.json"
+          # Verify the two ruleset-required jobs directly, including exact run/head.
+          gh api repos/team-muel/toss-trading-core/actions/runs/34223039777 > "$RUNNER_TEMP/run.json"
+          jq -e --arg head "$EXPECTED_HEAD" '.head_sha == $head and .event == "pull_request" and .status == "completed" and .conclusion == "success"' "$RUNNER_TEMP/run.json"
+          gh api repos/team-muel/toss-trading-core/actions/runs/34223039777/jobs > "$RUNNER_TEMP/jobs.json"
+          jq '.jobs | map({name,status,conclusion})' "$RUNNER_TEMP/jobs.json"
+          jq -e '.total_count == 2 and (.jobs | length) == 2 and all(.jobs[]; .status == "completed" and .conclusion == "success") and any(.jobs[]; .name == "test (3.11)") and any(.jobs[]; .name == "test (3.12)")' "$RUNNER_TEMP/jobs.json"
       - name: Enqueue only with expected head protection
         shell: bash
         run: |
