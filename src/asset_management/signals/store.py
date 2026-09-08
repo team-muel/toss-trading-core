@@ -137,9 +137,7 @@ class SignalStore:
             raise DataQualityError("SIGNAL_FEATURE_CONTEXT_INVALID") from None
         if (as_of != context.as_of or cutoff != context.information_cutoff or
                 context.universe_manifest_id not in snapshot.input_manifest_ids or
-                snapshot.validity.forecast_horizon != validity.forecast_horizon or
-                snapshot.validity.holding_horizon != validity.holding_horizon or
-                snapshot.validity.valid_until <= context.as_of):
+                snapshot.validity != validity or snapshot.validity.valid_until <= context.as_of):
             raise DataQualityError("SIGNAL_FEATURE_CONTEXT_INVALID")
 
     def _verify_context_manifests(self, context: SignalContext) -> None:
@@ -173,13 +171,26 @@ class SignalStore:
             manifest, body = self.store.read(item.manifest_id)
         except (FileNotFoundError, ValueError):
             raise DataQualityError("SIGNAL_FEATURE_MANIFEST_UNVERIFIED") from None
+        snapshot = item.snapshot
+        expected = {
+            "feature_run_id": snapshot.feature_run_id,
+            "instrument_id": snapshot.instrument_id,
+            "feature_id": snapshot.feature_id,
+            "as_of": snapshot.as_of,
+            "information_cutoff": snapshot.information_cutoff,
+            "value": snapshot.value,
+            "quality_status": snapshot.quality_status,
+            "input_manifest_ids": list(snapshot.input_manifest_ids),
+            "parameter_set_id": snapshot.parameter_set_id,
+            "parent_state_id": snapshot.parent_state_id,
+            "code_revision": snapshot.code_revision,
+            "validity": snapshot.validity.payload(),
+        }
         if (manifest.layer != "gold" or manifest.dataset != "feature-snapshot" or
                 datetime.fromisoformat(manifest.available_at) > context.information_cutoff or
-                not isinstance(body, dict) or body.get("feature_run_id") != item.snapshot.feature_run_id or
-                body.get("instrument_id") != item.snapshot.instrument_id or
-                body.get("feature_id") != item.snapshot.feature_id or
-                body.get("as_of") != item.snapshot.as_of or
-                body.get("information_cutoff") != item.snapshot.information_cutoff or
-                body.get("value") != item.snapshot.value or
-                context.universe_manifest_id not in body.get("input_manifest_ids", ())):
+                manifest.code_revision != snapshot.code_revision or
+                tuple(sorted(manifest.parent_manifest_ids)) != tuple(sorted(snapshot.input_manifest_ids)) or
+                not isinstance(body, dict) or
+                any(body.get(key) != value for key, value in expected.items()) or
+                context.universe_manifest_id not in snapshot.input_manifest_ids):
             raise DataQualityError("SIGNAL_FEATURE_MANIFEST_INVALID")
