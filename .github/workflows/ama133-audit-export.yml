@@ -1,0 +1,25 @@
+name: ama133-audit-export
+on:
+  push:
+    branches: [audit/ama-133-adversarial-87171d6]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 87171d6941dae4941bd60b533173a51c5346127f
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: |
+          git archive --format=tar --output="$RUNNER_TEMP/ama133-source.tar" HEAD
+          sha256sum "$RUNNER_TEMP/ama133-source.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ama133-source-87171d6
+          path: ${{ runner.temp }}/ama133-source.tar
+          retention-days: 1
+          if-no-files-found: error
