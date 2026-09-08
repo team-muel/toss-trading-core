@@ -5,6 +5,7 @@ import json
 import sqlite3
 
 from asset_management.data.immutable import canonical, digest
+from asset_management.data.raw_store import SQLiteRawResponseStore
 from asset_management.domain.errors import DataQualityError
 from asset_management.time.timezone import utc as utc_stamp
 from .planner import PlannedOrderIntent
@@ -20,8 +21,9 @@ class SubmissionReceipt:
 class SubmissionJournal:
     """Dedicated connection: claim commits before the only permitted submit attempt."""
 
-    def __init__(self, path):
+    def __init__(self, path, *, authority_conn: sqlite3.Connection | None = None):
         self.conn = sqlite3.connect(path)
+        self.authority_conn = authority_conn
         self.conn.execute('PRAGMA synchronous=FULL')
         self.conn.executescript('''
             CREATE TABLE IF NOT EXISTS submission (
@@ -113,8 +115,106 @@ class SubmissionJournal:
         with self.conn:
             return self._record(client, 'UNKNOWN_BROKER_STATE', operation + '_RECONCILIATION_REQUIRED', {})
 
+    def _authority_verified(self, *, query: dict[str, str], evidence: dict[str, object],
+                            order_intent_id: str) -> tuple[bool, str]:
+        """Verify lookup candidates against append-only account/order ledger authority."""
+        authority = self.authority_conn
+        if authority is None:
+            return False, 'RECOVERY_AUTHORITY_UNAVAILABLE'
+        required = ('broker_order_id', 'snapshot_id', 'reconciliation_id', 'source_response_id')
+        if any(not isinstance(evidence.get(name), str) or not str(evidence[name]).strip()
+               for name in required):
+            return False, 'BROKER_EVIDENCE_CONFLICT_OR_INCOMPLETE'
+        if not all(evidence.get(key) == value for key, value in query.items()):
+            return False, 'BROKER_EVIDENCE_CONFLICT_OR_INCOMPLETE'
+        broker_order_id = str(evidence['broker_order_id'])
+        snapshot_id = str(evidence['snapshot_id'])
+        reconciliation_id = str(evidence['reconciliation_id'])
+        source_response_id = str(evidence['source_response_id'])
+        status = evidence.get('status')
+        allowed = {'ACKNOWLEDGED', 'OPEN', 'PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'REJECTED'}
+        if status not in allowed:
+            return False, 'BROKER_EVIDENCE_CONFLICT_OR_INCOMPLETE'
+        try:
+            client_row = authority.execute(
+                'SELECT order_intent_id FROM am_client_order WHERE client_order_id=?',
+                (query['client_order_id'],),
+            ).fetchone()
+            link_row = authority.execute(
+                'SELECT broker_order_id FROM am_order_link WHERE client_order_id=?',
+                (query['client_order_id'],),
+            ).fetchone()
+            broker_row = authority.execute(
+                'SELECT account_id FROM am_broker_order WHERE broker_order_id=?',
+                (broker_order_id,),
+            ).fetchone()
+            state_row = authority.execute(
+                '''SELECT state, source_response_id FROM am_order_state_event
+                   WHERE broker_order_id=? ORDER BY sequence_no DESC LIMIT 1''',
+                (broker_order_id,),
+            ).fetchone()
+            recon_row = authority.execute(
+                '''SELECT account_snapshot_id, account_id, status
+                   FROM am_account_reconciliation_v2 WHERE reconciliation_run_id=?''',
+                (reconciliation_id,),
+            ).fetchone()
+            newest_recon = authority.execute(
+                '''SELECT reconciliation_run_id FROM am_account_reconciliation_v2
+                   WHERE account_id=? ORDER BY completed_at_utc DESC, reconciliation_run_id DESC LIMIT 1''',
+                (query['account'],),
+            ).fetchone()
+            snapshot_row = authority.execute(
+                'SELECT account_id FROM am_account_snapshot WHERE account_snapshot_id=?',
+                (snapshot_id,),
+            ).fetchone()
+            raw_link = authority.execute(
+                '''SELECT 1 FROM am_account_snapshot_raw
+                   WHERE account_snapshot_id=? AND raw_response_id=?''',
+                (snapshot_id, source_response_id),
+            ).fetchone()
+            bad_item = authority.execute(
+                '''SELECT 1 FROM am_reconciliation_item_v2
+                   WHERE reconciliation_run_id=? AND status IN ('MISMATCH','UNVERIFIABLE','BLOCKED') LIMIT 1''',
+                (reconciliation_id,),
+            ).fetchone()
+            open_issue = authority.execute(
+                '''SELECT 1 FROM am_reconciliation_issue_v2 issue
+                   LEFT JOIN am_reconciliation_resolution_v2 resolution USING(issue_id)
+                   WHERE issue.account_id=? AND resolution.issue_id IS NULL LIMIT 1''',
+                (query['account'],),
+            ).fetchone()
+            raw = SQLiteRawResponseStore(authority).verified(source_response_id)
+        except (sqlite3.Error, KeyError, ValueError, TypeError):
+            return False, 'RECOVERY_AUTHORITY_UNAVAILABLE_OR_INVALID'
+        if (client_row is None or str(client_row[0]) != order_intent_id or
+                link_row is None or str(link_row[0]) != broker_order_id or
+                broker_row is None or str(broker_row[0]) != query['account'] or
+                state_row is None or str(state_row[0]) != status or str(state_row[1]) != source_response_id or
+                recon_row is None or str(recon_row[0]) != snapshot_id or
+                str(recon_row[1]) != query['account'] or str(recon_row[2]) not in {'MATCH', 'TOLERANCE_MATCH'} or
+                newest_recon is None or str(newest_recon[0]) != reconciliation_id or
+                snapshot_row is None or str(snapshot_row[0]) != query['account'] or raw_link is None or
+                bad_item is not None or open_issue is not None or
+                (raw.account_id is not None and raw.account_id != query['account'])):
+            return False, 'BROKER_EVIDENCE_CONFLICT_OR_INCOMPLETE'
+        if status in {'PARTIALLY_FILLED', 'FILLED'}:
+            try:
+                posting = authority.execute(
+                    '''SELECT 1 FROM am_execution_posting posting
+                       JOIN am_execution_delta delta USING(execution_delta_id)
+                       JOIN am_execution_snapshot snap
+                         ON snap.execution_snapshot_id=delta.to_snapshot_id
+                       WHERE snap.broker_order_id=? LIMIT 1''',
+                    (broker_order_id,),
+                ).fetchone()
+            except sqlite3.Error:
+                return False, 'FILL_LEDGER_RECONCILIATION_REQUIRED'
+            if posting is None:
+                return False, 'FILL_LEDGER_RECONCILIATION_REQUIRED'
+        return True, 'BROKER_STATE_RECONCILED'
+
     def recover(self, client, *, lookup):
-        """Read-only lookup supplies matched broker, snapshot and reconciliation evidence."""
+        """Lookup discovers candidates; append-only ledger authority proves the recovered state."""
         row = self._row(client)
         if row[7] not in ('SUBMITTING', 'UNKNOWN_BROKER_STATE'):
             return SubmissionReceipt(client, row[7], 'ALREADY_RECONCILED')
@@ -126,22 +226,15 @@ class SubmissionJournal:
             evidence = lookup(query)
         except Exception:
             evidence = None
-        reason, state = 'BROKER_LOOKUP_UNAVAILABLE_OR_UNPROVEN', 'UNKNOWN_BROKER_STATE'
+        state, reason = 'UNKNOWN_BROKER_STATE', 'BROKER_LOOKUP_UNAVAILABLE_OR_UNPROVEN'
         if isinstance(evidence, dict):
-            match = all(evidence.get(k) == v for k, v in query.items())
-            proof = all(isinstance(evidence.get(k), str) and evidence[k].strip()
-                        for k in ('broker_order_id', 'snapshot_id', 'reconciliation_id', 'source_response_id'))
-            status = evidence.get('status')
-            if match and proof and evidence.get('reconciled') is True and status in (
-                    'ACKNOWLEDGED', 'OPEN', 'PARTIALLY_FILLED', 'FILLED', 'CANCELED', 'REJECTED'):
-                if status in ('PARTIALLY_FILLED', 'FILLED') and not evidence.get('fill_ledger_verified') is True:
-                    reason = 'FILL_LEDGER_RECONCILIATION_REQUIRED'
-                else:
-                    state, reason = status, 'BROKER_STATE_RECONCILED'
-            else:
-                reason = 'BROKER_EVIDENCE_CONFLICT_OR_INCOMPLETE'
+            verified, reason = self._authority_verified(
+                query=query, evidence=evidence, order_intent_id=payload['order_intent_id'])
+            if verified:
+                state = str(evidence['status'])
         # Persist identifiers only; untrusted transport data may contain credentials.
-        audit = {k: evidence[k] for k in ('snapshot_id', 'reconciliation_id', 'source_response_id')
+        audit = {k: evidence[k] for k in ('broker_order_id', 'snapshot_id', 'reconciliation_id',
+                                           'source_response_id')
                  if isinstance(evidence, dict) and isinstance(evidence.get(k), str)}
         self.conn.execute('BEGIN IMMEDIATE')
         try:
