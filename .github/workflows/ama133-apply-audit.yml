@@ -1,0 +1,57 @@
+name: ama133-apply-audit
+on:
+  push:
+    branches: [audit/ama-133-adversarial-87171d6]
+    paths:
+      - .github/workflows/ama133-apply-audit.yml
+      - .audit/ama133-fixes.patch.gz.b64
+permissions:
+  contents: write
+concurrency:
+  group: ama133-isolated-patch-verification
+  cancel-in-progress: false
+jobs:
+  verify-and-stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Decode and verify reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          base64 --decode .audit/ama133-fixes.patch.gz.b64 | gzip --decompress > "$RUNNER_TEMP/ama133.patch"
+          printf '%s  %s\n' '95beb536fce845dcb50698ccb113f69400af3118d850a1aab17a72b81762362b' "$RUNNER_TEMP/ama133.patch" | sha256sum --check
+          git checkout --detach 87171d6941dae4941bd60b533173a51c5346127f
+          git apply --check "$RUNNER_TEMP/ama133.patch"
+          git apply --index "$RUNNER_TEMP/ama133.patch"
+          git diff --cached --check
+          git diff --cached --stat
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --requirement requirements-dev.lock
+      - run: python -m pip install --no-deps --editable .
+      - run: python scripts/check_secrets.py
+      - run: python -m pytest -q
+      - run: python scripts/check_governance.py
+      - run: python scripts/check_toss_openapi.py
+      - run: python -m toss_trading.cli.research_validate_instruments
+      - run: python -m build --wheel
+      - name: Stage verified commit on audit candidate only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 87171d6941dae4941bd60b533173a51c5346127f
+          test "$(git diff --cached --name-only | wc -l)" -eq 12
+          if git diff --cached --name-only | grep -E '^\.(github|audit)/'; then
+            echo 'Audit transport must not enter the integration commit' >&2
+            exit 1
+          fi
+          git config user.name 'AMA-133 audit automation'
+          git config user.email '132043689+Muelfly@users.noreply.github.com'
+          git commit -m 'fix(AMA-133): close adversarial approval recovery and forecast gaps'
+          git push origin HEAD:refs/heads/audit/ama-133-verified-fixes
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
