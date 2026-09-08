@@ -147,7 +147,7 @@ def raw(conn, **changes):
         requested_at=NOW,
         received_at=NOW,
         account_id="account-1",
-        schema_version="1.2.14",
+        schema_version="1.2.15",
     )
     values.update(changes)
     return SQLiteRawResponseStore(conn).append(**values)
@@ -162,6 +162,7 @@ def calculate(conn, source, **changes):
         max_age=timedelta(seconds=60),
         operational_liquidity_reserve=D(100),
         policy_version="cash-policy@1",
+        provider_contract_version="1.2.15",
     )
     args.update(changes)
     return cash_state_from_buying_power(conn, **args)
