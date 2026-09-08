@@ -16,6 +16,7 @@ from asset_management.signals import (
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 UNIVERSE = tuple(f"ETF{number:02}" for number in range(12))
 UNIVERSE_ID = "a" * 64
+LICENSE = "purpose=research;redistribution=forbidden;retention=indefinite"
 
 
 def snapshot(signal_id, version, values):
@@ -30,13 +31,37 @@ def snapshot(signal_id, version, values):
     )
 
 
-def inputs(*, available_at=None):
+def forecast_manifest(store, *, label, values, as_of):
+    request_hash = digest(canonical({"label": label, "as_of": as_of.isoformat()}))
+    parent = store.write(
+        {"model_input": label}, layer="bronze", source="research-model", dataset="oos-forecast-input",
+        schema_version="oos-forecast-input@1", retrieved_at=as_of, available_at=as_of,
+        provider_timestamp=as_of, license_tag=LICENSE, code_revision="git:abcdef0",
+        request_hash=request_hash, quality_status="RAW",
+    )
+    body = {
+        "model_run_id": digest(canonical({"model": label, "as_of": as_of.isoformat()})),
+        "training_cutoff": (as_of - timedelta(days=1)).isoformat(),
+        "universe_manifest_id": UNIVERSE_ID,
+        "values": {key: str(value) for key, value in values.items()},
+    }
+    return store.write(
+        body, layer="gold", source="research-model", dataset="oos-forecast",
+        schema_version="oos-forecast@1", retrieved_at=as_of, available_at=as_of,
+        provider_timestamp=as_of, license_tag=LICENSE, code_revision="git:abcdef0",
+        request_hash=digest(canonical(body)), parent_manifest_ids=(parent.manifest_id,),
+    ).manifest_id
+
+
+def inputs(store, *, available_at=None):
     candidate_values = {item: Decimal(number) + Decimal(number % 7) / Decimal(10)
                         for number, item in enumerate(UNIVERSE, 1)}
     baseline_values = {item: Decimal(number * 2) + (Decimal(1) if number % 2 else Decimal(-1))
                        for number, item in enumerate(UNIVERSE, 1)}
     forward_values = {item: Decimal(number) / Decimal(100) + Decimal(number % 7) / Decimal(1000)
                       for number, item in enumerate(UNIVERSE, 1)}
+    before_values = {item: Decimal(number) / Decimal(110) for number, item in enumerate(UNIVERSE, 1)}
+    after_values = {item: value * Decimal("0.9") for item, value in forward_values.items()}
     as_of = NOW - timedelta(days=10)
     return NeutralizationInput(
         candidate=snapshot("value.new", "1", candidate_values),
@@ -52,15 +77,18 @@ def inputs(*, available_at=None):
             for number, item in enumerate(UNIVERSE, 1)
         },
         forward_returns=forward_values,
-        oos_forecast_before={item: Decimal(number) / Decimal(110) for number, item in enumerate(UNIVERSE, 1)},
-        oos_forecast_after=forward_values,
+        oos_forecast_before=before_values,
+        oos_forecast_after=after_values,
+        oos_forecast_before_manifest_id=forecast_manifest(store, label="before", values=before_values, as_of=as_of),
+        oos_forecast_after_manifest_id=forecast_manifest(store, label="after", values=after_values, as_of=as_of),
         turnover_before=Decimal("0.2"), turnover_after=Decimal("0.3"),
     )
 
 
 def test_neutralization_preserves_pit_transform_lineage_and_incremental_metrics(tmp_path):
-    result = SignalNeutralizer(ImmutableDatasetStore(tmp_path)).evaluate(
-        inputs(), config=NeutralizationConfig(transaction_cost_per_turnover=Decimal("0.001")),
+    store = ImmutableDatasetStore(tmp_path)
+    result = SignalNeutralizer(store).evaluate(
+        inputs(store), config=NeutralizationConfig(transaction_cost_per_turnover=Decimal("0.001")),
         evaluated_at=NOW,
     )
     assert result.status == "READY" and result.report is not None and result.catalog_id
@@ -70,16 +98,30 @@ def test_neutralization_preserves_pit_transform_lineage_and_incremental_metrics(
     assert "value.new@1" in result.report["signal_correlation_matrix"]
     assert Decimal(result.report["oos_mae_improvement"]) > 0
     assert Decimal(result.report["cost_after"]) > Decimal(result.report["cost_before"])
+    assert result.report["oos_forecast_before_manifest_id"] != result.report["oos_forecast_after_manifest_id"]
 
 
 def test_future_outcome_and_snapshot_mismatch_fail_closed(tmp_path):
-    neutralizer = SignalNeutralizer(ImmutableDatasetStore(tmp_path))
+    store = ImmutableDatasetStore(tmp_path)
+    neutralizer = SignalNeutralizer(store)
     result = neutralizer.evaluate(
-        inputs(available_at=NOW + timedelta(days=1)), config=NeutralizationConfig(), evaluated_at=NOW,
+        inputs(store, available_at=NOW + timedelta(days=1)), config=NeutralizationConfig(), evaluated_at=NOW,
     )
     assert (result.status, result.reason_code, result.report, result.catalog_id) == (
         "ABSTAIN", "NEUTRALIZATION_OUTCOME_NOT_AVAILABLE", None, None,
     )
-    value = inputs()
+    value = inputs(store)
     with pytest.raises(InvariantViolation, match="NEUTRALIZATION_SIGNAL_SNAPSHOT_MISMATCH"):
         replace(value, baselines=(replace(value.baselines[0], information_cutoff=NOW.isoformat()),))
+
+
+def test_oos_forecast_maps_cannot_be_rewritten_after_manifest_publication(tmp_path):
+    store = ImmutableDatasetStore(tmp_path)
+    value = inputs(store)
+    forged = dict(value.oos_forecast_after)
+    forged[UNIVERSE[0]] = value.forward_returns[UNIVERSE[0]]
+    result = SignalNeutralizer(store).evaluate(
+        replace(value, oos_forecast_after=forged), config=NeutralizationConfig(), evaluated_at=NOW,
+    )
+    assert result.status == "ABSTAIN"
+    assert result.reason_code == "NEUTRALIZATION_OOS_FORECAST_LINEAGE_INVALID"
