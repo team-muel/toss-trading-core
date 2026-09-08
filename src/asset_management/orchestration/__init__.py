@@ -2,9 +2,11 @@
 
 from .decision_kernel import (
     DecisionKernel, DecisionKernelEvaluation, DecisionParityLedger, DecisionRuntime,
-    DecisionRuntimeAdapter, FrozenDecisionInput, PreExecutionDecision, RuntimeAdapterDescriptor,
+    DecisionRuntimeAdapter, FrozenDecisionInput, PreExecutionDecision,
+    PricingApplicabilityEvidence, RuntimeAdapterDescriptor,
 )
 
 __all__ = ["DecisionKernel", "DecisionKernelEvaluation", "DecisionParityLedger",
            "DecisionRuntime", "DecisionRuntimeAdapter", "FrozenDecisionInput",
-           "PreExecutionDecision", "RuntimeAdapterDescriptor"]
+           "PreExecutionDecision", "PricingApplicabilityEvidence",
+           "RuntimeAdapterDescriptor"]
