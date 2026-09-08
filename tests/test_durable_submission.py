@@ -1,7 +1,9 @@
 from datetime import timedelta
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
+import sqlite3
 import pytest
 from test_phase_m6_order_intent_planner import kwargs, NOW
 from asset_management.execution.planner import plan_order_intents
@@ -19,9 +21,57 @@ def proof(query, status='OPEN', **changes):
                         reconciliation_id='reconcile:1', source_response_id='raw:1', reconciled=True) | changes
 
 
+def _raw_hash(body):
+    encoded=json.dumps(body,ensure_ascii=False,sort_keys=True,separators=(',',':'))
+    return hashlib.sha256(encoded.encode()).hexdigest(), encoded
+
+
+def authority(status='OPEN'):
+    conn=sqlite3.connect(':memory:')
+    conn.executescript('''
+        CREATE TABLE am_client_order(client_order_id TEXT PRIMARY KEY, order_intent_id TEXT NOT NULL);
+        CREATE TABLE am_order_link(client_order_id TEXT PRIMARY KEY, broker_order_id TEXT NOT NULL);
+        CREATE TABLE am_broker_order(broker_order_id TEXT PRIMARY KEY, account_id TEXT NOT NULL);
+        CREATE TABLE am_order_state_event(broker_order_id TEXT, sequence_no INTEGER, state TEXT, source_response_id TEXT);
+        CREATE TABLE am_account_reconciliation_v2(reconciliation_run_id TEXT PRIMARY KEY, account_snapshot_id TEXT, account_id TEXT, status TEXT, completed_at_utc TEXT);
+        CREATE TABLE am_account_snapshot(account_snapshot_id TEXT PRIMARY KEY, account_id TEXT);
+        CREATE TABLE am_account_snapshot_raw(account_snapshot_id TEXT, raw_response_id TEXT);
+        CREATE TABLE am_reconciliation_item_v2(reconciliation_run_id TEXT, status TEXT);
+        CREATE TABLE am_reconciliation_issue_v2(issue_id TEXT, account_id TEXT);
+        CREATE TABLE am_reconciliation_resolution_v2(issue_id TEXT);
+        CREATE TABLE am_raw_api_response(raw_response_id TEXT PRIMARY KEY, source TEXT, endpoint TEXT, http_method TEXT, request_hash TEXT, status_code INTEGER, response_hash TEXT, body_json TEXT, requested_at_utc TEXT, received_at_utc TEXT, account_id TEXT, schema_version TEXT, headers_json TEXT);
+        CREATE TABLE am_execution_snapshot(execution_snapshot_id TEXT PRIMARY KEY, broker_order_id TEXT);
+        CREATE TABLE am_execution_delta(execution_delta_id TEXT PRIMARY KEY, to_snapshot_id TEXT);
+        CREATE TABLE am_execution_posting(execution_delta_id TEXT PRIMARY KEY);
+    ''')
+    intent=args()['intent']
+    conn.execute('INSERT INTO am_client_order VALUES (?,?)',(intent.client_order_id,intent.order_intent_id))
+    conn.execute('INSERT INTO am_order_link VALUES (?,?)',(intent.client_order_id,'broker:1'))
+    conn.execute('INSERT INTO am_broker_order VALUES (?,?)',('broker:1','paper:1'))
+    conn.execute('INSERT INTO am_order_state_event VALUES (?,?,?,?)',('broker:1',1,status,'raw:1'))
+    conn.execute('INSERT INTO am_account_reconciliation_v2 VALUES (?,?,?,?,?)',
+                 ('reconcile:1','snapshot:1','paper:1','MATCH',NOW.isoformat()))
+    conn.execute('INSERT INTO am_account_snapshot VALUES (?,?)',('snapshot:1','paper:1'))
+    conn.execute('INSERT INTO am_account_snapshot_raw VALUES (?,?)',('snapshot:1','raw:1'))
+    body_hash,body_json=_raw_hash({'status':status})
+    conn.execute('INSERT INTO am_raw_api_response VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 ('raw:1','toss','/api/v1/orders/broker:1','GET','request:1',200,body_hash,body_json,
+                  NOW.isoformat(),NOW.isoformat(),'paper:1','1.2.15','{}'))
+    conn.commit()
+    return conn
+
+
+def seed_fill_posting(conn):
+    conn.execute('INSERT INTO am_execution_snapshot VALUES (?,?)',('execution-snapshot:1','broker:1'))
+    conn.execute('INSERT INTO am_execution_delta VALUES (?,?)',('execution-delta:1','execution-snapshot:1'))
+    conn.execute('INSERT INTO am_execution_posting VALUES (?)',('execution-delta:1',))
+    conn.commit()
+
+
 def test_commit_precedes_transport_and_repeated_submission_never_resends(tmp_path):
     path = tmp_path/'submissions.db'
-    journal = SubmissionJournal(path)
+    ledger=authority('OPEN')
+    journal = SubmissionJournal(path,authority_conn=ledger)
     calls = []
     def submit(payload):
         reader = SubmissionJournal(path)
@@ -33,11 +83,11 @@ def test_commit_precedes_transport_and_repeated_submission_never_resends(tmp_pat
     assert receipt.state == 'UNKNOWN_BROKER_STATE'
     journal.submit_once(**args(), submit=submit)
     journal.close()
-    journal = SubmissionJournal(path)
+    journal = SubmissionJournal(path,authority_conn=ledger)
     journal.submit_once(**args(), submit=submit)
     assert len(calls) == 1
     assert journal.recover(receipt.client_order_id, lookup=proof).state == 'OPEN'
-    journal.close()
+    journal.close(); ledger.close()
 
 
 @pytest.mark.parametrize('failure', [TimeoutError, SystemExit])
@@ -58,10 +108,20 @@ def test_timeout_or_process_crash_requires_lookup_before_any_retry(tmp_path, fai
     journal.close()
 
 
+def test_fabricated_lookup_strings_cannot_reconcile_without_persisted_authority(tmp_path):
+    journal=SubmissionJournal(tmp_path/'s.db')
+    receipt=journal.submit_once(**args(),submit=lambda _: {})
+    result=journal.recover(receipt.client_order_id,lookup=proof)
+    assert result.state=='UNKNOWN_BROKER_STATE'
+    assert result.reason=='RECOVERY_AUTHORITY_UNAVAILABLE'
+    journal.close()
+
+
 def test_changed_payload_and_account_risk_fail_closed(tmp_path):
     journal = SubmissionJournal(tmp_path/'s.db')
     journal.submit_once(**args(), submit=lambda _: {})
-    changed = plan_order_intents(**kwargs(current_quantities={'SPY':kwargs()['current_quantities']['SPY']*0}))[0]
+    current=kwargs()['current_quantities'] | {'SPY':kwargs()['current_quantities']['SPY']*0}
+    changed = plan_order_intents(**kwargs(current_quantities=current))[0]
     with pytest.raises(DataQualityError, match='ECONOMIC_ORDER_CONFLICT'):
         journal.submit_once(**(args() | {'intent':changed}), submit=lambda _: pytest.fail())
     journal.close()
@@ -69,14 +129,18 @@ def test_changed_payload_and_account_risk_fail_closed(tmp_path):
 
 @pytest.mark.parametrize('status', ['PARTIALLY_FILLED','FILLED'])
 def test_fills_and_cancel_timeout_need_reconciliation(tmp_path, status):
-    journal = SubmissionJournal(tmp_path/'s.db')
+    ledger=authority(status)
+    journal = SubmissionJournal(tmp_path/'s.db',authority_conn=ledger)
     result = journal.submit_once(**args(), submit=lambda _: {'status':status})
     client = result.client_order_id
-    assert journal.recover(client, lookup=lambda q: proof(q,status)).state == 'UNKNOWN_BROKER_STATE'
+    first=journal.recover(client, lookup=lambda q: proof(q,status,fill_ledger_verified=True))
+    assert first.state == 'UNKNOWN_BROKER_STATE'
+    assert first.reason == 'FILL_LEDGER_RECONCILIATION_REQUIRED'
+    seed_fill_posting(ledger)
     assert journal.recover(client, lookup=lambda q: proof(q,status,fill_ledger_verified=True)).state == status
     assert journal.mark_ambiguous(client, operation='CANCEL').state == 'UNKNOWN_BROKER_STATE'
     assert journal.recover(client, lookup=lambda q: proof(q,account='other')).state == 'UNKNOWN_BROKER_STATE'
-    journal.close()
+    journal.close(); ledger.close()
 
 
 def test_schema_matches_receipt():
@@ -86,7 +150,6 @@ def test_schema_matches_receipt():
 
 
 def test_lookup_unavailable_keeps_audit_and_identity_is_immutable(tmp_path):
-    import sqlite3
     journal = SubmissionJournal(tmp_path/'s.db')
     receipt = journal.submit_once(**args(), submit=lambda _: {})
     def unavailable(query):
