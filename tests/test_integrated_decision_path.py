@@ -4,12 +4,14 @@ from decimal import Decimal
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.decisions.governor import (
     DecisionState, RiskGovernor, RiskGovernorPolicy, RiskInputs, SOFT_REDUCTIONS,
+    target_weight_hash,
 )
 from asset_management.domain.horizon import DecayProfile, SignalValidity
 from asset_management.features.models import FeatureSnapshot
 from asset_management.orchestration import (
     DecisionKernel, DecisionParityLedger, DecisionRuntime, DecisionRuntimeAdapter,
-    FrozenDecisionInput, PreExecutionDecision, RuntimeAdapterDescriptor,
+    FrozenDecisionInput, PreExecutionDecision, PricingApplicabilityEvidence,
+    RuntimeAdapterDescriptor,
 )
 from asset_management.portfolio.allocator import select_securities
 from asset_management.quality.models import QualityStatus
@@ -25,6 +27,13 @@ VALID_UNTIL = NOW + timedelta(days=21)
 MANIFEST = "a" * 64
 FEATURE_MANIFEST = "b" * 64
 HISTORY_MANIFEST = "c" * 64
+PRICING_REASON = "integration-fixture-has-no-approved-pricing-model"
+PRICING_EVIDENCE = PricingApplicabilityEvidence.create(
+    scope_key="integrated-quality-momentum@1",
+    applicable=False,
+    reason=PRICING_REASON,
+    policy_version="pricing-applicability@1",
+)
 
 
 def adapter(runtime):
@@ -50,8 +59,7 @@ def source(*, signal_id, point_estimates, calibration, neutralization, confidenc
         universe_manifest_id=MANIFEST,
         currency="USD",
         unit="DECIMAL_RETURN",
-        horizon=21,
-        valid_until=VALID_UNTIL,
+        validity=SignalValidity(21, 21, VALID_UNTIL, DecayProfile.STEP),
         point_estimates=point_estimates,
         uncertainty=Decimal(".01"),
         confidence=confidence,
@@ -146,7 +154,7 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
     risky = select_securities(Decimal(".8"), forecast_values)
     proposed = dict(zip(risky.instruments, risky.weights))
     proposed["CASH"] = Decimal("1") - sum(proposed.values(), Decimal("0"))
-    target_hash = digest(canonical({key: str(value) for key, value in sorted(proposed.items())}))
+    target_hash = target_weight_hash(proposed)
     policy = RiskGovernorPolicy(
         policy_version="risk@1",
         reduction_multipliers={reason: Decimal(".8") for _, reason in SOFT_REDUCTIONS},
@@ -167,12 +175,14 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
         snapshot_id="snapshot@integrated-1",
         strategy_key="integrated-quality-momentum@1",
         model_keys=("forecast-combination@1",),
-        policy_versions={"risk": "risk@1", "investment": "investment@1"},
+        policy_versions={"risk": "risk@1", "investment": "investment@1",
+                         "pricing_applicability": PRICING_EVIDENCE.policy_version},
         parameter_set_key="integrated-params@1",
-        input_manifest_ids=(MANIFEST, FEATURE_MANIFEST, HISTORY_MANIFEST),
+        input_manifest_ids=(MANIFEST, FEATURE_MANIFEST, HISTORY_MANIFEST, PRICING_EVIDENCE.evidence_id),
         as_of=NOW,
         information_cutoff=CUTOFF,
         code_revision="git:abcdef1",
+        pricing_applicability_evidence=PRICING_EVIDENCE,
     )
 
     def calculate(_inputs):
@@ -182,7 +192,8 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
             forecast_values=forecast_values,
             pricing_outputs={},
             pricing_applicable=False,
-            pricing_non_applicability_reason="integration-fixture-has-no-approved-pricing-model",
+            pricing_non_applicability_reason=PRICING_REASON,
+            pricing_applicability_evidence_id=PRICING_EVIDENCE.evidence_id,
             risk_outputs={"exposure_multiplier": risk.exposure_multiplier},
             target_weights=approved_weights,
             risk_decision_id=risk.risk_decision_id,
