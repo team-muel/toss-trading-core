@@ -6,7 +6,7 @@ import pytest
 from alpha_management.expression import AlphaSimulationSettings
 from alpha_management.history import HistoryPoint, HistorySimulationResult
 from asset_management.domain.errors import InvariantViolation
-from asset_management.signals import (
+from asset_management.orchestration import (
     CostTiming, DecayStage, GrossNetBasis, ResearchSignalBridgeContract,
     bridge_history_result, require_decay_stage_available,
 )
