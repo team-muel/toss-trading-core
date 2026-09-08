@@ -155,6 +155,8 @@ class CrossSectionalObservation:
                 not Decimal(0) <= _require_decimal(self.holding_period_overlap,
                                                     "DIAGNOSTIC_OBSERVATION_INVALID") <= Decimal(1)):
             raise InvariantViolation("DIAGNOSTIC_OBSERVATION_INVALID")
+        if available < as_of + timedelta(days=self.horizon_days):
+            raise InvariantViolation("DIAGNOSTIC_OUTCOME_PREMATURE")
         universe = tuple(sorted(self.universe))
         if not universe or len(set(universe)) != len(universe) or any(
                 not isinstance(item, str) or not item.strip() for item in universe):
@@ -248,6 +250,8 @@ class TimeSeriesObservation:
                 _require_decimal(self.implementation_cost, "DIAGNOSTIC_VALUE_INVALID") < 0 or
                 _require_decimal(self.drawdown, "DIAGNOSTIC_VALUE_INVALID") > 0):
             raise InvariantViolation("DIAGNOSTIC_OBSERVATION_INVALID")
+        if available < as_of + timedelta(days=self.horizon_days):
+            raise InvariantViolation("DIAGNOSTIC_OUTCOME_PREMATURE")
         _require_decimal(self.forecast, "DIAGNOSTIC_VALUE_INVALID")
         _require_decimal(self.realized_return, "DIAGNOSTIC_VALUE_INVALID")
         snapshot = self.signal_snapshot
