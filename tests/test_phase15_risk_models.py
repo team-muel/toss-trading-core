@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import pytest
 from asset_management.domain.errors import DataQualityError
@@ -10,19 +10,25 @@ from asset_management.risk.factor_risk import EXPOSURES
 from asset_management.risk.models import CovarianceEstimate
 
 D=Decimal
+MANIFEST="a"*64
+CUTOFF=datetime(2026,1,4,tzinfo=timezone.utc)
+def provenance(obs):
+    return dict(information_cutoff=CUTOFF,dataset_manifest_ids=(MANIFEST,),
+                available_at={day:datetime(day.year,day.month,day.day,tzinfo=timezone.utc) for day in obs})
 def panel():
     obs={date(2026,1,1):{"A":D(".01"),"B":D(".02")},date(2026,1,2):{"A":D("-.01"),"B":D(".00")},date(2026,1,3):{"A":D(".02"),"B":D("-.01")}}
-    return build_return_panel(instruments=("A","B"),observations=obs,total_return=True,currency_basis=CurrencyBasis.BASE)
+    return build_return_panel(instruments=("A","B"),observations=obs,total_return=True,currency_basis=CurrencyBasis.BASE,**provenance(obs))
 
 def test_return_panel_basis_missing_prelisting_and_outliers():
-    with pytest.raises(DataQualityError): build_return_panel(instruments=("A",),observations={date(2026,1,1):{"A":D(0)},date(2026,1,2):{"A":D(0)}},total_return=False,currency_basis=CurrencyBasis.LOCAL)
+    obs0={date(2026,1,1):{"A":D(0)},date(2026,1,2):{"A":D(0)}}
+    with pytest.raises(DataQualityError): build_return_panel(instruments=("A",),observations=obs0,total_return=False,currency_basis=CurrencyBasis.LOCAL,**provenance(obs0))
     obs={date(2025,1,1):{"A":D(".9")},date(2026,1,1):{"A":D(".9")},date(2026,1,2):{"A":D("-.9")}}
-    result=build_return_panel(instruments=("A",),observations=obs,total_return=True,currency_basis=CurrencyBasis.LOCAL,listing_dates={"A":date(2026,1,1)},winsor_limits=(D("-.2"),D(".2")))
+    result=build_return_panel(instruments=("A",),observations=obs,total_return=True,currency_basis=CurrencyBasis.LOCAL,listing_dates={"A":date(2026,1,1)},winsor_limits=(D("-.2"),D(".2")),**provenance(obs))
     assert result.prelisting_rows_excluded==1 and result.returns==((D(".2"),),(D("-.2"),))
 
 def test_missing_is_never_imputed():
     obs={date(2026,1,1):{"A":D(0)},date(2026,1,2):{"A":None},date(2026,1,3):{"A":D(0)}}
-    with pytest.raises(DataQualityError): build_return_panel(instruments=("A",),observations=obs,total_return=True,currency_basis=CurrencyBasis.BASE)
+    with pytest.raises(DataQualityError): build_return_panel(instruments=("A",),observations=obs,total_return=True,currency_basis=CurrencyBasis.BASE,**provenance(obs))
 
 def test_fx_return_is_exact_and_separate():
     local,fx,base=decompose_base_currency_return(D(".10"),D(".05"))
