@@ -57,8 +57,11 @@ Exit codes: 0 = registry valid / supplied paths mapped; 1 = unmapped paths;
 the mapping and its regression test in the same change and sync Linear.
 
 Patterns use case-sensitive Python `fnmatchcase`: `*` can include `/`, `**` is
-not a special glob engine, and brace expansion is not supported. Rules are
-additive, never first-match-wins. The watch-path inventory is an initial routing
+not a special glob engine, and brace expansion is not supported. Every pattern
+must start with a literal path/name prefix, not `*`, `?` or `[`. This rejects
+wildcard-only catch-alls such as `***` and `?*` in both surface and cross-surface
+rules while preserving `src/**`, `requirements*.lock` and similar scoped patterns.
+Rules are additive, never first-match-wins. The watch-path inventory is an initial routing
 map, not proof that every repository file or semantic dependency is covered.
 Reviewers must add impacts beyond the report. General `tests/**` and `docs/**`
 patterns identify control/documentation surfaces, not the subsystem being tested.
@@ -67,6 +70,14 @@ The conservative cross-surface rules expand provider, economics, migration,
 execution, package/CI and research-bridge changes. Required evidence for each
 umbrella is recorded in the JSON. Do not add broad catch-all routing merely to
 make an unknown path pass. Routing is not authority or acceptance evidence.
+The provider expansion also covers research collectors/providers, data-source
+configuration, FRED series and the credential example; these must not silently
+skip the External + Data + Schema + Tests dependency review.
+
+`tests/test_maintenance_registry_adversarial.py` pins representative contract
+examples independently of the JSON mapping. It also tests wildcard bypasses,
+CLI failure paths and a real offline git rename diff. Tests generated solely
+from existing rules cannot detect an omitted rule or path.
 
 ## CI rollout and evidence
 

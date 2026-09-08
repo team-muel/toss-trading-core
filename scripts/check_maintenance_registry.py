@@ -19,7 +19,9 @@ def valid_path(value: object, *, pattern: bool = False) -> bool:
         return False
     if "\\" in value or ":" in value or any(part in {"", ".", ".."} for part in value.split("/")):
         return False
-    return not pattern or (value not in {"*", "**"} and "{" not in value and "}" not in value)
+    # A literal prefix prevents wildcard-only spellings such as *** or ?*
+    # from making every otherwise-unmapped repository path appear owned.
+    return not pattern or (value[0] not in "*?[" and "{" not in value and "}" not in value)
 
 
 def strings(value: object) -> bool:
