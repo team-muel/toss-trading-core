@@ -39,7 +39,7 @@ def cross_observation(*, number=1, horizon=5, values=None, available_at=None):
     return CrossSectionalObservation(
         signal_run_id=f"{number:064x}", signal_id="value.relative_strength", signal_version="1",
         as_of=as_of, information_cutoff=as_of, embargo_until=as_of + timedelta(days=5),
-        outcome_available_at=available_at or as_of + timedelta(days=5),
+        outcome_available_at=available_at or as_of + timedelta(days=max(5, horizon)),
         universe_manifest_id=UNIVERSE_ID, universe=UNIVERSE,
         signal_values=values,
         forward_returns={
@@ -58,7 +58,7 @@ def cross_observation(*, number=1, horizon=5, values=None, available_at=None):
     )
 
 
-def time_observation(number, forecast, realized, *, available_at=None):
+def time_observation(number, forecast, realized, *, available_at=None, horizon=5):
     as_of = NOW - timedelta(days=20 + number)
     snapshot_values = {"ETF": forecast}
     snapshot = SignalSnapshot(
@@ -71,11 +71,11 @@ def time_observation(number, forecast, realized, *, available_at=None):
     return TimeSeriesObservation(
         signal_run_id=f"{100 + number:064x}", signal_id="trend.etf", signal_version="2",
         as_of=as_of, information_cutoff=as_of, embargo_until=as_of + timedelta(days=5),
-        outcome_available_at=available_at or as_of + timedelta(days=5),
+        outcome_available_at=available_at or as_of + timedelta(days=max(5, horizon)),
         universe_manifest_id=UNIVERSE_ID, forecast=Decimal(forecast), realized_return=Decimal(realized),
         implementation_cost=Decimal("0.001"), instrument_id="ETF",
         regime="risk_on" if number % 2 else "risk_off", drawdown=Decimal(f"-0.0{number}"),
-        horizon_days=5, code_revision="git:abcdef0", signal_snapshot=snapshot,
+        horizon_days=horizon, code_revision="git:abcdef0", signal_snapshot=snapshot,
     )
 
 
@@ -113,7 +113,7 @@ def test_cross_sectional_leakage_and_coverage_fail_closed(tmp_path, observation)
     assert result.reason_code in {"DIAGNOSTIC_COVERAGE_INSUFFICIENT", "DIAGNOSTIC_OUTCOME_NOT_AVAILABLE"}
 
 
-def test_pit_universe_and_embargo_contract_cannot_be_fabricated():
+def test_pit_universe_embargo_and_horizon_contract_cannot_be_fabricated():
     observation = cross_observation()
     with pytest.raises(InvariantViolation, match="DIAGNOSTIC_UNIVERSE_PIT_INVALID"):
         replace(observation, forward_returns={"AAA": Decimal("0.01")})
@@ -121,6 +121,12 @@ def test_pit_universe_and_embargo_contract_cannot_be_fabricated():
         replace(observation, embargo_until=observation.as_of)
     with pytest.raises(InvariantViolation, match="DIAGNOSTIC_SIGNAL_SNAPSHOT_MISMATCH"):
         replace(observation, signal_snapshot=replace(observation.signal_snapshot, signal_version="forged"))
+    long_horizon = cross_observation(horizon=20)
+    with pytest.raises(InvariantViolation, match="DIAGNOSTIC_OUTCOME_PREMATURE"):
+        replace(long_horizon, outcome_available_at=long_horizon.as_of + timedelta(days=5))
+    long_time = time_observation(1, "0.01", "0.011", horizon=20)
+    with pytest.raises(InvariantViolation, match="DIAGNOSTIC_OUTCOME_PREMATURE"):
+        replace(long_time, outcome_available_at=long_time.as_of + timedelta(days=5))
 
 
 def test_ic_decay_stores_separate_horizon_metrics(tmp_path):
