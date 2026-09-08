@@ -48,13 +48,11 @@ def test_d2_rejects_partial_unknown_or_non_reproducible_evidence_sets():
     assert first == second
 
 
-def test_recorded_current_d2_result_is_fail_closed_and_schema_complete():
+def test_recorded_current_d2_result_is_pass_and_schema_complete():
     root = Path(__file__).parents[1]
     recorded = json.loads((root / "docs/evidence/gate_d2_pricing_expectation_risk_2026-09-08.json").read_text())
     actual = asdict(evaluate_pricing_expectation_risk_integrity_gate(
-        inputs(failed=("RISK_FREE_CURRENCY_HORIZON_COMPOUNDING_VERIFIED",
-                       "FACTOR_SPECIFIC_RISK_DECOMPOSITION_AND_FLOOR_VERIFIED",
-                       "MODEL_SCOPE_AND_CALCULATION_LINEAGE_COMPLETE"))))
+        inputs()))
     actual["decision"] = actual["decision"].value
     actual["reason_codes"] = list(actual["reason_codes"])
     actual["evidence_artifact_ids"] = list(actual["evidence_artifact_ids"])

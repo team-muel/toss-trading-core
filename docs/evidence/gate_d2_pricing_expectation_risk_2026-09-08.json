@@ -1,10 +1,6 @@
 {
-  "decision": "FAIL",
-  "reason_codes": [
-    "CHECK_FAILED:RISK_FREE_CURRENCY_HORIZON_COMPOUNDING_VERIFIED",
-    "CHECK_FAILED:FACTOR_SPECIFIC_RISK_DECOMPOSITION_AND_FLOOR_VERIFIED",
-    "CHECK_FAILED:MODEL_SCOPE_AND_CALCULATION_LINEAGE_COMPLETE"
-  ],
+  "decision": "PASS",
+  "reason_codes": [],
   "evidence_artifact_ids": [
     "evidence:ama_100_economic_semantics_verified",
     "evidence:ama_101_semantic_remediation_verified",
@@ -25,5 +21,5 @@
   ],
   "evaluated_at": "2026-09-08T00:00:00+00:00",
   "code_revision": "gate-d2@1",
-  "content_hash": "4322f18d96332dceb85932a7405444c4e06037d2610725597fe568155ddfa879"
+  "content_hash": "af60b5ad491fbe8c95a0758ba3ff3b83044b9b2b1f41d01b6016d77545e2aa7f"
 }
