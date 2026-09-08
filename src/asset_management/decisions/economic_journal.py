@@ -467,7 +467,9 @@ class EconomicDecisionJournal:
         if instant < record.assessment_horizon_end:
             return DecisionQuality.NOT_MATURED
         outcome = next((item for item in outcomes if item.decision_id == record.decision_id), None)
-        return DecisionQuality.PENDING_OUTCOME if outcome is None else outcome.quality
+        if outcome is None or outcome.assessed_at > instant:
+            return DecisionQuality.PENDING_OUTCOME
+        return outcome.quality
 
     def records(self) -> tuple[EconomicDecisionRecord, ...]:
         return self._load()[0]
