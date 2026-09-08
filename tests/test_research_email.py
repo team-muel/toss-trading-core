@@ -240,7 +240,7 @@ class ResearchEmailTest(unittest.TestCase):
     def test_gmail_api_and_delivery_ledger_prevent_repeat_send(self):
         requests = []
         responses = [
-            FakeResponse({"access_token": "short-lived-" + "access-token"}),
+            FakeResponse({"access_token": "short-lived-access-token"}),
             FakeResponse({"id": "gmail-message-1"}),
         ]
 

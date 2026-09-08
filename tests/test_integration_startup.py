@@ -59,3 +59,4 @@ def test_policy_document_tampering_is_detected(tmp_path):
     (docs / "data_policy.md").write_text("tampered", encoding="utf-8")
     with pytest.raises(ValueError, match="hash mismatch"):
         load_policy_registry(registry, repository_root=tmp_path)
+

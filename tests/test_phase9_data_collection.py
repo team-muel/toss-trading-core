@@ -336,3 +336,4 @@ def test_phase9_data_adapters_cannot_import_or_modify_account_database():
             violations.extend(value for value in values if any(value == item or value.startswith(item + ".")
                                                                 for item in forbidden))
     assert violations == []
+
