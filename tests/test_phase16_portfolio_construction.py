@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 import pytest
 from asset_management.domain.errors import DataQualityError, InvariantViolation
+from asset_management.domain.economics import ReturnSemanticType
 from asset_management.governance import (BenchmarkDefinition, InvestorMandate, InvestorMandateRegistry,
     MandateObjective, RiskPreference, WealthConvention)
 from asset_management.portfolio import *
@@ -21,6 +22,11 @@ def target(weights=(D(".5"),D(".5")),stage="TEST"):
 
 def absolute_return_input(values=(D(".10"),D(".01"))):
     return OptimizationReturnInput(OptimizationReturnMode.ABSOLUTE, values)
+
+def test_pricing_baseline_cannot_substitute_for_optimizer_forecast_total_return():
+    with pytest.raises(DataQualityError, match="OPTIMIZER_RETURN_INPUT_INVALID"):
+        OptimizationReturnInput(OptimizationReturnMode.ABSOLUTE, (D(".1"),D(".01")),
+                                return_semantic_type=ReturnSemanticType.PRICING_BASELINE_RETURN)
 def policy(**changes):
     values=dict(cash_instrument="CASH",max_single_weight=D(".8"),min_cash_weight=D(".1"),
         max_volatility=D(".2"),max_cvar=D(".15"),max_stress_loss=D(".25"),max_turnover=D(".5"),

@@ -6,6 +6,7 @@ from decimal import Decimal
 from enum import StrEnum
 
 from asset_management.domain.errors import DataQualityError
+from asset_management.domain.economics import ReturnSemanticType
 
 from .models import PortfolioTarget
 
@@ -68,10 +69,13 @@ class OptimizationReturnInput:
     model_relative_alpha: tuple[Decimal, ...] | None = None
     pricing_baseline_version: str | None = None
     factor_neutrality_verified: bool = False
+    return_semantic_type: ReturnSemanticType = ReturnSemanticType.FORECAST_TOTAL_RETURN_NET
 
     def __post_init__(self) -> None:
         forecasts = _vector(self.forecast_total_return, "OPTIMIZER_RETURN_INPUT_INVALID")
-        if not isinstance(self.mode, OptimizationReturnMode) or type(self.factor_neutrality_verified) is not bool:
+        if (not isinstance(self.mode, OptimizationReturnMode) or type(self.factor_neutrality_verified) is not bool or
+                self.return_semantic_type not in (ReturnSemanticType.FORECAST_TOTAL_RETURN_GROSS,
+                                                  ReturnSemanticType.FORECAST_TOTAL_RETURN_NET)):
             raise DataQualityError("OPTIMIZER_RETURN_INPUT_INVALID")
         active = self.mode in {OptimizationReturnMode.BENCHMARK_ACTIVE, OptimizationReturnMode.MODEL_RELATIVE_ALPHA}
         if active:
