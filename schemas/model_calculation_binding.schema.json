@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "model_calculation_binding.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["model_key", "scope", "authorization_hash", "lineage_graph_hash", "final_node_id", "bound_at", "binding_id"],
+  "properties": {
+    "model_key": {"type": "string", "pattern": "^.+@.+$"},
+    "scope": {"type": "string"},
+    "authorization_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "lineage_graph_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "final_node_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "bound_at": {"type": "string", "format": "date-time"},
+    "binding_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}
