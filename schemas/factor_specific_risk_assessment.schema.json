@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "factor_specific_risk_assessment.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["instruments", "systematic_variance", "specific_variance", "total_variance", "currency_basis", "as_of", "estimation_version", "model_disagreement", "regime_sensitivity"],
+  "properties": {
+    "instruments": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "systematic_variance": {"type": "array", "items": {"type": "string"}},
+    "specific_variance": {"type": "array", "items": {"type": "string"}},
+    "total_variance": {"type": "array", "items": {"type": "string"}},
+    "currency_basis": {"enum": ["LOCAL", "BASE", "HEDGED"]},
+    "as_of": {"type": "string", "format": "date-time"},
+    "estimation_version": {"type": "string", "minLength": 1},
+    "model_disagreement": {"type": "string"}, "regime_sensitivity": {"type": "string"}
+  }
+}
