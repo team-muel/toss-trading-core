@@ -145,11 +145,14 @@ def choose_fail_safe(*, current: PortfolioTarget, current_valid: bool, risk_mini
 
 
 def finalize_targets(*, raw: PortfolioTarget, risk_constrained: PortfolioTarget, current_weights,
-                     no_trade_bands, expected_benefit, expected_cost, uncertainty_buffer):
-    if raw.instruments != risk_constrained.instruments or not len(current_weights) == len(no_trade_bands) == len(raw.weights):
+                     no_trade_bands, expected_benefit, expected_cost, uncertainty_buffer,
+                     cash_instrument: str):
+    if (raw.instruments != risk_constrained.instruments or
+            not len(current_weights) == len(no_trade_bands) == len(raw.weights) or
+            not isinstance(cash_instrument, str) or cash_instrument not in raw.instruments):
         raise DataQualityError("TARGET_STAGE_MISMATCH")
     economic = economic_trade_gate(expected_benefit, expected_cost, uncertainty_buffer)
-    cash_index = raw.instruments.index("CASH") if "CASH" in raw.instruments else len(raw.weights) - 1
+    cash_index = raw.instruments.index(cash_instrument)
     executable_weights = (apply_no_trade_bands(risk_constrained.weights, current_weights, no_trade_bands, cash_index)
                           if economic else tuple(current_weights))
     executable = PortfolioTarget(raw.instruments, executable_weights, "EXECUTABLE_TARGET",
