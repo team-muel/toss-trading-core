@@ -1,0 +1,38 @@
+name: ama133-enqueue-verified-head
+on:
+  push:
+    branches: [audit/ama-133-queue-087d75c]
+    paths: [.github/workflows/ama133-queue.yml]
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+  actions: read
+jobs:
+  enqueue-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_HEAD: 087d75c82cd5f965318bde7b53bad1c7b49f30e3
+      GH_REPO: team-muel/toss-trading-core
+    steps:
+      - name: Verify exact head, review conversations and required checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          QUERY='query { repository(owner:"team-muel", name:"toss-trading-core") { pullRequest(number:62) { id headRefOid baseRefName state isDraft isMergeQueueEnabled isInMergeQueue reviewThreads(first:100) { nodes { isResolved } pageInfo { hasNextPage } } reviews(last:10) { nodes { state commit { oid } } } } } }'
+          gh api graphql -f query="$QUERY" > "$RUNNER_TEMP/pr.json"
+          jq -e --arg head "$EXPECTED_HEAD" '.data.repository.pullRequest as $p | $p.headRefOid == $head and $p.baseRefName == "master" and $p.state == "OPEN" and ($p.isDraft | not) and $p.isMergeQueueEnabled and ($p.reviewThreads.pageInfo.hasNextPage | not) and all($p.reviewThreads.nodes[]; .isResolved == true) and any($p.reviews.nodes[]; .commit.oid == $head and .state == "COMMENTED")' "$RUNNER_TEMP/pr.json"
+          jq '.data.repository.pullRequest | {headRefOid,baseRefName,state,isDraft,isMergeQueueEnabled,isInMergeQueue,unresolved:([.reviewThreads.nodes[] | select(.isResolved == false)] | length)}' "$RUNNER_TEMP/pr.json"
+          gh pr checks 62 --required --json name,state,bucket > "$RUNNER_TEMP/checks.json"
+          jq -e 'length >= 2 and all(.[]; .bucket == "pass") and any(.[]; .name == "test (3.11)") and any(.[]; .name == "test (3.12)")' "$RUNNER_TEMP/checks.json"
+          cat "$RUNNER_TEMP/checks.json"
+      - name: Enqueue only with expected head protection
+        shell: bash
+        run: |
+          set -euo pipefail
+          PR_ID=$(jq -r '.data.repository.pullRequest.id' "$RUNNER_TEMP/pr.json")
+          gh api graphql -f query='mutation($id:ID!, $head:GitObjectID!) { enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head,jump:false,clientMutationId:"AMA-133-087d75c"}) { clientMutationId } }' -f id="$PR_ID" -f head="$EXPECTED_HEAD" | tee "$RUNNER_TEMP/enqueue.json"
+          gh api graphql -f query='query { repository(owner:"team-muel",name:"toss-trading-core") { pullRequest(number:62) { headRefOid state isInMergeQueue mergeQueueEntry { id position state } } } }' | tee -a "$GITHUB_STEP_SUMMARY"
