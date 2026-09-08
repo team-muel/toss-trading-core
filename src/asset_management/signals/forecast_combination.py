@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from fractions import Fraction
 import re
 from types import MappingProxyType
 from typing import Mapping, Sequence
@@ -35,23 +36,25 @@ def _sqrt(value: Decimal) -> Decimal:
 
 
 def _is_psd(matrix: Sequence[Sequence[Decimal]]) -> bool:
-    """Exact Decimal Cholesky-style positive-semidefinite check."""
+    """Exact Schur-complement test without rounded square roots.
+
+    Decimal inputs are finite rationals. Using their exact fractions avoids
+    rejecting singular positive-semidefinite matrices due to sqrt roundoff.
+    """
     size = len(matrix)
-    lower = [[Decimal(0) for _ in range(size)] for _ in range(size)]
-    for row in range(size):
-        for column in range(row + 1):
-            remainder = matrix[row][column] - sum(
-                (lower[row][k] * lower[column][k] for k in range(column)), Decimal(0)
-            )
-            if row == column:
-                if remainder < 0:
-                    return False
-                lower[row][column] = remainder.sqrt() if remainder else Decimal(0)
-            elif lower[column][column] == 0:
-                if remainder != 0:
-                    return False
-            else:
-                lower[row][column] = remainder / lower[column][column]
+    work = [[Fraction(value) for value in row] for row in matrix]
+    for pivot in range(size):
+        diagonal = work[pivot][pivot]
+        if diagonal < 0:
+            return False
+        if diagonal == 0:
+            if any(work[row][pivot] != 0 for row in range(pivot + 1, size)):
+                return False
+            continue
+        for row in range(pivot + 1, size):
+            for column in range(row, size):
+                value = work[row][column] - work[row][pivot] * work[column][pivot] / diagonal
+                work[row][column] = work[column][row] = value
     return True
 
 
@@ -212,6 +215,12 @@ class ForecastCombinationRequest:
                         raise InvariantViolation("FORECAST_COMBINATION_MATRIX_INVALID")
         if not _is_psd(self.covariance):
             raise InvariantViolation("FORECAST_COMBINATION_COVARIANCE_NOT_PSD")
+        if not _is_psd(self.correlation):
+            raise InvariantViolation("FORECAST_COMBINATION_CORRELATION_NOT_PSD")
+        # A frozen dataclass must not retain caller-owned mutable matrices.
+        object.__setattr__(self, "sources", tuple(self.sources))
+        object.__setattr__(self, "covariance", tuple(tuple(row) for row in self.covariance))
+        object.__setattr__(self, "correlation", tuple(tuple(row) for row in self.correlation))
         object.__setattr__(self, "evaluated_at", evaluated)
 
 
@@ -247,10 +256,21 @@ class ForecastCombiner:
             effective = Decimal(1) / independent_denom
             expected_cost = sum((weight * source.implementation_cost
                                  for weight, source in zip(weights, request.sources)), Decimal(0))
+            validity_weight = request.sources[0].validity.effective_weight(
+                produced_at=request.sources[0].as_of, evaluated_at=request.evaluated_at)
+            decay_application = {
+                "contract_version": "forecast-validity-at-evaluation/v1",
+                "stage": "FORECAST_VALIDITY", "produced_at": utc(request.sources[0].as_of),
+                "applied_at": utc(request.evaluated_at), "weight": str(validity_weight),
+            }
             components = {}
             for instrument in request.sources[0].point_estimates:
                 gross = sum((weight * source.point_estimates[instrument]
                              for weight, source in zip(weights, request.sources)), Decimal(0))
+                # Discount the forecast once, not normalized weights (which
+                # would cancel a shared decay). Costs and uncertainty are not
+                # reduced merely because the information is older.
+                gross *= validity_weight
                 net = gross - expected_cost
                 components[instrument] = {
                     "semantic_type": "combined_signal_forecast_component",
@@ -262,6 +282,8 @@ class ForecastCombiner:
                     "horizon": request.sources[0].horizon,
                     "valid_until": request.sources[0].valid_until.isoformat(),
                     "signal_validity": request.sources[0].validity.payload(),
+                    "forecast_validity_decay": dict(decay_application),
+                    "evaluated_at": utc(request.evaluated_at),
                 }
             contribution = {
                 source.signal_id: {
@@ -280,6 +302,8 @@ class ForecastCombiner:
                 "universe_manifest_id": request.sources[0].universe_manifest_id,
                 "as_of": utc(request.sources[0].as_of), "information_cutoff": utc(request.sources[0].information_cutoff),
                 "signal_validity": request.sources[0].validity.payload(),
+                "forecast_validity_decay": dict(decay_application),
+                "evaluated_at": utc(request.evaluated_at),
                 "parameter_registry_key": parameters.key, "formula_version": parameters.formula_version,
                 "parameter_set_id": parameters.parameter_set_id, "contributions": contribution,
                 "effective_independent_forecasts": str(effective), "combined_uncertainty": str(combined_uncertainty),

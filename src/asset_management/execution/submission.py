@@ -110,12 +110,25 @@ class SubmissionJournal:
         if operation not in ('CANCEL', 'REPLACE', 'BOOT_RECOVERY'):
             raise DataQualityError('RECOVERY_OPERATION_INVALID')
         instant = utc_stamp(at)
-        self._row(client)
-        with self.conn:
-            return self._record(
+        self.conn.execute('BEGIN IMMEDIATE')
+        try:
+            row = self._row(client)
+            if instant < self._recovery_cutoff(client, row):
+                raise DataQualityError('RECOVERY_OPERATION_TIME_INVALID')
+            result = self._record(
                 client, 'UNKNOWN_BROKER_STATE', operation + '_RECONCILIATION_REQUIRED',
                 {'ambiguous_at': instant.isoformat(), 'operation': operation},
             )
+            self.conn.commit()
+            return result
+        except BaseException:
+            self.conn.rollback()
+            raise
+
+    def _audit_sequence(self, client: str) -> int:
+        return self.conn.execute(
+            'SELECT coalesce(max(sequence), 0) FROM submission_audit WHERE client=?', (client,)
+        ).fetchone()[0]
 
     def _recovery_cutoff(self, client: str, row) -> datetime:
         """Newest durable ambiguity boundary; evidence before it cannot clear recovery."""
@@ -131,7 +144,7 @@ class SubmissionJournal:
                     instant = utc_stamp(datetime.fromisoformat(marker))
                     if instant > cutoff:
                         cutoff = instant
-                    break
+                    # Inspect all markers: older journals may contain backdated later events.
             except (TypeError, ValueError, json.JSONDecodeError):
                 continue
         return cutoff
@@ -170,7 +183,7 @@ class SubmissionJournal:
                 (broker_order_id,),
             ).fetchone()
             state_row = authority.execute(
-                '''SELECT state, source_response_id FROM am_order_state_event
+                '''SELECT state, source_response_id, observed_at_utc FROM am_order_state_event
                    WHERE broker_order_id=? ORDER BY sequence_no DESC LIMIT 1''',
                 (broker_order_id,),
             ).fetchone()
@@ -185,7 +198,7 @@ class SubmissionJournal:
                 (query['account'],),
             ).fetchone()
             snapshot_row = authority.execute(
-                'SELECT account_id FROM am_account_snapshot WHERE account_snapshot_id=?',
+                'SELECT account_id, observed_at_utc FROM am_account_snapshot WHERE account_snapshot_id=?',
                 (snapshot_id,),
             ).fetchone()
             raw_link = authority.execute(
@@ -206,6 +219,9 @@ class SubmissionJournal:
             ).fetchone()
             raw = SQLiteRawResponseStore(authority).verified(source_response_id)
             recon_completed = utc_stamp(datetime.fromisoformat(str(recon_row[3]))) if recon_row is not None else None
+            state_observed = utc_stamp(datetime.fromisoformat(str(state_row[2]))) if state_row is not None else None
+            snapshot_observed = utc_stamp(datetime.fromisoformat(str(snapshot_row[1]))) if snapshot_row is not None else None
+            requested_at, received_at = utc_stamp(raw.requested_at), utc_stamp(raw.received_at)
         except (sqlite3.Error, KeyError, ValueError, TypeError):
             return False, 'RECOVERY_AUTHORITY_UNAVAILABLE_OR_INVALID'
         if (client_row is None or str(client_row[0]) != order_intent_id or
@@ -217,7 +233,10 @@ class SubmissionJournal:
                 newest_recon is None or str(newest_recon[0]) != reconciliation_id or
                 snapshot_row is None or str(snapshot_row[0]) != query['account'] or raw_link is None or
                 bad_item is not None or open_issue is not None or recon_completed is None or
-                recon_completed < freshness_cutoff or raw.received_at < freshness_cutoff or
+                state_observed is None or snapshot_observed is None or
+                requested_at < freshness_cutoff or received_at < requested_at or
+                state_observed < freshness_cutoff or snapshot_observed < freshness_cutoff or
+                recon_completed < max(freshness_cutoff, received_at, state_observed, snapshot_observed) or
                 (raw.account_id is not None and raw.account_id != query['account'])):
             return False, 'BROKER_EVIDENCE_CONFLICT_OR_STALE'
         if status in {'PARTIALLY_FILLED', 'FILLED'}:
@@ -244,6 +263,7 @@ class SubmissionJournal:
         query = dict(client_order_id=client, account=row[2], instrument_id=payload['instrument_id'],
                      quantity=payload['quantity'], side=payload['side'],
                      started_at=row[5], expires_at=row[6])
+        audit_sequence = self._audit_sequence(client)
         freshness_cutoff = self._recovery_cutoff(client, row)
         try:
             evidence = lookup(query)
@@ -264,7 +284,8 @@ class SubmissionJournal:
         self.conn.execute('BEGIN IMMEDIATE')
         try:
             current = self._row(client)
-            if current[7] != row[7]:
+            # A new CANCEL/REPLACE can retain UNKNOWN; compare generation too.
+            if current[7] != row[7] or self._audit_sequence(client) != audit_sequence:
                 self.conn.commit()
                 return SubmissionReceipt(client, current[7], 'RECOVERY_STATE_CHANGED_REQUERY')
             result = self._record(client, state, reason, audit)

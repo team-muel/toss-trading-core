@@ -32,9 +32,9 @@ def authority(status='OPEN'):
         CREATE TABLE am_client_order(client_order_id TEXT PRIMARY KEY, order_intent_id TEXT NOT NULL);
         CREATE TABLE am_order_link(client_order_id TEXT PRIMARY KEY, broker_order_id TEXT NOT NULL);
         CREATE TABLE am_broker_order(broker_order_id TEXT PRIMARY KEY, account_id TEXT NOT NULL);
-        CREATE TABLE am_order_state_event(broker_order_id TEXT, sequence_no INTEGER, state TEXT, source_response_id TEXT);
+        CREATE TABLE am_order_state_event(broker_order_id TEXT, sequence_no INTEGER, state TEXT, source_response_id TEXT, observed_at_utc TEXT);
         CREATE TABLE am_account_reconciliation_v2(reconciliation_run_id TEXT PRIMARY KEY, account_snapshot_id TEXT, account_id TEXT, status TEXT, completed_at_utc TEXT);
-        CREATE TABLE am_account_snapshot(account_snapshot_id TEXT PRIMARY KEY, account_id TEXT);
+        CREATE TABLE am_account_snapshot(account_snapshot_id TEXT PRIMARY KEY, account_id TEXT, observed_at_utc TEXT);
         CREATE TABLE am_account_snapshot_raw(account_snapshot_id TEXT, raw_response_id TEXT);
         CREATE TABLE am_reconciliation_item_v2(reconciliation_run_id TEXT, status TEXT);
         CREATE TABLE am_reconciliation_issue_v2(issue_id TEXT, account_id TEXT);
@@ -55,10 +55,10 @@ def authority(status='OPEN'):
 
 def _append_authority_snapshot(conn, status, at, *, sequence, suffix):
     raw_id=f'raw:{suffix}'; snapshot_id=f'snapshot:{suffix}'; reconciliation_id=f'reconcile:{suffix}'
-    conn.execute('INSERT INTO am_order_state_event VALUES (?,?,?,?)',('broker:1',sequence,status,raw_id))
+    conn.execute('INSERT INTO am_order_state_event VALUES (?,?,?,?,?)',('broker:1',sequence,status,raw_id,at.isoformat()))
     conn.execute('INSERT INTO am_account_reconciliation_v2 VALUES (?,?,?,?,?)',
                  (reconciliation_id,snapshot_id,'paper:1','MATCH',at.isoformat()))
-    conn.execute('INSERT INTO am_account_snapshot VALUES (?,?)',(snapshot_id,'paper:1'))
+    conn.execute('INSERT INTO am_account_snapshot VALUES (?,?,?)',(snapshot_id,'paper:1',at.isoformat()))
     conn.execute('INSERT INTO am_account_snapshot_raw VALUES (?,?)',(snapshot_id,raw_id))
     body_hash,body_json=_raw_hash({'status':status})
     conn.execute('INSERT INTO am_raw_api_response VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',

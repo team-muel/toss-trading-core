@@ -36,7 +36,8 @@ class OrderIntent:
 
     def __post_init__(self) -> None:
         authorization = self.risk_authorization
-        if authorization.state not in (DecisionState.ALLOW, DecisionState.REDUCE):
+        if (type(authorization) is not ApprovedRiskDecision or
+                authorization.state not in (DecisionState.ALLOW, DecisionState.REDUCE)):
             raise InvariantViolation("order intent requires an approved risk decision")
         if authorization.runtime_run_id != self.run_id:
             raise InvariantViolation("risk decision belongs to a different runtime run")
@@ -49,6 +50,7 @@ class OrderIntent:
         if (not self.target_weights or any(not isinstance(item, TargetWeight) for item in self.target_weights) or
                 len({item.instrument_id for item in self.target_weights}) != len(self.target_weights)):
             raise InvariantViolation("order intent requires target weights")
+        object.__setattr__(self, "target_weights", tuple(self.target_weights))
         target_map = {item.instrument_id: item.target for item in self.target_weights}
         if (authorization.approved_target_hash is None or
                 target_weight_hash(target_map) != authorization.approved_target_hash):

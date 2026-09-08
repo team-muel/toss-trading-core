@@ -27,3 +27,19 @@ automatic replacement. Recovery and status records are append-only audited.
 Producer adapters must verify those evidence references against their stores.
 This module does not simulate fills or perform reconciliation itself; AMA-63/116
 provide subsequent paper persistence and atomic fill/ledger work.
+
+## AMA-133 adversarial review: recovery serialization
+
+An ambiguity marker is monotone and is committed under `BEGIN IMMEDIATE` before
+transport. Recovery uses the maximum marker, including markers from older
+journals that may have been appended out of chronological order. It captures
+an audit sequence before lookup and compares that sequence again under a write
+transaction before publishing recovery. Matching state strings alone are not
+sufficient: a second CANCEL may leave the state UNKNOWN while invalidating the
+first lookup, even when both markers have the same timestamp.
+
+The raw request must have started at or after the ambiguity boundary; late
+receipt of a pre-cancel request is not post-cancel evidence. Raw receipt,
+order-state observation, account-snapshot observation, and reconciliation
+completion must also satisfy the boundary and completion ordering. The test
+fixture carries the same observation columns as the production ledger schema.

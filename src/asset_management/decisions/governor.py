@@ -6,6 +6,7 @@ from enum import StrEnum
 from hashlib import sha256
 import json
 from typing import Mapping
+from types import MappingProxyType
 
 from asset_management.domain.decimal import exact_decimal
 from asset_management.domain.enums import DataStatus, DecisionAction
@@ -71,6 +72,7 @@ def target_weight_hash(weights: Mapping[str, Decimal]) -> str:
 class RiskGovernorPolicy:
     policy_version: str
     reduction_multipliers: Mapping[ReasonCode, Decimal]
+    cash_instrument_id: str = "CASH"
 
     def __post_init__(self) -> None:
         if not self.policy_version.strip():
@@ -82,7 +84,20 @@ class RiskGovernorPolicy:
         normalized = {key: exact_decimal(value) for key, value in self.reduction_multipliers.items()}
         if any(value <= 0 or value >= 1 for value in normalized.values()):
             raise InvariantViolation("reduction multipliers must be strictly between zero and one")
-        object.__setattr__(self, "reduction_multipliers", normalized)
+        if not isinstance(self.cash_instrument_id, str) or not self.cash_instrument_id.strip():
+            raise InvariantViolation("risk governor policy requires an explicit cash instrument")
+        object.__setattr__(self, "reduction_multipliers", MappingProxyType(normalized))
+
+    @property
+    def content_hash(self) -> str:
+        payload = {
+            "policy_version": self.policy_version,
+            "cash_instrument_id": self.cash_instrument_id,
+            "reduction_multipliers": {
+                str(key): str(value) for key, value in sorted(self.reduction_multipliers.items())
+            },
+        }
+        return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,11 +170,12 @@ class ApprovedRiskDecision:
     policy_version: str
     content_hash: str
     approved_target_hash: str | None = None
+    cash_instrument_id: str = "CASH"
 
     def __init__(self, risk_decision_id: str, state: DecisionState, exposure_multiplier: Decimal,
                  runtime_run_id: str, portfolio_target_id: str, portfolio_target_hash: str,
                  policy_version: str, content_hash: str, approved_target_hash: str | None = None,
-                 *, _issuer=None) -> None:
+                 *, cash_instrument_id: str = "CASH", _issuer=None) -> None:
         if _issuer is not _APPROVAL_ISSUER:
             raise InvariantViolation("approved risk decisions must be issued by the risk governor")
         values = {
@@ -168,27 +184,33 @@ class ApprovedRiskDecision:
             "portfolio_target_id": portfolio_target_id, "portfolio_target_hash": portfolio_target_hash,
             "policy_version": policy_version, "content_hash": content_hash,
             "approved_target_hash": approved_target_hash,
+            "cash_instrument_id": cash_instrument_id,
         }
         for name, value in values.items():
             object.__setattr__(self, name, value)
         if self.state not in (DecisionState.ALLOW, DecisionState.REDUCE):
             raise InvariantViolation("only ALLOW or REDUCE is an approved risk decision")
+        if not isinstance(self.cash_instrument_id, str) or not self.cash_instrument_id.strip():
+            raise InvariantViolation("approved risk decision requires a governed cash instrument")
         if self.approved_target_hash is not None and len(self.approved_target_hash) != 64:
             raise InvariantViolation("approved target hash is invalid")
 
     @classmethod
     def _issue(cls, risk_decision_id: str, state: DecisionState, exposure_multiplier: Decimal,
                runtime_run_id: str, portfolio_target_id: str, portfolio_target_hash: str,
-               policy_version: str, content_hash: str, approved_target_hash: str | None = None
+               policy_version: str, content_hash: str, approved_target_hash: str | None = None,
+               *, cash_instrument_id: str = "CASH"
                ) -> "ApprovedRiskDecision":
         return cls(
             risk_decision_id, state, exposure_multiplier, runtime_run_id, portfolio_target_id,
             portfolio_target_hash, policy_version, content_hash, approved_target_hash,
-            _issuer=_APPROVAL_ISSUER,
+            cash_instrument_id=cash_instrument_id, _issuer=_APPROVAL_ISSUER,
         )
 
     def bind_target(self, weights: Mapping[str, Decimal], *, cash_instrument_id: str
                     ) -> tuple["ApprovedRiskDecision", dict[str, Decimal]]:
+        if cash_instrument_id != self.cash_instrument_id:
+            raise InvariantViolation("cash instrument differs from the issuing risk policy")
         normalized = {key: exact_decimal(value) for key, value in weights.items()}
         if target_weight_hash(normalized) != self.portfolio_target_hash:
             raise InvariantViolation("portfolio target weights do not match risk-approved target hash")
@@ -206,6 +228,7 @@ class ApprovedRiskDecision:
             self.risk_decision_id, self.state, self.exposure_multiplier,
             self.runtime_run_id, self.portfolio_target_id, self.portfolio_target_hash,
             self.policy_version, self.content_hash, approved_hash,
+            cash_instrument_id=self.cash_instrument_id,
         )
         return bound, result
 
@@ -247,7 +270,7 @@ class GovernanceDecision:
 class RiskGovernor:
     def __init__(self, policy: RiskGovernorPolicy | None = None) -> None:
         self.policy = policy
-        self._issued_decisions: dict[str, RiskDecision] = {}
+        self._issued_decisions: dict[str, tuple[RiskDecision, str]] = {}
 
     def decide(self, inputs: RiskInputs) -> RiskDecision:
         if self.policy is None:
@@ -281,7 +304,9 @@ class RiskGovernor:
 
     def _build(self, inputs: RiskInputs, state: DecisionState, multiplier: Decimal,
                reasons: tuple[ReasonCode, ...]) -> RiskDecision:
+        policy_hash = self.policy.content_hash
         payload = inputs.canonical() | {
+            "governor_policy_hash": policy_hash,
             "state": state.value, "exposure_multiplier": str(multiplier),
             "reason_codes": [reason.value for reason in reasons],
         }
@@ -292,19 +317,21 @@ class RiskGovernor:
             inputs.portfolio_target_id, inputs.portfolio_target_hash, inputs.policy_version,
             inputs.as_of_utc, tuple(sorted(inputs.evidence_ids)), digest_value,
         )
+        issued = (decision, policy_hash)
         previous = self._issued_decisions.get(digest_value)
-        if previous is not None and previous != decision:
+        if previous is not None and previous != issued:
             raise InvariantViolation("risk governor decision hash collision")
-        self._issued_decisions[digest_value] = decision
+        self._issued_decisions[digest_value] = issued
         return decision
 
     def authorize(self, decision: RiskDecision) -> ApprovedRiskDecision:
         if not isinstance(decision, RiskDecision):
             raise InvariantViolation("risk governor authorization requires a RiskDecision")
         issued = self._issued_decisions.get(decision.content_hash)
-        if issued != decision:
+        if issued is None or issued[0] != decision:
             raise InvariantViolation("risk decision was not issued by this risk governor")
-        if self.policy is None or decision.policy_version != self.policy.policy_version:
+        if (self.policy is None or decision.policy_version != self.policy.policy_version or
+                issued[1] != self.policy.content_hash):
             raise InvariantViolation("risk decision policy is not current for this governor")
         if not decision.approved:
             reasons = ",".join(code.value for code in decision.reason_codes)
@@ -313,6 +340,7 @@ class RiskGovernor:
             decision.risk_decision_id, decision.state, decision.exposure_multiplier,
             decision.runtime_run_id, decision.portfolio_target_id, decision.portfolio_target_hash,
             decision.policy_version, decision.content_hash,
+            cash_instrument_id=self.policy.cash_instrument_id,
         )
 
     def authorize_target(self, decision: RiskDecision, weights: Mapping[str, Decimal], *,

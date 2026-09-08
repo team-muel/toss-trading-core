@@ -52,7 +52,7 @@ class SignalValidity:
             raise InvariantViolation("SIGNAL_VALIDITY_WINDOW_INVALID")
         if evaluated < produced:
             raise DataQualityError("SIGNAL_EVALUATED_BEFORE_PRODUCTION")
-        if evaluated > self.valid_until:
+        if evaluated >= self.valid_until:
             return Decimal(0)
         if self.decay_profile is DecayProfile.STEP:
             return Decimal(1)

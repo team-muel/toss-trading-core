@@ -65,3 +65,22 @@ liquidity group cap과 no-trade band만으로 이 요구 전체를 충족했다�
 Risk Governor 승인 토큰만으로 이 전환 계획이 구현된 것은 아니다.
 따라서 이 기록은 AMA-57의 범위가 한정된 대조이며 선행/후속 이슈나
 전체 프로젝트의 완료 판정은 하지 않는다.
+
+## AMA-133 adversarial review: policy and approval binding
+
+`RiskGovernorPolicy.cash_instrument_id` explicitly identifies the residual cash
+asset (default `CASH`; other IDs must be set on the policy). The approval token
+inherits this identity, and `bind_target` rejects a caller-selected alternative.
+A risky instrument cannot become the residual cash asset after approval.
+
+Policy multipliers are copied into an immutable mapping. Decision hashing binds
+the complete policy hash, including cash identity and multiplier values. An
+issuer rejects a prior decision if the active policy content changes, including
+replacement under the same version string. This intentionally creates a new
+content identity for newly evaluated decisions; historical journal records are
+not rewritten.
+
+`OrderIntent` accepts only the concrete governor-issued approval type, not an
+object with similarly named fields, and copies target collections into an
+immutable tuple. This protects the supported API boundary; it is not a sandbox
+against hostile Python code with reflective access to process internals.
