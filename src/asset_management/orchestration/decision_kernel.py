@@ -71,6 +71,54 @@ class DecisionRuntime(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class PricingApplicabilityEvidence:
+    """Content-addressed policy evidence deciding whether pricing is required."""
+
+    scope_key: str
+    applicable: bool
+    reason: str | None
+    policy_version: str
+    evidence_id: str
+
+    def __post_init__(self) -> None:
+        _text(self.scope_key, "DECISION_KERNEL_PRICING_AUTHORITY_INVALID")
+        _text(self.policy_version, "DECISION_KERNEL_PRICING_AUTHORITY_INVALID")
+        if not isinstance(self.applicable, bool):
+            raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_INVALID")
+        if self.applicable:
+            if self.reason is not None:
+                raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_INVALID")
+        else:
+            _text(self.reason, "DECISION_KERNEL_PRICING_AUTHORITY_INVALID")
+        if not isinstance(self.evidence_id, str) or _HASH.fullmatch(self.evidence_id) is None:
+            raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_INVALID")
+        if self.evidence_id != digest(canonical(self.authority_payload())):
+            raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_HASH_INVALID")
+
+    def authority_payload(self) -> dict[str, object]:
+        return {
+            "scope_key": self.scope_key,
+            "applicable": self.applicable,
+            "reason": self.reason,
+            "policy_version": self.policy_version,
+        }
+
+    def payload(self) -> dict[str, object]:
+        return self.authority_payload() | {"evidence_id": self.evidence_id}
+
+    @classmethod
+    def create(cls, *, scope_key: str, applicable: bool, reason: str | None,
+               policy_version: str) -> "PricingApplicabilityEvidence":
+        body = {
+            "scope_key": scope_key,
+            "applicable": applicable,
+            "reason": reason,
+            "policy_version": policy_version,
+        }
+        return cls(scope_key, applicable, reason, policy_version, digest(canonical(body)))
+
+
+@dataclass(frozen=True, slots=True)
 class FrozenDecisionInput:
     snapshot_id: str
     strategy_key: str
@@ -81,6 +129,7 @@ class FrozenDecisionInput:
     as_of: datetime
     information_cutoff: datetime
     code_revision: str
+    pricing_applicability_evidence: PricingApplicabilityEvidence
 
     def __post_init__(self) -> None:
         for value in (self.snapshot_id, self.strategy_key, self.parameter_set_key, self.code_revision):
@@ -90,10 +139,17 @@ class FrozenDecisionInput:
         if cutoff > as_of:
             raise InvariantViolation("DECISION_KERNEL_CUTOFF_AFTER_AS_OF")
         object.__setattr__(self, "model_keys", _ids(self.model_keys, "DECISION_KERNEL_MODELS_INVALID"))
-        object.__setattr__(self, "policy_versions", _text_map(
-            self.policy_versions, "DECISION_KERNEL_POLICIES_INVALID", required=True))
-        object.__setattr__(self, "input_manifest_ids", _ids(
-            self.input_manifest_ids, "DECISION_KERNEL_MANIFESTS_INVALID", hashes=True))
+        policies = _text_map(self.policy_versions, "DECISION_KERNEL_POLICIES_INVALID", required=True)
+        object.__setattr__(self, "policy_versions", policies)
+        manifests = _ids(self.input_manifest_ids, "DECISION_KERNEL_MANIFESTS_INVALID", hashes=True)
+        object.__setattr__(self, "input_manifest_ids", manifests)
+        evidence = self.pricing_applicability_evidence
+        if not isinstance(evidence, PricingApplicabilityEvidence):
+            raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_INVALID")
+        if policies.get("pricing_applicability") != evidence.policy_version:
+            raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_POLICY_MISMATCH")
+        if evidence.evidence_id not in manifests:
+            raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_NOT_IN_LINEAGE")
         object.__setattr__(self, "as_of", as_of)
         object.__setattr__(self, "information_cutoff", cutoff)
 
@@ -104,6 +160,7 @@ class FrozenDecisionInput:
             "parameter_set_key": self.parameter_set_key,
             "input_manifest_ids": list(self.input_manifest_ids), "as_of": self.as_of.isoformat(),
             "information_cutoff": self.information_cutoff.isoformat(), "code_revision": self.code_revision,
+            "pricing_applicability_evidence": self.pricing_applicability_evidence.payload(),
         }
 
     @property
@@ -126,12 +183,16 @@ class PreExecutionDecision:
     order_intent_economics: Mapping[str, str]
     data_lineage_ids: tuple[str, ...]
     calculation_lineage_ids: tuple[str, ...]
+    pricing_applicability_evidence_id: str
     pricing_applicable: bool = True
     pricing_non_applicability_reason: str | None = None
 
     def __post_init__(self) -> None:
         for name in ("feature_values", "signal_values", "forecast_values", "risk_outputs"):
             object.__setattr__(self, name, _decimal_map(getattr(self, name), "DECISION_KERNEL_OUTPUT_INVALID"))
+        if (not isinstance(self.pricing_applicability_evidence_id, str) or
+                _HASH.fullmatch(self.pricing_applicability_evidence_id) is None):
+            raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_INVALID")
         if not isinstance(self.pricing_applicable, bool):
             raise InvariantViolation("DECISION_KERNEL_PRICING_APPLICABILITY_INVALID")
         if self.pricing_applicable:
@@ -170,6 +231,7 @@ class PreExecutionDecision:
         return {
             "feature_values": values(self.feature_values), "signal_values": values(self.signal_values),
             "forecast_values": values(self.forecast_values), "pricing_outputs": values(self.pricing_outputs),
+            "pricing_applicability_evidence_id": self.pricing_applicability_evidence_id,
             "pricing_applicable": self.pricing_applicable,
             "pricing_non_applicability_reason": self.pricing_non_applicability_reason,
             "risk_outputs": values(self.risk_outputs), "target_weights": values(self.target_weights),
@@ -251,6 +313,11 @@ class DecisionKernel:
         decision = self._calculate(inputs)
         if not isinstance(decision, PreExecutionDecision):
             raise InvariantViolation("DECISION_KERNEL_CALCULATOR_INVALID")
+        evidence = inputs.pricing_applicability_evidence
+        if (decision.pricing_applicability_evidence_id != evidence.evidence_id or
+                decision.pricing_applicable != evidence.applicable or
+                decision.pricing_non_applicability_reason != evidence.reason):
+            raise InvariantViolation("DECISION_KERNEL_PRICING_AUTHORITY_MISMATCH")
         semantic_hash = digest(canonical({"kernel_version": self.kernel_version,
                                           "input_hash": inputs.input_hash,
                                           "decision": decision.payload()}))
