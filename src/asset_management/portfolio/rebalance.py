@@ -1,5 +1,7 @@
 """No-trade bands and economic-benefit gates."""
+from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 from asset_management.domain.errors import DataQualityError
 
 def dynamic_no_trade_band(*,volatility: Decimal,spread: Decimal,tax_rate: Decimal,
@@ -22,3 +24,29 @@ def economic_trade_gate(expected_benefit,expected_cost,uncertainty_buffer):
             any(not x.is_finite() or x<0 for x in (expected_cost,uncertainty_buffer))):
         raise DataQualityError("TRADE_GATE_INPUT_INVALID")
     return expected_benefit>expected_cost+uncertainty_buffer
+
+
+class EconomicBenefitUnit(StrEnum):
+    RETURN_UTILITY = "RETURN_UTILITY"
+    MONEY = "MONEY"
+
+
+@dataclass(frozen=True)
+class EconomicTradeEvidence:
+    expected_benefit: Decimal
+    expected_cost: Decimal
+    uncertainty_buffer: Decimal
+    unit: EconomicBenefitUnit
+    formula_version: str
+    nav: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        values = (self.expected_benefit, self.expected_cost, self.uncertainty_buffer)
+        if (any(not isinstance(value, Decimal) or not value.is_finite() or value < 0 for value in values) or
+                not isinstance(self.unit, EconomicBenefitUnit) or not self.formula_version.strip() or
+                (self.unit is EconomicBenefitUnit.MONEY and (not isinstance(self.nav, Decimal) or not self.nav.is_finite() or self.nav <= 0)) or
+                (self.unit is EconomicBenefitUnit.RETURN_UTILITY and self.nav is not None)):
+            raise DataQualityError("ECONOMIC_TRADE_EVIDENCE_INVALID")
+
+    def permits_trade(self) -> bool:
+        return self.expected_benefit > self.expected_cost + self.uncertainty_buffer
