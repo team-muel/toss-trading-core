@@ -6,9 +6,13 @@ import pytest
 from asset_management.decisions import (
     DecisionJournal, DecisionState, ReasonCode, RiskGovernor, RiskGovernorPolicy, RiskInputs,
 )
-from asset_management.decisions.governor import HARD_BLOCKS, SOFT_REDUCTIONS
+from asset_management.decisions.governor import HARD_BLOCKS, SOFT_REDUCTIONS, target_weight_hash
 from asset_management.domain.errors import InvariantViolation, NoTrade
 from asset_management.execution.intents import OrderIntent, TargetWeight
+
+
+DEFAULT_TARGET = {"SPY": Decimal("0.80"), "CASH": Decimal("0.20")}
+DEFAULT_TARGET_HASH = target_weight_hash(DEFAULT_TARGET)
 
 
 def policy() -> RiskGovernorPolicy:
@@ -19,10 +23,10 @@ def policy() -> RiskGovernorPolicy:
     )
 
 
-def inputs(**changes: bool) -> RiskInputs:
+def inputs(**changes) -> RiskInputs:
     base = RiskInputs(
         runtime_run_id="run-17", portfolio_target_id="target-17",
-        portfolio_target_hash="target-hash", policy_version="risk-v17",
+        portfolio_target_hash=DEFAULT_TARGET_HASH, policy_version="risk-v17",
         as_of_utc="2026-09-05T00:00:00+00:00",
         evidence_ids=("account-17", "risk-model-17", "target-17"),
     )
@@ -70,9 +74,7 @@ def test_soft_conditions_reduce_by_most_conservative_explicit_cap():
     assert decision.exposure_multiplier == Decimal("0.50")
     assert decision.reason_codes == (ReasonCode.VOLATILITY_HIGH, ReasonCode.SPREAD_HIGH)
     assert decision.authorize().risk_decision_id == decision.risk_decision_id
-    scaled = decision.apply_to_target(
-        {"SPY": Decimal("0.80"), "CASH": Decimal("0.20")}, cash_instrument_id="CASH"
-    )
+    scaled = decision.apply_to_target(DEFAULT_TARGET, cash_instrument_id="CASH")
     assert scaled == {"SPY": Decimal("0.4000"), "CASH": Decimal("0.6000")}
 
 
@@ -110,12 +112,17 @@ def test_policy_is_complete_versioned_and_policy_mismatch_blocks():
 
 
 def test_order_intent_requires_exact_approved_decision_binding():
-    approved = RiskGovernor(policy()).decide(inputs()).authorize()
-    weight = (TargetWeight("SPY", Decimal("1"), Decimal("0")),)
-    intent = OrderIntent("run-17", "risk-v17", "target-17", "target-hash", approved, weight, ("rebalance",))
+    approved, authorized_weights = RiskGovernor(policy()).decide(inputs()).authorize_target(
+        DEFAULT_TARGET, cash_instrument_id="CASH"
+    )
+    weights = (
+        TargetWeight("SPY", authorized_weights["SPY"], Decimal("0")),
+        TargetWeight("CASH", authorized_weights["CASH"], Decimal("1")),
+    )
+    intent = OrderIntent("run-17", "risk-v17", "target-17", DEFAULT_TARGET_HASH, approved, weights, ("rebalance",))
     assert intent.risk_authorization.risk_decision_id == approved.risk_decision_id
     with pytest.raises(InvariantViolation, match="changed after risk approval"):
-        OrderIntent("run-17", "risk-v17", "target-17", "changed", approved, weight, ())
+        OrderIntent("run-17", "risk-v17", "target-17", "changed", approved, weights, ())
 
 
 def test_decision_journal_is_append_only_and_exact_replay_is_idempotent(tmp_path):
