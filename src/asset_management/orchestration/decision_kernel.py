@@ -51,6 +51,12 @@ def _decimal_map(values: Mapping[str, Decimal], reason: str, *, weights: bool = 
     return MappingProxyType(dict(sorted(result.items())))
 
 
+def _empty_decimal_map(values: Mapping[str, Decimal], reason: str) -> Mapping[str, Decimal]:
+    if not isinstance(values, Mapping) or values:
+        raise InvariantViolation(reason)
+    return MappingProxyType({})
+
+
 def _text_map(values: Mapping[str, str], reason: str, *, required: bool) -> Mapping[str, str]:
     if not isinstance(values, Mapping) or (required and not values):
         raise InvariantViolation(reason)
@@ -120,10 +126,26 @@ class PreExecutionDecision:
     order_intent_economics: Mapping[str, str]
     data_lineage_ids: tuple[str, ...]
     calculation_lineage_ids: tuple[str, ...]
+    pricing_applicable: bool = True
+    pricing_non_applicability_reason: str | None = None
 
     def __post_init__(self) -> None:
-        for name in ("feature_values", "signal_values", "forecast_values", "pricing_outputs", "risk_outputs"):
+        for name in ("feature_values", "signal_values", "forecast_values", "risk_outputs"):
             object.__setattr__(self, name, _decimal_map(getattr(self, name), "DECISION_KERNEL_OUTPUT_INVALID"))
+        if not isinstance(self.pricing_applicable, bool):
+            raise InvariantViolation("DECISION_KERNEL_PRICING_APPLICABILITY_INVALID")
+        if self.pricing_applicable:
+            object.__setattr__(self, "pricing_outputs", _decimal_map(
+                self.pricing_outputs, "DECISION_KERNEL_OUTPUT_INVALID"))
+            if self.pricing_non_applicability_reason is not None:
+                raise InvariantViolation("DECISION_KERNEL_PRICING_APPLICABILITY_INVALID")
+        else:
+            object.__setattr__(self, "pricing_outputs", _empty_decimal_map(
+                self.pricing_outputs, "DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"))
+            object.__setattr__(self, "pricing_non_applicability_reason", _text(
+                self.pricing_non_applicability_reason,
+                "DECISION_KERNEL_PRICING_APPLICABILITY_INVALID",
+            ))
         object.__setattr__(self, "target_weights", _decimal_map(
             self.target_weights, "DECISION_KERNEL_TARGET_INVALID", weights=True))
         _text(self.risk_decision_id, "DECISION_KERNEL_RISK_DECISION_INVALID")
@@ -148,6 +170,8 @@ class PreExecutionDecision:
         return {
             "feature_values": values(self.feature_values), "signal_values": values(self.signal_values),
             "forecast_values": values(self.forecast_values), "pricing_outputs": values(self.pricing_outputs),
+            "pricing_applicable": self.pricing_applicable,
+            "pricing_non_applicability_reason": self.pricing_non_applicability_reason,
             "risk_outputs": values(self.risk_outputs), "target_weights": values(self.target_weights),
             "risk_decision_id": self.risk_decision_id, "risk_decision_hash": self.risk_decision_hash,
             "risk_state": self.risk_state.value, "risk_reason_codes": list(self.risk_reason_codes),
