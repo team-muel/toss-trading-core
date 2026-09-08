@@ -139,8 +139,13 @@ class RiskInputs:
                              else getattr(self, field.name)) for field in fields(self)}
 
 
-@dataclass(frozen=True, slots=True)
+_APPROVAL_ISSUER = object()
+
+
+@dataclass(frozen=True, slots=True, init=False)
 class ApprovedRiskDecision:
+    """Governor-issued order authority; callers cannot mint approvals directly."""
+
     risk_decision_id: str
     state: DecisionState
     exposure_multiplier: Decimal
@@ -151,11 +156,36 @@ class ApprovedRiskDecision:
     content_hash: str
     approved_target_hash: str | None = None
 
-    def __post_init__(self) -> None:
+    def __init__(self, risk_decision_id: str, state: DecisionState, exposure_multiplier: Decimal,
+                 runtime_run_id: str, portfolio_target_id: str, portfolio_target_hash: str,
+                 policy_version: str, content_hash: str, approved_target_hash: str | None = None,
+                 *, _issuer=None) -> None:
+        if _issuer is not _APPROVAL_ISSUER:
+            raise InvariantViolation("approved risk decisions must be issued by the risk governor")
+        values = {
+            "risk_decision_id": risk_decision_id, "state": state,
+            "exposure_multiplier": exposure_multiplier, "runtime_run_id": runtime_run_id,
+            "portfolio_target_id": portfolio_target_id, "portfolio_target_hash": portfolio_target_hash,
+            "policy_version": policy_version, "content_hash": content_hash,
+            "approved_target_hash": approved_target_hash,
+        }
+        for name, value in values.items():
+            object.__setattr__(self, name, value)
         if self.state not in (DecisionState.ALLOW, DecisionState.REDUCE):
             raise InvariantViolation("only ALLOW or REDUCE is an approved risk decision")
         if self.approved_target_hash is not None and len(self.approved_target_hash) != 64:
             raise InvariantViolation("approved target hash is invalid")
+
+    @classmethod
+    def _issue(cls, risk_decision_id: str, state: DecisionState, exposure_multiplier: Decimal,
+               runtime_run_id: str, portfolio_target_id: str, portfolio_target_hash: str,
+               policy_version: str, content_hash: str, approved_target_hash: str | None = None
+               ) -> "ApprovedRiskDecision":
+        return cls(
+            risk_decision_id, state, exposure_multiplier, runtime_run_id, portfolio_target_id,
+            portfolio_target_hash, policy_version, content_hash, approved_target_hash,
+            _issuer=_APPROVAL_ISSUER,
+        )
 
     def bind_target(self, weights: Mapping[str, Decimal], *, cash_instrument_id: str
                     ) -> tuple["ApprovedRiskDecision", dict[str, Decimal]]:
@@ -173,7 +203,7 @@ class ApprovedRiskDecision:
             (value for key, value in result.items() if key != cash_instrument_id), Decimal("0")
         )
         approved_hash = target_weight_hash(result)
-        bound = ApprovedRiskDecision(
+        bound = ApprovedRiskDecision._issue(
             self.risk_decision_id, self.state, self.exposure_multiplier,
             self.runtime_run_id, self.portfolio_target_id, self.portfolio_target_hash,
             self.policy_version, self.content_hash, approved_hash,
@@ -203,7 +233,7 @@ class RiskDecision:
         if not self.approved:
             reasons = ",".join(code.value for code in self.reason_codes)
             raise NoTrade(f"risk decision {self.state.value} cannot authorize an order: {reasons}")
-        return ApprovedRiskDecision(
+        return ApprovedRiskDecision._issue(
             self.risk_decision_id, self.state, self.exposure_multiplier,
             self.runtime_run_id, self.portfolio_target_id, self.portfolio_target_hash,
             self.policy_version, self.content_hash,
