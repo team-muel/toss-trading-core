@@ -52,6 +52,8 @@ def posterior_returns(covariance: Sequence[Sequence[Decimal]], market_weights: S
                       capm_stable: bool, supply_stable: bool, market_caps_stable: bool,
                       tau: Decimal=Decimal("0.05")) -> Vector:
     """Compute Pi + tau*Sigma*P'*(P*tau*Sigma*P'+Omega)^-1*(Q-P*Pi)."""
+    if any(type(value) is not bool for value in (capm_stable, supply_stable, market_caps_stable)):
+        raise DataQualityError("BLACK_LITTERMAN_PREREQUISITE_UNKNOWN")
     if not (capm_stable and supply_stable and market_caps_stable):
         raise DataQualityError("BLACK_LITTERMAN_PREREQUISITE_UNSTABLE")
     if not tau.is_finite() or tau<=0: raise DataQualityError("BLACK_LITTERMAN_TAU_INVALID")
