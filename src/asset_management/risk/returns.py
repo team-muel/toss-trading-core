@@ -5,6 +5,25 @@ from typing import Mapping, Sequence
 from asset_management.domain.errors import DataQualityError
 from .models import CurrencyBasis, MissingPolicy, ReturnPanel
 
+
+def require_common_risk_context(*, expected_return_currency: CurrencyBasis,
+                                risk_free_currency: CurrencyBasis, covariance_currency: CurrencyBasis,
+                                factor_return_currency: CurrencyBasis, active_return_currency: CurrencyBasis,
+                                return_horizon_days: int, risk_free_horizon_days: int,
+                                covariance_horizon_days: int, factor_horizon_days: int,
+                                active_horizon_days: int) -> None:
+    """Prevent silent mixing of FX/return-model currencies or horizons."""
+    currencies = (expected_return_currency, risk_free_currency, covariance_currency,
+                  factor_return_currency, active_return_currency)
+    horizons = (return_horizon_days, risk_free_horizon_days, covariance_horizon_days,
+                factor_horizon_days, active_horizon_days)
+    if any(not isinstance(item, CurrencyBasis) for item in currencies) or any(type(item) is not int or item < 1 for item in horizons):
+        raise DataQualityError("RISK_CONTEXT_INVALID")
+    if len(set(currencies)) != 1:
+        raise DataQualityError("RISK_CURRENCY_BASIS_MISMATCH")
+    if len(set(horizons)) != 1:
+        raise DataQualityError("RISK_HORIZON_MISMATCH")
+
 def build_return_panel(*, instruments: Sequence[str], observations: Mapping[date,Mapping[str,Decimal|None]],
                        total_return: bool, currency_basis: CurrencyBasis,
                        missing_policy: MissingPolicy=MissingPolicy.FAIL,
