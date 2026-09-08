@@ -214,6 +214,8 @@ class PreExecutionDecision:
             raise InvariantViolation("DECISION_KERNEL_RISK_DECISION_INVALID")
         if not isinstance(self.risk_state, DecisionState):
             raise InvariantViolation("DECISION_KERNEL_RISK_DECISION_INVALID")
+        if self.risk_state in {DecisionState.ALLOW, DecisionState.REDUCE} and not self.pricing_applicable:
+            raise InvariantViolation("DECISION_KERNEL_PRICING_REQUIRED_FOR_AUTHORIZED_TARGET")
         object.__setattr__(self, "risk_reason_codes", _ids(
             self.risk_reason_codes, "DECISION_KERNEL_RISK_REASONS_INVALID") if self.risk_reason_codes else ())
         economics = _text_map(self.order_intent_economics, "DECISION_KERNEL_ORDER_ECONOMICS_INVALID",
