@@ -57,6 +57,9 @@ def estimate_beta(asset_returns: Sequence[ReturnObservation], market_returns: Se
             any(item.event_time > instant or item.available_at > instant for item in (*asset_returns, *market_returns)) or
             any(asset.event_time != market.event_time for asset, market in zip(asset_returns, market_returns))):
         raise DataQualityError("BETA_PIT_EVIDENCE_INVALID")
+    event_times = tuple(item.event_time for item in asset_returns)
+    if len(set(event_times)) != len(event_times):
+        raise DataQualityError("BETA_DUPLICATE_OBSERVATION")
     asset_values = tuple(item.value for item in asset_returns)
     market_values = tuple(item.value for item in market_returns)
     n = len(asset_values)
