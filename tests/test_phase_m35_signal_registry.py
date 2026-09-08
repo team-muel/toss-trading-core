@@ -14,6 +14,7 @@ from asset_management.signals import (
     CostSensitivity, SignalContext, SignalDefinition, SignalDirectionality,
     SignalFeatureInput, SignalRegistry, SignalStore, SignalType,
 )
+from asset_management.signals.transforms import rank_transform
 
 
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
@@ -123,12 +124,6 @@ def prepared(tmp_path, *, second_value="0.2", second_quality="VALID"):
     return store, context, inputs
 
 
-def rank_transform(values):
-    ordered = sorted(values, key=lambda item: (values[item]["market.return_1m"], item))
-    return {instrument: Decimal(index + 1) / Decimal(len(ordered))
-            for index, instrument in enumerate(ordered)}
-
-
 def test_signal_contract_is_complete_versioned_and_separate_from_features(tmp_path):
     registry = SignalRegistry([definition()])
     registry.register(definition())
@@ -167,8 +162,7 @@ def test_signal_uses_only_pit_feature_snapshots_and_publishes_separate_value(tmp
     assert result.snapshot.semantic_type == "SIGNAL_VALUE"
     assert result.snapshot.values == {"AAA": "0.5", "BBB": "1"}
     assert result.snapshot.quality_status == "VALID" and len(result.snapshot.output_hash) == 64
-    stored = json.loads((tmp_path / "catalog" / "signal-snapshots" /
-                         f"{result.catalog_id}.json").read_text())
+    stored = json.loads((tmp_path / "catalog" / "signal-snapshots" / f"{result.catalog_id}.json").read_text())
     assert stored == result.snapshot.payload()
     assert not ({"BUY", "SELL", "target_weight"} & set(result.snapshot.payload()))
 
@@ -209,10 +203,15 @@ def test_current_universe_future_feature_transform_and_history_gaps_fail_closed(
         signal_id="value.relative_strength", version="1", context=context,
         feature_inputs=bad_universe, transform=rank_transform, quality_gate=allow_gate(),
     ).reason_code == "SIGNAL_UNIVERSE_PIT_INVALID"
+
+    def spoof(values):
+        return rank_transform(values)
+    spoof.__name__ = "rank_transform"
     assert signal_store.evaluate(
         signal_id="value.relative_strength", version="1", context=context,
-        feature_inputs=inputs, transform=lambda values: {}, quality_gate=allow_gate(),
+        feature_inputs=inputs, transform=spoof, quality_gate=allow_gate(),
     ).reason_code == "SIGNAL_TRANSFORMATION_MISMATCH"
+
     short_history = replace(context, history_feature_manifest_ids=(context.history_feature_manifest_ids[0],))
     assert signal_store.evaluate(
         signal_id="value.relative_strength", version="1", context=short_history,
