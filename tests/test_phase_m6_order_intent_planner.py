@@ -22,11 +22,13 @@ TARGET_HASH = target_weight_hash(TARGETS)
 
 def source_intent():
     policy = RiskGovernorPolicy("risk@1", {reason: D(".75") for _, reason in SOFT_REDUCTIONS})
-    decision = RiskGovernor(policy).decide(RiskInputs(
+    governor = RiskGovernor(policy)
+    decision = governor.decide(RiskInputs(
         runtime_run_id="run:1", portfolio_target_id="target:1", portfolio_target_hash=TARGET_HASH,
         policy_version="risk@1", as_of_utc=NOW.isoformat(), evidence_ids=("account:1", "risk:1"),
     ))
-    authorization, approved_targets = decision.authorize_target(TARGETS, cash_instrument_id="CASH")
+    authorization, approved_targets = governor.authorize_target(
+        decision, TARGETS, cash_instrument_id="CASH")
     return OrderIntent("run:1", "risk@1", "target:1", TARGET_HASH, authorization,
                        (TargetWeight("SPY", approved_targets["SPY"], D(".1")),
                         TargetWeight("CASH", approved_targets["CASH"], D(".9"))),
