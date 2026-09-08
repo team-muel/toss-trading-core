@@ -22,11 +22,12 @@ UNIVERSE_ID = "a" * 64
 def snapshot(number, *, days_ago, multiplier=Decimal("1")):
     as_of = NOW - timedelta(days=days_ago)
     values = {item: str(Decimal(index) * multiplier) for index, item in enumerate(UNIVERSE, 1)}
+    valid_until = NOW + timedelta(days=2) if days_ago == 1 else as_of + timedelta(days=1)
     return SignalSnapshot(
         f"{number:064x}", "value.relative_strength", "1", "SIGNAL_VALUE", as_of.isoformat(),
         as_of.isoformat(), values, QualityStatus.VALID.value, "1", ("b" * 64,), ("c" * 64,),
         UNIVERSE_ID, "relative-strength@1", "signal-params-v1", "git:abcdef0",
-        SignalValidity(21, 21, NOW + timedelta(days=2), DecayProfile.LINEAR), digest(canonical(values)),
+        SignalValidity(21, 21, valid_until, DecayProfile.LINEAR), digest(canonical(values)),
     )
 
 
