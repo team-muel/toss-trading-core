@@ -12,10 +12,12 @@ from .cash import BrokerConstraint, CashLedger
 
 def cash_state_from_buying_power(conn, *, source_response_id: str, account_id: str,
                                  currency: str, as_of_utc: datetime, max_age: timedelta,
-                                 operational_liquidity_reserve: Decimal, policy_version: str):
+                                 operational_liquidity_reserve: Decimal, policy_version: str,
+                                 provider_contract_version: str):
     """No cash opening is inferred from buying power; session/order gates remain separate."""
     if (any(not isinstance(value, str) or not value.strip() for value in
-            (source_response_id, account_id, policy_version)) or currency not in ('USD', 'KRW')):
+            (source_response_id, account_id, policy_version, provider_contract_version)) or
+            currency not in ('USD', 'KRW')):
         raise ReconciliationError('CASH_CONSTRAINT_CONTEXT_REQUIRED')
     if (not isinstance(as_of_utc, datetime) or as_of_utc.tzinfo is None or as_of_utc.utcoffset() is None
             or not isinstance(max_age, timedelta) or max_age <= timedelta(0)):
@@ -29,7 +31,8 @@ def cash_state_from_buying_power(conn, *, source_response_id: str, account_id: s
     except (KeyError, ValueError, TypeError) as error:
         raise ReconciliationError('CASH_CONSTRAINT_RAW_EVIDENCE_INVALID') from error
     if (raw.source != 'toss' or raw.endpoint != '/api/v1/buying-power' or raw.http_method != 'GET'
-            or raw.status_code != 200 or raw.account_id != account_id or raw.schema_version != '1.2.14'):
+            or raw.status_code != 200 or raw.account_id != account_id or
+            raw.schema_version != provider_contract_version):
         raise ReconciliationError('CASH_CONSTRAINT_SOURCE_CONTEXT_MISMATCH')
     if (raw.requested_at.tzinfo is None or raw.received_at.tzinfo is None or
             not raw.requested_at <= raw.received_at <= as_of or as_of - raw.requested_at > max_age):
