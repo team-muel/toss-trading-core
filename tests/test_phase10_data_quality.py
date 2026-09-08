@@ -125,11 +125,13 @@ def test_stale_source_blocks_features_and_decision():
     assert "SOURCE_fred_STALE" in gate.reason_codes
 
 
-def test_missing_conflict_and_quarantine_propagate_to_no_trade():
+def test_missing_conflict_and_quarantine_without_source_health_stay_fail_closed():
     for status in (QualityStatus.MISSING, QualityStatus.CONFLICT, QualityStatus.QUARANTINED):
         report = QualityReport(status, (QualityIssue(f"{status}_INPUT", status, "bad input"),))
         gate = propagate_quality([report], [])
-        assert gate.action == "NO_TRADE" and gate.state_quality is status
+        assert gate.action == "NO_TRADE"
+        assert gate.state_quality is QualityStatus.BLOCKED
+        assert gate.reason_codes == ("SOURCE_HEALTH_EVIDENCE_MISSING",)
 
 
 def test_degraded_source_reduces_confidence_but_unknown_blocks():
