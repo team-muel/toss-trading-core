@@ -17,12 +17,19 @@
         "purpose": {"type": "string", "minLength": 1}, "inputs": {"type": "array", "minItems": 1, "uniqueItems": true},
         "outputs": {"type": "array", "minItems": 1, "uniqueItems": true},
         "approved_scope": {"type": "array", "minItems": 1, "uniqueItems": true,
-          "items": {"enum": ["FEATURE_CALCULATION", "STATE_INFERENCE", "REQUIRED_RETURN", "PRICING_BASELINE_RETURN", "MODEL_RELATIVE_ALPHA", "EXPECTED_BENCHMARK_ACTIVE_RETURN", "EXPECTED_RETURN", "RISK_ESTIMATION", "POSITION_SIZING", "ORDER_CREATION"]}},
+          "items": {"enum": ["FEATURE_CALCULATION", "STATE_INFERENCE", "REQUIRED_RETURN", "PRICING_BASELINE_RETURN", "MODEL_RELATIVE_ALPHA", "EXPECTED_BENCHMARK_ACTIVE_RETURN", "REALIZED_ACTIVE_RETURN", "REGRESSION_ALPHA", "EXPECTED_RETURN", "RISK_ESTIMATION", "POSITION_SIZING", "ORDER_CREATION"]}},
         "known_failure_modes": {"type": "array", "minItems": 1, "uniqueItems": true},
         "validation_date": {"type": "string", "format": "date"}, "review_date": {"type": "string", "format": "date"},
         "owner": {"type": "string", "minLength": 1},
         "status": {"enum": ["DEVELOPMENT", "VALIDATED", "APPROVED", "ACTIVE", "DEGRADED", "SUSPENDED", "RETIRED"]}
-      }},
+      },
+      "allOf": [
+        {"if": {"anyOf": [{"properties": {"approved_scope": {"contains": {"const": "PRICING_BASELINE_RETURN"}}}}, {"properties": {"outputs": {"contains": {"const": "pricing_baseline_return"}}}}]}, "then": {"properties": {"approved_scope": {"const": ["PRICING_BASELINE_RETURN"]}, "outputs": {"const": ["pricing_baseline_return"]}}}},
+        {"if": {"anyOf": [{"properties": {"approved_scope": {"contains": {"const": "MODEL_RELATIVE_ALPHA"}}}}, {"properties": {"outputs": {"contains": {"const": "model_relative_alpha"}}}}]}, "then": {"properties": {"approved_scope": {"const": ["MODEL_RELATIVE_ALPHA"]}, "outputs": {"const": ["model_relative_alpha"]}}}},
+        {"if": {"anyOf": [{"properties": {"approved_scope": {"contains": {"const": "EXPECTED_BENCHMARK_ACTIVE_RETURN"}}}}, {"properties": {"outputs": {"contains": {"const": "expected_benchmark_active_return"}}}}]}, "then": {"properties": {"approved_scope": {"const": ["EXPECTED_BENCHMARK_ACTIVE_RETURN"]}, "outputs": {"const": ["expected_benchmark_active_return"]}}}},
+        {"if": {"anyOf": [{"properties": {"approved_scope": {"contains": {"const": "REALIZED_ACTIVE_RETURN"}}}}, {"properties": {"outputs": {"contains": {"const": "realized_active_return"}}}}]}, "then": {"properties": {"approved_scope": {"const": ["REALIZED_ACTIVE_RETURN"]}, "outputs": {"const": ["realized_active_return"]}}}},
+        {"if": {"anyOf": [{"properties": {"approved_scope": {"contains": {"const": "REGRESSION_ALPHA"}}}}, {"properties": {"outputs": {"contains": {"const": "regression_alpha"}}}}]}, "then": {"properties": {"approved_scope": {"const": ["REGRESSION_ALPHA"]}, "outputs": {"const": ["regression_alpha"]}}}}
+      ]},
     "transition": {"type": "object", "additionalProperties": false,
       "required": ["model_key", "from_status", "to_status", "effective_at", "reason", "evidence_ids"],
       "properties": {

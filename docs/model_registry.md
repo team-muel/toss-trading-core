@@ -8,7 +8,7 @@ degrade/suspend/retire 경로만 허용한다. 모든 전이는 UTC 시각, 사�
 
 모델 실행은 요청 시각에 effective한 ACTIVE 상태, review 유효기간, 승인 scope를 모두 통과한 authorization을
 요구한다. registry가 바뀌면 이전 authorization은 무효다. CAPM과 multifactor
-required-return 경로는 `REQUIRED_RETURN` authorization을 필수로 받으므로
+legacy required-return 경로는 `REQUIRED_RETURN` authorization을 필수로 받으므로
 `POSITION_SIZING`이나 `ORDER_CREATION`으로 직접 호출할 수 없다. DEGRADED,
 SUSPENDED, RETIRED 또는 review overdue 모델은 실패로 닫힌다.
 
@@ -18,3 +18,16 @@ SUSPENDED, RETIRED 또는 review overdue 모델은 실패로 닫힌다.
 registry publication은 content-addressed catalog에 저장한다. 이 기능은 model 실행
 권한만 통제하며 실주문 권한을 활성화하지 않는다. `live_trading_enabled=false`를
 유지한다.
+
+## Canonical return authority (AMA-38 / AMA-101)
+
+`pricing_baseline_return`, `model_relative_alpha`,
+`expected_benchmark_active_return`, `realized_active_return`, `regression_alpha`는
+각각 같은 이름의 대문자 scope 하나와 해당 출력 하나만 허용한다.
+검사는 양방향이다. canonical scope에서 다른 출력을 내는 경우뿐 아니라,
+다른 scope가 canonical 출력을 선언하는 경우에도
+`PRICING_OUTPUT_AUTHORITY_CONFLICT`로 차단한다. 사후 수익률과 regression alpha
+scope를 추가해 사전 예측 및 주문 권한과 분리한다. JSON Schema도 같은 규칙을 적용한다.
+새 CAPM/MULTIFACTOR v2는 `PRICING_BASELINE_RETURN`을 사용한다.
+기존 REQUIRED_RETURN 모델의 payload와 registry hash는 변경하지 않는다.
+이 변경은 출력 권한 계약이며 사후 수익률 계산기 자체를 추가하지 않는다.

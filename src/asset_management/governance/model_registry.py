@@ -28,6 +28,8 @@ class ModelScope(StrEnum):
     PRICING_BASELINE_RETURN = "PRICING_BASELINE_RETURN"
     MODEL_RELATIVE_ALPHA = "MODEL_RELATIVE_ALPHA"
     EXPECTED_BENCHMARK_ACTIVE_RETURN = "EXPECTED_BENCHMARK_ACTIVE_RETURN"
+    REALIZED_ACTIVE_RETURN = "REALIZED_ACTIVE_RETURN"
+    REGRESSION_ALPHA = "REGRESSION_ALPHA"
     EXPECTED_RETURN = "EXPECTED_RETURN"
     RISK_ESTIMATION = "RISK_ESTIMATION"
     POSITION_SIZING = "POSITION_SIZING"
@@ -84,8 +86,11 @@ class ModelDefinition:
         for scope, output in (
                 (ModelScope.PRICING_BASELINE_RETURN, "pricing_baseline_return"),
                 (ModelScope.MODEL_RELATIVE_ALPHA, "model_relative_alpha"),
-                (ModelScope.EXPECTED_BENCHMARK_ACTIVE_RETURN, "expected_benchmark_active_return")):
-            if scope in self.approved_scope and (set(self.approved_scope) != {scope} or self.outputs != (output,)):
+                (ModelScope.EXPECTED_BENCHMARK_ACTIVE_RETURN, "expected_benchmark_active_return"),
+                (ModelScope.REALIZED_ACTIVE_RETURN, "realized_active_return"),
+                (ModelScope.REGRESSION_ALPHA, "regression_alpha")):
+            if ((scope in self.approved_scope or output in self.outputs) and
+                    (set(self.approved_scope) != {scope} or self.outputs != (output,))):
                 raise InvariantViolation("PRICING_OUTPUT_AUTHORITY_CONFLICT")
 
     @property

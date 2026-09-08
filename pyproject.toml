@@ -18,6 +18,7 @@ toss-foundation-replay = "toss_trading.cli.foundation_replay:main"
 test = [
   "build>=1.2,<2",
   "pytest>=8,<9",
+  "jsonschema>=4.23,<5",
   "setuptools>=69,<81",
   "shellcheck-py>=0.10,<0.11",
 ]
