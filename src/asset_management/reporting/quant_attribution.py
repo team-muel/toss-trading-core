@@ -74,6 +74,9 @@ class QuantAttributionInput:
         if _decimal(self.expected_implementation_cost) < 0:
             raise InvariantViolation("QUANT_ATTRIBUTION_COST_INVALID")
         _decimal(self.realized_portfolio_total_return); _decimal(self.realized_benchmark_total_return)
+        realized_active = self.realized_portfolio_total_return - self.realized_benchmark_total_return
+        if sum(self.pnl_contributions.values(), Decimal(0)) != realized_active:
+            raise InvariantViolation("QUANT_ATTRIBUTION_PNL_RECONCILIATION_FAILED")
         object.__setattr__(self, "evaluated_at", self.evaluated_at.astimezone(timezone.utc))
         object.__setattr__(self, "lineage_ids", tuple(sorted(self.lineage_ids)))
 
