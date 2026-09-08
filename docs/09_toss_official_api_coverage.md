@@ -4,16 +4,16 @@
 
 ## Official Base
 
-- Approved schema version: `1.2.14`
-- Approved SHA-256: `a7b32ba754401d13fa649ba91eebd212420eb1afab28e9c2c0d6ea8d43055fed`
+- Approved schema version: `1.2.15`
+- Approved SHA-256: `c5d7b87daa6db64e6e41dc581c3e820a3c6b8455412946a1f9971b813852cb79`
 - Base server: `https://openapi.tossinvest.com`
 - Auth: OAuth2 Client Credentials Grant
 - Token endpoint: `POST /oauth2/token`
 - Account context header: `X-Tossinvest-Account: {accountSeq}`
 - Runtime style: REST API (read-only Foundation)
 
-2026-09-03 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
-OpenAPI version `1.2.14`를 확인했습니다. 현재 공식 paths에는 별도 현금
+2026-09-08 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
+OpenAPI version `1.2.15`를 확인했습니다. 현재 공식 paths에는 별도 현금
 잔고 또는 balance endpoint가 없고, 현금 관련 주문 전 constraint는
 `GET /api/v1/buying-power`의 `cashBuyingPower`입니다. 따라서 내부 초기
 현금잔고를 이 값에서 역산하지 않습니다.
@@ -45,25 +45,32 @@ borrow fee가 아닙니다.
 
 ## Connected Read-only Adapter
 
-`TossReadOnlyAdapter`는 다음 read-only endpoint를 모두 호출할 수 있습니다.
+`TossReadOnlyAdapter`의 현재 구현 범위는 종목 기본정보/현재가, 종목별 경고,
+호가·최근 체결·상하한가, 환율·장 운영 정보, 랭킹, 국내 지수·국채 지표 등
+실제로 adapter method가 존재하는 read-only endpoint입니다.
 
-- 거래소별 전체 거래 가능 종목
-- 최대 200개 단위 종목 기본정보와 현재가
-- 종목별 경고, 호가, 최근 체결, 상·하한가
-- 국내 종목별 투자자·프로그램·공매도·신용·대차 동향
-- 환율, 장 운영 정보, 랭킹, 국내 지수·국채 지표
+다음 공식 read-only endpoint는 **승인된 OpenAPI contract에는 포함되어 있지만
+현재 `TossReadOnlyAdapter`에 아직 연결하지 않았습니다.** 구현 전까지 connected
+coverage로 간주하지 않습니다.
+
+- `GET /api/v1/stocks/all`
+- `GET /api/v1/stocks/{symbol}/investor-trading`
+- `GET /api/v1/stocks/{symbol}/program-trades`
+- `GET /api/v1/stocks/{symbol}/short-selling`
+- `GET /api/v1/stocks/{symbol}/credit-trades`
+- `GET /api/v1/stocks/{symbol}/securities-lending`
 
 시장 데이터 경로는 OAuth token만 사용하며 계좌 헤더나 주문 endpoint를
 사용하지 않습니다. 국내 종목 동향은 국내 심볼에만 요청해야 합니다.
 
 ## Important Order Rules
 
-OpenAPI 1.2.14에는 `/api/v1/conditional-orders`의 `SINGLE`, `OCO`, `OTO`
+OpenAPI 1.2.15에는 `/api/v1/conditional-orders`의 `SINGLE`, `OCO`, `OTO`
 조건주문도 포함됩니다. 이 경로들은 계약에는 기록했지만
 `config/default_policy.yaml`에서 계속 비활성화하며, 현재
 `TossReadOnlyAdapter`는 생성·정정·취소할 수 없습니다. 승인된 경로와 method는
 `config/toss_openapi_contract.json`에 고정합니다. 계약 검사는 공식 문서의
-33개 path에 속한 모든 HTTP method가 승인 또는 명시적 비활성 중 하나로
+모든 path에 속한 HTTP method가 승인 또는 명시적 비활성 중 하나로
 분류됐는지도 확인합니다. 새 endpoint가 문서에 추가되면 해시를 갱신하는
 것만으로는 통과하지 않습니다.
 
@@ -77,7 +84,7 @@ OpenAPI 1.2.14에는 `/api/v1/conditional-orders`의 `SINGLE`, `OCO`, `OTO`
 
 ## CLOSED Order Continuity
 
-OpenAPI 1.2.14는 `/api/v1/orders`의 `OPEN`, `CLOSED`와 CLOSED용 cursor
+OpenAPI 1.2.15는 `/api/v1/orders`의 `OPEN`, `CLOSED`와 CLOSED용 cursor
 pagination을 명시합니다. 2026-07-21 실제 GCP 계정에서도 종료 주문 반환을
 확인했습니다. 기본 6시간 runner는 KST 기준 최근 7일을 중첩 조회해 실행 사이에
 OPEN에서 사라진 주문을 놓치지 않습니다. v1은 OPEN 또는 CLOSED 목록에서 얻은
@@ -178,23 +185,3 @@ Rate limit은 client x API group 기준입니다. 현재 공식 overview 기준:
 - WebSocket 런타임 연동(공식 AsyncAPI 3.0 계약은 별도로 제공되지만 현재 비활성)
 - tax lot/cost basis API
 - 배당/원천징수/corporate action cashflow 이벤트 API
-- ETF NAV, premium/discount, ROC 분배 구성
-
-## Revised Live Scope
-
-Toss API만으로 가능한 실거래 MVP:
-
-- 기술 API 범위는 국내/미국 주식·ETF이나, 이 저장소의 live 후보는 전용 계좌의
-  미국 상장 USD long-only ETF 현물 주문으로 한정
-- REST polling 기반 주문 상태 대사
-- `cashBuyingPower` constraint 기반 주문 가능 금액 통제
-- sellable quantity 기반 매도 가능 수량 통제
-- holdings/orders/execution summary 기반 내부 장부 replay
-
-Toss API 단독으로 live 자동화하지 않는 영역:
-
-- 옵션 캐리
-- T-bill 직접 ladder
-- 숏/대차 기반 pair
-- 마진/레버리지 기반 전략
-- 세무 lot 자동 확정
