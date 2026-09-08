@@ -75,6 +75,24 @@ def _text(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 
 
+def _snapshot_top(snapshot: SignalSnapshot, quantile_count: int) -> tuple[str, ...]:
+    try:
+        values = {
+            instrument: Decimal(value)
+            for instrument, value in snapshot.values.items()
+            if value is not None
+        }
+    except Exception:
+        raise DataQualityError("DIAGNOSTIC_TURNOVER_PROVENANCE_INVALID") from None
+    if len(values) < quantile_count or any(not value.is_finite() for value in values.values()):
+        raise DataQualityError("DIAGNOSTIC_TURNOVER_PROVENANCE_INVALID")
+    ordered = sorted(values, key=lambda key: (values[key], key))
+    groups: dict[int, list[str]] = defaultdict(list)
+    for index, instrument in enumerate(ordered):
+        groups[index * quantile_count // len(ordered) + 1].append(instrument)
+    return tuple(sorted(groups[quantile_count]))
+
+
 @dataclass(frozen=True, slots=True)
 class DiagnosticConfig:
     """Versioned statistical and anti-leakage requirements."""
@@ -137,6 +155,7 @@ class CrossSectionalObservation:
     horizon_days: int
     code_revision: str
     signal_snapshot: SignalSnapshot
+    previous_signal_snapshot: SignalSnapshot | None = None
 
     def __post_init__(self) -> None:
         _require_hash(self.signal_run_id, "DIAGNOSTIC_LINEAGE_INVALID")
@@ -185,6 +204,20 @@ class CrossSectionalObservation:
         if len(set(previous)) != len(previous) or any(not isinstance(item, str) or not item.strip()
                                                        for item in previous):
             raise InvariantViolation("DIAGNOSTIC_TURNOVER_INVALID")
+        prior = self.previous_signal_snapshot
+        if prior is None:
+            if previous:
+                raise InvariantViolation("DIAGNOSTIC_TURNOVER_PROVENANCE_MISSING")
+        else:
+            try:
+                prior_as_of = _aware(datetime.fromisoformat(prior.as_of), "DIAGNOSTIC_TIME_NOT_AWARE")
+                prior_cutoff = _aware(datetime.fromisoformat(prior.information_cutoff), "DIAGNOSTIC_TIME_NOT_AWARE")
+            except (TypeError, ValueError):
+                raise InvariantViolation("DIAGNOSTIC_TURNOVER_PROVENANCE_INVALID") from None
+            if (not isinstance(prior, SignalSnapshot) or prior.semantic_type != "SIGNAL_VALUE" or
+                    prior.signal_id != self.signal_id or prior.signal_version != self.signal_version or
+                    prior.code_revision != self.code_revision or prior_as_of >= as_of or prior_cutoff > cutoff):
+                raise InvariantViolation("DIAGNOSTIC_TURNOVER_PROVENANCE_INVALID")
         for field, value in (
             ("as_of", as_of), ("information_cutoff", cutoff), ("outcome_available_at", available),
             ("embargo_until", embargo), ("universe", universe), ("previous_top_quantile_members", previous),
@@ -204,6 +237,7 @@ class CrossSectionalObservation:
             "forward_returns": {key: str(value) for key, value in self.forward_returns.items()},
             "bucket_labels": {key: dict(value) for key, value in self.bucket_labels.items()},
             "previous_top_quantile_members": list(self.previous_top_quantile_members),
+            "previous_signal_snapshot": None if self.previous_signal_snapshot is None else self.previous_signal_snapshot.payload(),
             "holding_period_overlap": str(self.holding_period_overlap),
             "horizon_days": self.horizon_days, "code_revision": self.code_revision,
             "signal_snapshot": self.signal_snapshot.payload(),
@@ -282,8 +316,6 @@ class TimeSeriesObservation:
 
 @dataclass(frozen=True, slots=True)
 class DiagnosticReport:
-    """Complete immutable record of metrics, input lineage, and calculation identity."""
-
     diagnostics_id: str
     diagnostic_type: str
     signal_id: str
@@ -336,8 +368,6 @@ class DiagnosticRunResult:
 
 
 class SignalDiagnosticsStore:
-    """Read-only calculation and immutable catalog publication for Signal diagnostics."""
-
     def __init__(self, store: ImmutableDatasetStore) -> None:
         self.store = store
 
@@ -485,8 +515,17 @@ class SignalDiagnosticsStore:
                      for number, items in sorted(groups.items())}
         gross = Decimal(quantiles[f"Q{config.quantile_count}"]) - Decimal(quantiles["Q1"])
         top = set(groups[config.quantile_count])
-        turnover = (Decimal(1) if not observation.previous_top_quantile_members else
-                    Decimal(1) - Decimal(len(top & set(observation.previous_top_quantile_members))) / Decimal(len(top)))
+        if observation.previous_signal_snapshot is None:
+            if observation.previous_top_quantile_members:
+                raise DataQualityError("DIAGNOSTIC_TURNOVER_PROVENANCE_MISSING")
+            previous_top: set[str] = set()
+        else:
+            derived = _snapshot_top(observation.previous_signal_snapshot, config.quantile_count)
+            if tuple(sorted(observation.previous_top_quantile_members)) != derived:
+                raise DataQualityError("DIAGNOSTIC_TURNOVER_PROVENANCE_INVALID")
+            previous_top = set(derived)
+        turnover = (Decimal(1) if not previous_top else
+                    Decimal(1) - Decimal(len(top & previous_top)) / Decimal(len(top)))
         buckets: dict[str, object] = {}
         for category in sorted(_BUCKETS):
             buckets[category] = {}
