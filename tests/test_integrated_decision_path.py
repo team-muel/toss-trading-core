@@ -144,7 +144,8 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
     }
 
     risky = select_securities(Decimal(".8"), forecast_values)
-    proposed = dict(zip(risky.instruments, risky.weights)) | {"CASH": Decimal(".2")}
+    proposed = dict(zip(risky.instruments, risky.weights))
+    proposed["CASH"] = Decimal("1") - sum(proposed.values(), Decimal("0"))
     target_hash = digest(canonical({key: str(value) for key, value in sorted(proposed.items())}))
     policy = RiskGovernorPolicy(
         policy_version="risk@1",
