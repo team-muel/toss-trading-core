@@ -74,113 +74,69 @@ def source(*, signal_id, point_estimates, calibration, neutralization, confidenc
 def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_path):
     validity = SignalValidity(21, 21, VALID_UNTIL, DecayProfile.STEP)
     feature = FeatureSnapshot(
-        feature_run_id="feature-run@1",
-        instrument_id="SPY",
-        feature_id="quality.score",
-        as_of=NOW.isoformat(),
-        information_cutoff=CUTOFF.isoformat(),
-        value="0.7",
-        quality_status=QualityStatus.VALID.value,
-        input_manifest_ids=(MANIFEST,),
-        parameter_set_id="feature-params@1",
-        parent_state_id=None,
-        code_revision="git:abcdef1",
+        feature_run_id="feature-run@1", instrument_id="SPY", feature_id="quality.score",
+        as_of=NOW.isoformat(), information_cutoff=CUTOFF.isoformat(), value="0.7",
+        quality_status=QualityStatus.VALID.value, input_manifest_ids=(MANIFEST,),
+        parameter_set_id="feature-params@1", parent_state_id=None, code_revision="git:abcdef1",
         validity=validity,
     )
     signal_values = {"SPY": "0.4", "QQQ": "0.2"}
     signal = SignalSnapshot(
         signal_run_id=digest(canonical({"signal": signal_values, "as_of": NOW.isoformat()})),
-        signal_id="quality.signal",
-        signal_version="1",
-        semantic_type="SIGNAL_VALUE",
-        as_of=NOW.isoformat(),
-        information_cutoff=CUTOFF.isoformat(),
-        values=signal_values,
-        quality_status=QualityStatus.VALID.value,
-        coverage="1",
-        source_feature_manifest_ids=(FEATURE_MANIFEST,),
-        history_feature_manifest_ids=(HISTORY_MANIFEST,),
-        universe_manifest_id=MANIFEST,
-        formula_version="quality-signal@1",
-        parameter_set_id="signal-params@1",
-        code_revision="git:abcdef1",
-        validity=validity,
+        signal_id="quality.signal", signal_version="1", semantic_type="SIGNAL_VALUE",
+        as_of=NOW.isoformat(), information_cutoff=CUTOFF.isoformat(), values=signal_values,
+        quality_status=QualityStatus.VALID.value, coverage="1",
+        source_feature_manifest_ids=(FEATURE_MANIFEST,), history_feature_manifest_ids=(HISTORY_MANIFEST,),
+        universe_manifest_id=MANIFEST, formula_version="quality-signal@1",
+        parameter_set_id="signal-params@1", code_revision="git:abcdef1", validity=validity,
         output_hash=digest(canonical(signal_values)),
     )
 
     store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
     parameters = ForecastCombinationParameters(
-        combination_id="combined-signal",
-        version="1",
-        max_forecast_weight=Decimal(".8"),
-        cost_penalty=Decimal("1"),
-        formula_version="forecast-combination@1",
+        combination_id="combined-signal", version="1", max_forecast_weight=Decimal(".8"),
+        cost_penalty=Decimal("1"), formula_version="forecast-combination@1",
         parameter_set_id="forecast-combination-params@1",
     )
     combiner = ForecastCombiner(store, ForecastCombinationRegistry((parameters,)))
     request = ForecastCombinationRequest(
         sources=(
-            source(
-                signal_id="quality.signal",
-                point_estimates={"SPY": Decimal(".08"), "QQQ": Decimal(".05")},
-                calibration="d" * 64,
-                neutralization="e" * 64,
-                confidence=Decimal(".8"),
-            ),
-            source(
-                signal_id="momentum.signal",
-                point_estimates={"SPY": Decimal(".04"), "QQQ": Decimal(".09")},
-                calibration="f" * 64,
-                neutralization="1" * 64,
-                confidence=Decimal(".7"),
-            ),
+            source(signal_id="quality.signal", point_estimates={"SPY": Decimal(".08"), "QQQ": Decimal(".05")}, calibration="d" * 64, neutralization="e" * 64, confidence=Decimal(".8")),
+            source(signal_id="momentum.signal", point_estimates={"SPY": Decimal(".04"), "QQQ": Decimal(".09")}, calibration="f" * 64, neutralization="1" * 64, confidence=Decimal(".7")),
         ),
-        covariance=((Decimal(".0004"), Decimal(".00004")),
-                    (Decimal(".00004"), Decimal(".0004"))),
-        correlation=((Decimal("1"), Decimal(".1")),
-                     (Decimal(".1"), Decimal("1"))),
+        covariance=((Decimal(".0004"), Decimal(".00004")), (Decimal(".00004"), Decimal(".0004"))),
+        correlation=((Decimal("1"), Decimal(".1")), (Decimal(".1"), Decimal("1"))),
         evaluated_at=NOW,
     )
     forecast = combiner.combine(request, combination_id="combined-signal", version="1")
-    assert forecast.status == "READY"
-    assert forecast.report is not None
+    assert forecast.status == "READY" and forecast.report is not None
     combined_id = str(forecast.report["combined_forecast_id"])
-    forecast_values = {
-        instrument: Decimal(component["net_point_estimate"])
-        for instrument, component in forecast.report["components"].items()
-    }
+    forecast_values = {instrument: Decimal(component["net_point_estimate"])
+                       for instrument, component in forecast.report["components"].items()}
 
     risky = select_securities(Decimal(".8"), forecast_values)
     proposed = dict(zip(risky.instruments, risky.weights))
     proposed["CASH"] = Decimal("1") - sum(proposed.values(), Decimal("0"))
     target_hash = target_weight_hash(proposed)
-    policy = RiskGovernorPolicy(
-        policy_version="risk@1",
-        reduction_multipliers={reason: Decimal(".8") for _, reason in SOFT_REDUCTIONS},
-    )
+    policy = RiskGovernorPolicy(policy_version="risk@1",
+        reduction_multipliers={reason: Decimal(".8") for _, reason in SOFT_REDUCTIONS})
     governor = RiskGovernor(policy)
     risk = governor.decide(RiskInputs(
-        runtime_run_id="integrated-run@1",
-        portfolio_target_id="target@1",
-        portfolio_target_hash=target_hash,
-        policy_version="risk@1",
-        as_of_utc=NOW.isoformat(),
+        runtime_run_id="integrated-run@1", portfolio_target_id="target@1",
+        portfolio_target_hash=target_hash, policy_version="risk@1", as_of_utc=NOW.isoformat(),
         evidence_ids=(FEATURE_MANIFEST, signal.signal_run_id, combined_id),
     ))
     assert risk.state is DecisionState.ALLOW
-    approved_weights = risk.apply_to_target(proposed, cash_instrument_id="CASH")
+    approved_weights = governor.apply_to_target(risk, proposed, cash_instrument_id="CASH")
 
     inputs = FrozenDecisionInput(
-        snapshot_id="snapshot@integrated-1",
-        strategy_key="integrated-quality-momentum@1",
+        snapshot_id="snapshot@integrated-1", strategy_key="integrated-quality-momentum@1",
         model_keys=("forecast-combination@1",),
         policy_versions={"risk": "risk@1", "investment": "investment@1",
                          "pricing_applicability": PRICING_EVIDENCE.policy_version},
         parameter_set_key="integrated-params@1",
         input_manifest_ids=(MANIFEST, FEATURE_MANIFEST, HISTORY_MANIFEST, PRICING_EVIDENCE.evidence_id),
-        as_of=NOW,
-        information_cutoff=CUTOFF,
-        code_revision="git:abcdef1",
+        as_of=NOW, information_cutoff=CUTOFF, code_revision="git:abcdef1",
         pricing_applicability_evidence=PRICING_EVIDENCE,
     )
 
@@ -188,17 +144,12 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
         return PreExecutionDecision(
             feature_values={feature.feature_id: Decimal(feature.value)},
             signal_values={key: Decimal(value) for key, value in signal.values.items()},
-            forecast_values=forecast_values,
-            pricing_outputs={"pricing-baseline": Decimal(".06")},
-            pricing_applicable=True,
-            pricing_non_applicability_reason=None,
+            forecast_values=forecast_values, pricing_outputs={"pricing-baseline": Decimal(".06")},
+            pricing_applicable=True, pricing_non_applicability_reason=None,
             pricing_applicability_evidence_id=PRICING_EVIDENCE.evidence_id,
-            risk_outputs={"exposure_multiplier": risk.exposure_multiplier},
-            target_weights=approved_weights,
-            risk_decision_id=risk.risk_decision_id,
-            risk_decision_hash=risk.content_hash,
-            risk_state=risk.state,
-            risk_reason_codes=tuple(reason.value for reason in risk.reason_codes),
+            risk_outputs={"exposure_multiplier": risk.exposure_multiplier}, target_weights=approved_weights,
+            risk_decision_id=risk.risk_decision_id, risk_decision_hash=risk.content_hash,
+            risk_state=risk.state, risk_reason_codes=tuple(reason.value for reason in risk.reason_codes),
             order_intent_economics={"objective": "rebalance-to-risk-approved-target@1"},
             data_lineage_ids=(MANIFEST, FEATURE_MANIFEST, HISTORY_MANIFEST),
             calculation_lineage_ids=(combined_id, risk.content_hash),
@@ -206,18 +157,10 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
 
     kernel = DecisionKernel("decision-kernel@1", calculate)
     ledger = DecisionParityLedger()
-    replay = ledger.record(DecisionRuntimeAdapter(
-        kernel, adapter(DecisionRuntime.HISTORICAL_REPLAY)
-    ).decide(inputs))
-    paper = ledger.record(DecisionRuntimeAdapter(
-        kernel, adapter(DecisionRuntime.PAPER)
-    ).decide(inputs))
-
+    replay = ledger.record(DecisionRuntimeAdapter(kernel, adapter(DecisionRuntime.HISTORICAL_REPLAY)).decide(inputs))
+    paper = ledger.record(DecisionRuntimeAdapter(kernel, adapter(DecisionRuntime.PAPER)).decide(inputs))
     assert replay.semantic_hash == paper.semantic_hash
-    assert ledger.require_parity(
-        inputs.input_hash,
-        runtimes=(DecisionRuntime.HISTORICAL_REPLAY, DecisionRuntime.PAPER),
-    ) == replay.semantic_hash
+    assert ledger.require_parity(inputs.input_hash, runtimes=(DecisionRuntime.HISTORICAL_REPLAY, DecisionRuntime.PAPER)) == replay.semantic_hash
     assert replay.decision.pricing_applicable is True
     assert replay.decision.pricing_outputs["pricing-baseline"] == Decimal(".06")
     assert sum(replay.decision.target_weights.values()) == Decimal("1")
