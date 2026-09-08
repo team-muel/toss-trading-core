@@ -92,10 +92,10 @@ def test_all_constraints_and_infeasible_are_explicit():
 
 def test_no_trade_band_and_economic_gate_preserve_three_targets():
     raw=target((D(".6"),D(".4")),"RAW_TARGET"); risk=target((D(".55"),D(".45")),"RISK_CONSTRAINED_TARGET")
-    result=finalize_targets(raw=raw,risk_constrained=risk,current_weights=(D(".5"),D(".5")),no_trade_bands=(D(".02"),D(".1")),expected_benefit=D(".01"),expected_cost=D(".002"),uncertainty_buffer=D(".003"))
+    result=finalize_targets(raw=raw,risk_constrained=risk,current_weights=(D(".5"),D(".5")),no_trade_bands=(D(".02"),D(".1")),expected_benefit=D(".01"),expected_cost=D(".002"),uncertainty_buffer=D(".003"),cash_instrument="CASH")
     assert result.raw_target is raw and result.risk_constrained_target is risk
     assert result.executable_target.weights==(D(".55"),D(".45")) and sum(result.executable_target.weights)==1
-    blocked=finalize_targets(raw=raw,risk_constrained=risk,current_weights=(D(".5"),D(".5")),no_trade_bands=(D(0),D(0)),expected_benefit=D(".004"),expected_cost=D(".002"),uncertainty_buffer=D(".002"))
+    blocked=finalize_targets(raw=raw,risk_constrained=risk,current_weights=(D(".5"),D(".5")),no_trade_bands=(D(0),D(0)),expected_benefit=D(".004"),expected_cost=D(".002"),uncertainty_buffer=D(".002"),cash_instrument="CASH")
     assert blocked.no_trade and blocked.executable_target.weights==(D(".5"),D(".5"))
 
 def test_solver_failure_waterfall_never_invents_equal_weight():
