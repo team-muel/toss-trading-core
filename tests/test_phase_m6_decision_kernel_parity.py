@@ -10,21 +10,33 @@ from asset_management.decisions.governor import DecisionState
 from asset_management.domain.errors import InvariantViolation
 from asset_management.orchestration import (
     DecisionKernel, DecisionParityLedger, DecisionRuntime, DecisionRuntimeAdapter,
-    FrozenDecisionInput, PreExecutionDecision, RuntimeAdapterDescriptor,
+    FrozenDecisionInput, PreExecutionDecision, PricingApplicabilityEvidence,
+    RuntimeAdapterDescriptor,
 )
 
 
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
-MANIFESTS = ("a" * 64, "b" * 64)
+PRICING_EVIDENCE = PricingApplicabilityEvidence.create(
+    scope_key="quality-value@1", applicable=True, reason=None,
+    policy_version="pricing-applicability@1",
+)
+NON_APPLICABLE_EVIDENCE = PricingApplicabilityEvidence.create(
+    scope_key="quality-value@1", applicable=False,
+    reason="asset-class-has-no-approved-pricing-model",
+    policy_version="pricing-applicability@1",
+)
+MANIFESTS = ("a" * 64, PRICING_EVIDENCE.evidence_id)
 LINEAGE = ("c" * 64,)
 
 
 def frozen_input(**changes):
     values = dict(
         snapshot_id="snapshot@1", strategy_key="quality-value@1", model_keys=("capm@1",),
-        policy_versions={"investment": "investment@1", "risk": "risk@1"},
+        policy_versions={"investment": "investment@1", "risk": "risk@1",
+                         "pricing_applicability": PRICING_EVIDENCE.policy_version},
         parameter_set_key="parameters@1", input_manifest_ids=MANIFESTS,
         as_of=NOW, information_cutoff=NOW - timedelta(seconds=1), code_revision="b6dfe93",
+        pricing_applicability_evidence=PRICING_EVIDENCE,
     )
     values.update(changes)
     return FrozenDecisionInput(**values)
@@ -38,6 +50,7 @@ def decision(**changes):
         risk_decision_id="risk-1", risk_decision_hash="d" * 64, risk_state=DecisionState.ALLOW,
         risk_reason_codes=(), order_intent_economics={"objective": "rebalance-to-target@1"},
         data_lineage_ids=LINEAGE, calculation_lineage_ids=("e" * 64,),
+        pricing_applicability_evidence_id=PRICING_EVIDENCE.evidence_id,
     )
     values.update(changes)
     return PreExecutionDecision(**values)
@@ -95,6 +108,7 @@ def test_pricing_non_applicability_must_be_explicit_and_cannot_hide_fake_output(
         pricing_outputs={},
         pricing_applicable=False,
         pricing_non_applicability_reason="asset-class-has-no-approved-pricing-model",
+        pricing_applicability_evidence_id=NON_APPLICABLE_EVIDENCE.evidence_id,
     )
     assert non_applicable.pricing_outputs == {}
     assert non_applicable.payload()["pricing_non_applicability_reason"] == (
