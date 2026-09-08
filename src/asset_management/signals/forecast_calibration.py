@@ -108,9 +108,6 @@ class CalibrationSample:
         available = _aware(self.outcome_available_at, "FORECAST_CALIBRATION_TIME_NOT_AWARE")
         signal_as_of = _aware(datetime.fromisoformat(self.snapshot.as_of),
                               "FORECAST_CALIBRATION_TIME_NOT_AWARE")
-        # A forward outcome cannot be used until the signal's declared forecast
-        # window has matured. This is intentionally conservative and prevents
-        # labels observed inside the horizon from leaking into calibration.
         if available <= signal_as_of or available < self.snapshot.validity.valid_until:
             raise InvariantViolation("FORECAST_CALIBRATION_OUTCOME_PREMATURE")
         values = dict(self.snapshot.values)
@@ -171,6 +168,9 @@ class ForecastCalibrationRequest:
             raise InvariantViolation("FORECAST_CALIBRATION_TARGET_INVALID")
         _snapshot_values(self.target_snapshot, universe)
         samples = self.training + self.validation
+        run_ids = tuple(sample.snapshot.signal_run_id for sample in samples)
+        if len(set(run_ids)) != len(run_ids):
+            raise InvariantViolation("FORECAST_CALIBRATION_DUPLICATE_SIGNAL_RUN")
         for sample in samples:
             sample_as_of = _aware(datetime.fromisoformat(sample.snapshot.as_of),
                                   "FORECAST_CALIBRATION_TIME_NOT_AWARE")
