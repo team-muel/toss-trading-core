@@ -68,9 +68,11 @@ def test_historical_var_cvar_expected_shortfall_positive_loss():
 def test_exposure_stress_gap_and_event_controls():
     rows=[{name:D(1) for name in EXPOSURES},{name:D(0) for name in EXPOSURES}]
     assert aggregate_exposure((D(".6"),D(".4")),rows)["market_beta"]==D(".6")
-    scenario=StressScenario("US -10%",{"A":D("-.10")},{"USD/KRW":D(".05")},D(3))
-    loss,fx=stress_loss((D(1),),("A",),scenario)
-    assert loss==D(".10") and fx["USD/KRW"]==D(".05") and gap_stress(D(".5"),D("-.2"))==D(".10")
+    scenario=StressScenario("US_EQUITY_MINUS_10", {"A":D("-.10")},{"USD/KRW":D(".05")},
+                            "KRW", ValuationConvention.TOTAL_RETURN, 21, "stress@1", D(3))
+    stressed=stress_loss((D(1),),("A",),scenario,currency_basis="KRW",
+                         valuation_convention=ValuationConvention.TOTAL_RETURN,holding_horizon_days=21)
+    assert stressed.loss_fraction==D(".10") and stressed.fx_shocks["USD/KRW"]==D(".05") and gap_stress(D(".5"),D("-.2"))==D(".10")
     assert event_risk_action(event_imminent=True,action=EventAction.BLOCK)==EventAction.BLOCK
     assert len(REQUIRED_STRESS_SCENARIOS)==9
     liquid=liquidity_risk(position_quantity=D(1000),average_daily_volume=D(1000),max_participation=D(".1"),volume_multiplier=D(3))

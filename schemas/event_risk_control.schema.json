@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event_id", "action", "uncertainty_buffer", "liquidity_buffer", "scheduled_at", "event_type"],
+  "properties": {
+    "event_id": {"type": "string", "minLength": 1},
+    "action": {"enum": ["REDUCE", "DEFER", "BLOCK"]},
+    "uncertainty_buffer": {"type": "string"},
+    "liquidity_buffer": {"type": "string"},
+    "scheduled_at": {"type": "string", "format": "date-time"},
+    "event_type": {"enum": ["EARNINGS", "FOMC", "MACRO_RELEASE"]}
+  }
+}

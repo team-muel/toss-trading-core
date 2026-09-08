@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scenario_id", "asset_shocks", "fx_shocks", "currency_basis", "valuation_convention", "holding_horizon_days", "formula_version", "liquidity_multiplier", "correlation_multiplier"],
+  "properties": {
+    "scenario_id": {"enum": ["US_EQUITY_MINUS_10", "NASDAQ_MINUS_20", "SEMICONDUCTOR_MINUS_30", "LONG_RATE_PLUS_100BP", "CREDIT_SPREAD_WIDENING", "USDKRW_SHOCK", "CORRELATION_SPIKE", "LIQUIDITY_DETERIORATION", "VOLUME_TRIPLE"]},
+    "asset_shocks": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}},
+    "fx_shocks": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}},
+    "currency_basis": {"type": "string", "minLength": 1},
+    "valuation_convention": {"enum": ["MARK_TO_MARKET", "TOTAL_RETURN"]},
+    "holding_horizon_days": {"type": "integer", "minimum": 1},
+    "formula_version": {"type": "string", "minLength": 1},
+    "liquidity_multiplier": {"type": "string"},
+    "correlation_multiplier": {"type": "string"}
+  }
+}
