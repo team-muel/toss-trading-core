@@ -3,14 +3,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Mapping, Sequence
 
-from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest, utc
+from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.domain.errors import DataQualityError, InvariantViolation
-from asset_management.domain.horizon import SignalValidity
 
 from .models import SignalSnapshot
 
@@ -87,6 +86,12 @@ def _snapshot_values(snapshot: SignalSnapshot, universe: tuple[str, ...]) -> dic
     return values  # type: ignore[return-value]
 
 
+def _aware(value: datetime, reason: str) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise InvariantViolation(reason)
+    return value.astimezone(timezone.utc)
+
+
 @dataclass(frozen=True, slots=True)
 class CalibrationSample:
     """Completed Signal outcome from one historical, point-in-time cross-section."""
@@ -101,6 +106,13 @@ class CalibrationSample:
         if not isinstance(self.snapshot, SignalSnapshot) or not isinstance(self.regime, str) or not self.regime.strip():
             raise InvariantViolation("FORECAST_CALIBRATION_SAMPLE_INVALID")
         available = _aware(self.outcome_available_at, "FORECAST_CALIBRATION_TIME_NOT_AWARE")
+        signal_as_of = _aware(datetime.fromisoformat(self.snapshot.as_of),
+                              "FORECAST_CALIBRATION_TIME_NOT_AWARE")
+        # A forward outcome cannot be used until the signal's declared forecast
+        # window has matured. This is intentionally conservative and prevents
+        # labels observed inside the horizon from leaking into calibration.
+        if available <= signal_as_of or available < self.snapshot.validity.valid_until:
+            raise InvariantViolation("FORECAST_CALIBRATION_OUTCOME_PREMATURE")
         values = dict(self.snapshot.values)
         if set(self.forward_returns) != set(values) or set(self.bucket_labels) != set(values):
             raise InvariantViolation("FORECAST_CALIBRATION_UNIVERSE_PIT_INVALID")
@@ -110,12 +122,6 @@ class CalibrationSample:
         object.__setattr__(self, "outcome_available_at", available)
         object.__setattr__(self, "forward_returns", MappingProxyType(dict(sorted(self.forward_returns.items()))))
         object.__setattr__(self, "bucket_labels", MappingProxyType(dict(sorted(self.bucket_labels.items()))))
-
-
-def _aware(value: datetime, reason: str) -> datetime:
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
-        raise InvariantViolation(reason)
-    return value.astimezone(timezone.utc)
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +166,8 @@ class ForecastCalibrationRequest:
                               "FORECAST_CALIBRATION_TIME_NOT_AWARE")
         target_cutoff = _aware(datetime.fromisoformat(self.target_snapshot.information_cutoff),
                                "FORECAST_CALIBRATION_TIME_NOT_AWARE")
-        if target_cutoff > target_as_of or self.target_snapshot.validity.valid_until <= target_as_of:
+        if (target_cutoff > target_as_of or self.target_snapshot.validity.valid_until <= target_as_of or
+                target_as_of > evaluated or self.target_snapshot.validity.valid_until <= evaluated):
             raise InvariantViolation("FORECAST_CALIBRATION_TARGET_INVALID")
         _snapshot_values(self.target_snapshot, universe)
         samples = self.training + self.validation
@@ -172,6 +179,9 @@ class ForecastCalibrationRequest:
                     sample.snapshot.universe_manifest_id != self.target_snapshot.universe_manifest_id or
                     sample.snapshot.code_revision != self.target_snapshot.code_revision or
                     sample.snapshot.validity.forecast_horizon != self.target_snapshot.validity.forecast_horizon or
+                    sample.snapshot.validity.holding_horizon != self.target_snapshot.validity.holding_horizon or
+                    sample.snapshot.validity.decay_profile != self.target_snapshot.validity.decay_profile or
+                    sample.snapshot.validity.half_life_seconds != self.target_snapshot.validity.half_life_seconds or
                     sample_as_of >= target_as_of or sample.outcome_available_at > target_cutoff):
                 raise InvariantViolation("FORECAST_CALIBRATION_SAMPLE_LINEAGE_INVALID")
         train_end = max(_aware(datetime.fromisoformat(item.snapshot.as_of),
@@ -225,6 +235,7 @@ class SignalForecastCalibrator:
             uncertainty = _rmse(validation_errors)
             confidence = Decimal(1) / (Decimal(1) + uncertainty * Decimal(100))
             target_values = _snapshot_values(request.target_snapshot, request.target_universe)
+            validity = request.target_snapshot.validity.payload()
             components, floor_count = {}, 0
             for instrument, score in target_values.items():
                 raw = predictor(score)
@@ -238,6 +249,7 @@ class SignalForecastCalibrator:
                     "currency": config.currency, "unit": config.unit,
                     "horizon": request.target_snapshot.validity.forecast_horizon,
                     "valid_until": request.target_snapshot.validity.valid_until.isoformat(),
+                    "signal_validity": validity,
                     "model_version": config.model_version,
                 }
             stability = self._stability(validation_rows, predictor)
@@ -248,6 +260,7 @@ class SignalForecastCalibrator:
                 "universe_manifest_id": request.target_snapshot.universe_manifest_id,
                 "as_of": request.target_snapshot.as_of,
                 "information_cutoff": request.target_snapshot.information_cutoff,
+                "signal_validity": validity,
                 "training_signal_run_ids": [sample.snapshot.signal_run_id for sample in request.training],
                 "validation_signal_run_ids": [sample.snapshot.signal_run_id for sample in request.validation],
                 "selected_mapping": selected,
