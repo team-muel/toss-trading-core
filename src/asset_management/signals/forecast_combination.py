@@ -168,7 +168,8 @@ class ForecastCombinationRequest:
                     source.unit != first.unit or source.horizon != first.horizon or
                     source.valid_until != first.valid_until or set(source.point_estimates) != universe or
                     source.oos_evidence_available_at > first.information_cutoff or
-                    source.oos_evidence_available_at > evaluated):
+                    source.oos_evidence_available_at > evaluated or source.as_of > evaluated or
+                    source.valid_until <= evaluated):
                 raise InvariantViolation("FORECAST_COMBINATION_LINEAGE_OR_TIME_INVALID")
         for matrix, diagonal in ((self.covariance, False), (self.correlation, True)):
             if any(len(row) != size for row in matrix):
