@@ -40,7 +40,7 @@ RISK_FLAGS = tuple(field.name for field in fields(RiskInputs) if field.type == "
 @pytest.mark.parametrize("value", [None, 0, 1, "", "false", "true", [], {}])
 def test_unknown_or_coerced_risk_flags_cannot_authorize(field, value):
     with pytest.raises(NoTrade, match=f"RISK_INPUT_INVALID: {field}"):
-        RiskGovernor(policy()).decide(inputs(**{field: value})).authorize()
+        RiskGovernor(policy()).decide(inputs(**{field: value}))
 
 
 @pytest.mark.parametrize("field", RISK_FLAGS)
@@ -52,12 +52,13 @@ def test_explicit_boolean_risk_flags_preserve_decisions(field):
 
 @pytest.mark.parametrize("field,reason", HARD_BLOCKS)
 def test_every_hard_condition_blocks(field: str, reason: ReasonCode):
-    decision = RiskGovernor(policy()).decide(inputs(**{field: True}))
+    governor = RiskGovernor(policy())
+    decision = governor.decide(inputs(**{field: True}))
     assert decision.state is DecisionState.BLOCK
     assert decision.exposure_multiplier == 0
     assert reason in decision.reason_codes
     with pytest.raises(NoTrade):
-        decision.authorize()
+        governor.authorize(decision)
 
 
 def test_hard_block_dominates_all_soft_reductions():
@@ -69,12 +70,13 @@ def test_hard_block_dominates_all_soft_reductions():
 
 
 def test_soft_conditions_reduce_by_most_conservative_explicit_cap():
-    decision = RiskGovernor(policy()).decide(inputs(volatility_high=True, spread_high=True))
+    governor = RiskGovernor(policy())
+    decision = governor.decide(inputs(volatility_high=True, spread_high=True))
     assert decision.state is DecisionState.REDUCE
     assert decision.exposure_multiplier == Decimal("0.50")
     assert decision.reason_codes == (ReasonCode.VOLATILITY_HIGH, ReasonCode.SPREAD_HIGH)
-    assert decision.authorize().risk_decision_id == decision.risk_decision_id
-    scaled = decision.apply_to_target(DEFAULT_TARGET, cash_instrument_id="CASH")
+    assert governor.authorize(decision).risk_decision_id == decision.risk_decision_id
+    scaled = governor.apply_to_target(decision, DEFAULT_TARGET, cash_instrument_id="CASH")
     assert scaled == {"SPY": Decimal("0.4000"), "CASH": Decimal("0.6000")}
 
 
@@ -91,7 +93,7 @@ def test_all_five_states_are_distinct_and_non_approved_states_fail_closed():
     for decision in decisions[2:]:
         assert decision.reason_codes
         with pytest.raises(NoTrade):
-            decision.authorize()
+            governor.authorize(decision)
 
 
 def test_same_semantic_inputs_produce_same_decision_and_lineage_hash():
@@ -112,8 +114,10 @@ def test_policy_is_complete_versioned_and_policy_mismatch_blocks():
 
 
 def test_order_intent_requires_exact_approved_decision_binding():
-    approved, authorized_weights = RiskGovernor(policy()).decide(inputs()).authorize_target(
-        DEFAULT_TARGET, cash_instrument_id="CASH"
+    governor = RiskGovernor(policy())
+    decision = governor.decide(inputs())
+    approved, authorized_weights = governor.authorize_target(
+        decision, DEFAULT_TARGET, cash_instrument_id="CASH"
     )
     weights = (
         TargetWeight("SPY", authorized_weights["SPY"], Decimal("0")),
@@ -123,6 +127,17 @@ def test_order_intent_requires_exact_approved_decision_binding():
     assert intent.risk_authorization.risk_decision_id == approved.risk_decision_id
     with pytest.raises(InvariantViolation, match="changed after risk approval"):
         OrderIntent("run-17", "risk-v17", "target-17", "changed", approved, weights, ())
+
+
+def test_risk_authority_cannot_be_minted_or_replayed_through_another_governor():
+    issuer = RiskGovernor(policy())
+    decision = issuer.decide(inputs())
+    with pytest.raises(InvariantViolation, match="issuing risk governor"):
+        decision.authorize()
+    other = RiskGovernor(policy())
+    with pytest.raises(InvariantViolation, match="not issued by this risk governor"):
+        other.authorize(decision)
+    assert issuer.authorize(decision).risk_decision_id == decision.risk_decision_id
 
 
 def test_decision_journal_is_append_only_and_exact_replay_is_idempotent(tmp_path):
