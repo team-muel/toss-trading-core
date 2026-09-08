@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "model_relative_alpha_assessment.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["raw_alpha", "lower_bound", "upper_bound", "confidence", "prior", "shrinkage_amount", "combined_signal_forecast_id", "decision", "reason_codes"],
+  "properties": {
+    "raw_alpha": {"type": "string"}, "lower_bound": {"type": "string"},
+    "upper_bound": {"type": "string"}, "confidence": {"type": "string"},
+    "prior": {"type": "string"}, "shrinkage_amount": {"type": "string"},
+    "combined_signal_forecast_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "decision": {"enum": ["ELIGIBLE", "ABSTAIN"]},
+    "reason_codes": {"type": "array", "items": {"type": "string"}}
+  }
+}
