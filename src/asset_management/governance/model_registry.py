@@ -170,6 +170,9 @@ class ModelRegistry:
             raise InvariantViolation("MODEL_LIFECYCLE_TRANSITION_INVALID")
         transition = ModelTransition(model_key, current.status, to_status, effective_at,
                                      reason, evidence_ids)
+        if (to_status not in {ModelStatus.DEVELOPMENT, ModelStatus.RETIRED} and
+                transition.effective_at.date() < current.validation_date):
+            raise InvariantViolation("MODEL_TRANSITION_BEFORE_VALIDATION")
         previous_transitions = [item for item in self._transitions if item.model_key == model_key]
         if previous_transitions and transition.effective_at < previous_transitions[-1].effective_at:
             raise InvariantViolation("MODEL_TRANSITION_TIME_REVERSED")
@@ -190,6 +193,8 @@ class ModelRegistry:
         if not isinstance(scope, ModelScope) or scope not in model.approved_scope:
             raise InvariantViolation("MODEL_SCOPE_NOT_APPROVED")
         authorized_at = at.astimezone(timezone.utc)
+        if authorized_at.date() < model.validation_date:
+            raise InvariantViolation("MODEL_NOT_YET_VALIDATED")
         if authorized_at.date() > model.review_date:
             raise InvariantViolation("MODEL_REVIEW_OVERDUE")
         body = {"model_key": model_key, "scope": scope.value,
