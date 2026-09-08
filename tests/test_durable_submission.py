@@ -48,17 +48,24 @@ def authority(status='OPEN'):
     conn.execute('INSERT INTO am_client_order VALUES (?,?)',(intent.client_order_id,intent.order_intent_id))
     conn.execute('INSERT INTO am_order_link VALUES (?,?)',(intent.client_order_id,'broker:1'))
     conn.execute('INSERT INTO am_broker_order VALUES (?,?)',('broker:1','paper:1'))
-    conn.execute('INSERT INTO am_order_state_event VALUES (?,?,?,?)',('broker:1',1,status,'raw:1'))
-    conn.execute('INSERT INTO am_account_reconciliation_v2 VALUES (?,?,?,?,?)',
-                 ('reconcile:1','snapshot:1','paper:1','MATCH',NOW.isoformat()))
-    conn.execute('INSERT INTO am_account_snapshot VALUES (?,?)',('snapshot:1','paper:1'))
-    conn.execute('INSERT INTO am_account_snapshot_raw VALUES (?,?)',('snapshot:1','raw:1'))
-    body_hash,body_json=_raw_hash({'status':status})
-    conn.execute('INSERT INTO am_raw_api_response VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                 ('raw:1','toss','/api/v1/orders/broker:1','GET','request:1',200,body_hash,body_json,
-                  NOW.isoformat(),NOW.isoformat(),'paper:1','1.2.15','{}'))
+    _append_authority_snapshot(conn,status,NOW,sequence=1,suffix='1')
     conn.commit()
     return conn
+
+
+def _append_authority_snapshot(conn, status, at, *, sequence, suffix):
+    raw_id=f'raw:{suffix}'; snapshot_id=f'snapshot:{suffix}'; reconciliation_id=f'reconcile:{suffix}'
+    conn.execute('INSERT INTO am_order_state_event VALUES (?,?,?,?)',('broker:1',sequence,status,raw_id))
+    conn.execute('INSERT INTO am_account_reconciliation_v2 VALUES (?,?,?,?,?)',
+                 (reconciliation_id,snapshot_id,'paper:1','MATCH',at.isoformat()))
+    conn.execute('INSERT INTO am_account_snapshot VALUES (?,?)',(snapshot_id,'paper:1'))
+    conn.execute('INSERT INTO am_account_snapshot_raw VALUES (?,?)',(snapshot_id,raw_id))
+    body_hash,body_json=_raw_hash({'status':status})
+    conn.execute('INSERT INTO am_raw_api_response VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                 (raw_id,'toss','/api/v1/orders/broker:1','GET',f'request:{suffix}',200,body_hash,body_json,
+                  at.isoformat(),at.isoformat(),'paper:1','1.2.15','{}'))
+    conn.commit()
+    return dict(snapshot_id=snapshot_id,reconciliation_id=reconciliation_id,source_response_id=raw_id)
 
 
 def seed_fill_posting(conn):
@@ -128,7 +135,7 @@ def test_changed_payload_and_account_risk_fail_closed(tmp_path):
 
 
 @pytest.mark.parametrize('status', ['PARTIALLY_FILLED','FILLED'])
-def test_fills_and_cancel_timeout_need_reconciliation(tmp_path, status):
+def test_fills_and_cancel_timeout_need_post_operation_reconciliation(tmp_path, status):
     ledger=authority(status)
     journal = SubmissionJournal(tmp_path/'s.db',authority_conn=ledger)
     result = journal.submit_once(**args(), submit=lambda _: {'status':status})
@@ -138,8 +145,18 @@ def test_fills_and_cancel_timeout_need_reconciliation(tmp_path, status):
     assert first.reason == 'FILL_LEDGER_RECONCILIATION_REQUIRED'
     seed_fill_posting(ledger)
     assert journal.recover(client, lookup=lambda q: proof(q,status,fill_ledger_verified=True)).state == status
-    assert journal.mark_ambiguous(client, operation='CANCEL').state == 'UNKNOWN_BROKER_STATE'
+
+    ambiguous_at=NOW+timedelta(seconds=10)
+    assert journal.mark_ambiguous(client, operation='CANCEL', at=ambiguous_at).state == 'UNKNOWN_BROKER_STATE'
+    stale=journal.recover(client, lookup=lambda q: proof(q,status,fill_ledger_verified=True))
+    assert stale.state == 'UNKNOWN_BROKER_STATE'
+    assert stale.reason == 'BROKER_EVIDENCE_CONFLICT_OR_STALE'
     assert journal.recover(client, lookup=lambda q: proof(q,account='other')).state == 'UNKNOWN_BROKER_STATE'
+
+    fresh_at=ambiguous_at+timedelta(seconds=1)
+    fresh_ids=_append_authority_snapshot(ledger,status,fresh_at,sequence=2,suffix='2')
+    fresh=journal.recover(client, lookup=lambda q: proof(q,status,fill_ledger_verified=True,**fresh_ids))
+    assert fresh.state == status
     journal.close(); ledger.close()
 
 
