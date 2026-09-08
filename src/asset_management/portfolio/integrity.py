@@ -24,6 +24,13 @@ def _vector(value: object, reason: str, *, weights: bool = False) -> tuple[Decim
     return value
 
 
+def _instruments(value: object) -> tuple[str, ...]:
+    if (not isinstance(value, tuple) or not value or len(set(value)) != len(value) or
+            any(not isinstance(item, str) or not item.strip() for item in value)):
+        raise DataQualityError("OPTIMIZER_INSTRUMENT_IDENTITY_INVALID")
+    return value
+
+
 class OptimizationReturnMode(StrEnum):
     ABSOLUTE = "ABSOLUTE"
     STRATEGIC = "STRATEGIC"
@@ -50,7 +57,6 @@ class CapitalAllocation:
 
     @property
     def investable_capital(self) -> Decimal:
-        # NAV already reflects recognized liabilities. Only liabilities outside NAV are reservable.
         return self.nav - self.off_nav_liability_reserve
 
     @property
@@ -60,9 +66,10 @@ class CapitalAllocation:
 
 @dataclass(frozen=True, slots=True)
 class OptimizationReturnInput:
-    """A typed return term that prevents generic ``alpha`` substitution."""
+    """A typed return vector bound to one explicit instrument ordering."""
 
     mode: OptimizationReturnMode
+    instruments: tuple[str, ...]
     forecast_total_return: tuple[Decimal, ...]
     benchmark_weights: tuple[Decimal, ...] | None = None
     model_relative_alpha: tuple[Decimal, ...] | None = None
@@ -70,8 +77,10 @@ class OptimizationReturnInput:
     factor_neutrality_verified: bool = False
 
     def __post_init__(self) -> None:
+        instruments = _instruments(self.instruments)
         forecasts = _vector(self.forecast_total_return, "OPTIMIZER_RETURN_INPUT_INVALID")
-        if not isinstance(self.mode, OptimizationReturnMode) or type(self.factor_neutrality_verified) is not bool:
+        if (len(instruments) != len(forecasts) or not isinstance(self.mode, OptimizationReturnMode) or
+                type(self.factor_neutrality_verified) is not bool):
             raise DataQualityError("OPTIMIZER_RETURN_INPUT_INVALID")
         active = self.mode in {OptimizationReturnMode.BENCHMARK_ACTIVE, OptimizationReturnMode.MODEL_RELATIVE_ALPHA}
         if active:
@@ -88,6 +97,7 @@ class OptimizationReturnInput:
         elif (self.model_relative_alpha is not None or self.pricing_baseline_version is not None or
               self.factor_neutrality_verified):
             raise DataQualityError("OPTIMIZER_MODEL_ALPHA_UNEXPECTED")
+        object.__setattr__(self, "instruments", instruments)
 
     @property
     def return_vector(self) -> tuple[Decimal, ...]:
