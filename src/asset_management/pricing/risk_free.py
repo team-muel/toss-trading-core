@@ -30,15 +30,19 @@ class RiskFreeCurve:
             raise DataQualityError("RISK_FREE_CURVE_INCOMPLETE")
         if len({item.as_of.astimezone(timezone.utc) for item in values}) != 1:
             raise DataQualityError("RISK_FREE_CURVE_AS_OF_CONFLICT")
+        if len({item.dataset_manifest_id for item in values}) != 1:
+            raise DataQualityError("RISK_FREE_CURVE_MANIFEST_CONFLICT")
         self.points = {item.horizon: item for item in values}
 
     def rate(self, *, horizon: int, information_cutoff: datetime) -> Decimal:
         if information_cutoff.tzinfo is None or information_cutoff.utcoffset() is None:
             raise DataQualityError("PRICING_CUTOFF_NOT_AWARE")
+        cutoff = information_cutoff.astimezone(timezone.utc)
         try:
             point = self.points[horizon]
         except KeyError:
             raise DataQualityError("RISK_FREE_HORIZON_MISSING") from None
-        if point.as_of > information_cutoff or point.quality is not QualityStatus.VALID:
+        if (point.as_of > cutoff or point.available_at > cutoff or
+                point.quality is not QualityStatus.VALID):
             raise DataQualityError("RISK_FREE_POINT_NOT_ELIGIBLE")
         return point.annualized_rate
