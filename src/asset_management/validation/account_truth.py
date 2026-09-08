@@ -89,11 +89,13 @@ class AccountTruthGateResult:
 
 def evaluate_account_truth_gate(inputs: AccountTruthGateInput) -> AccountTruthGateResult:
     reasons = [f"CHECK_FAILED:{name}" for name in REQUIRED_CHECKS if not inputs.checks[name].passed]
-    unresolved = set(inputs.unresolved_reconciliation_blockers)
-    accepted = set(inputs.accepted_reconciliation_blockers)
-    unaccepted = tuple(sorted(unresolved - accepted))
-    if unaccepted:
-        reasons.append("RECONCILIATION_BLOCKER_NOT_ACCEPTED")
+    blockers = tuple(sorted(set(inputs.unresolved_reconciliation_blockers)))
+    accepted = tuple(sorted(set(inputs.accepted_reconciliation_blockers)))
+    # "Accepted" is retained only as audit metadata. There is no verified waiver
+    # authority in Gate A, so a current reconciliation blocker can never be cleared
+    # by a caller-provided label.
+    if blockers:
+        reasons.append("ACCOUNT_RECONCILIATION_BLOCKERS_PRESENT")
     if inputs.live_trading_enabled:
         reasons.append("LIVE_TRADING_ENABLED")
     decision = AcceptanceDecision.FAIL if reasons else AcceptanceDecision.PASS
@@ -103,8 +105,8 @@ def evaluate_account_truth_gate(inputs: AccountTruthGateInput) -> AccountTruthGa
     payload = {
         "decision": decision.value,
         "reason_codes": reasons,
-        "blocker_ids": list(unaccepted),
-        "accepted_blocker_ids": sorted(unresolved & accepted),
+        "blocker_ids": list(blockers),
+        "accepted_blocker_ids": list(accepted),
         "evidence_artifact_ids": sorted(artifacts),
         "evaluated_at": inputs.evaluated_at.isoformat(),
         "code_revision": inputs.code_revision,
@@ -112,6 +114,6 @@ def evaluate_account_truth_gate(inputs: AccountTruthGateInput) -> AccountTruthGa
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     digest = sha256(encoded.encode()).hexdigest()
     return AccountTruthGateResult(
-        decision, tuple(reasons), unaccepted, tuple(sorted(unresolved & accepted)), tuple(sorted(artifacts)),
+        decision, tuple(reasons), blockers, accepted, tuple(sorted(artifacts)),
         inputs.evaluated_at.isoformat(), inputs.code_revision, digest,
     )
