@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["evaluations", "ledger_hash"],
+  "$defs": {
+    "adapter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime", "clock_adapter_key", "data_source_adapter_key", "broker_adapter_key", "execution_adapter_key", "persistence_adapter_key"]
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["feature_values", "signal_values", "forecast_values", "pricing_outputs", "risk_outputs", "target_weights", "risk_decision_id", "risk_decision_hash", "risk_state", "risk_reason_codes", "order_intent_economics", "data_lineage_ids", "calculation_lineage_ids"]
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kernel_version", "input_hash", "adapter", "decision", "semantic_hash", "evaluation_hash"]
+    }
+  }
+}

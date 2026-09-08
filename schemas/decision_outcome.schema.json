@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "decision_id", "decision_content_hash", "assessed_at", "realized_active_return", "regression_alpha", "process_good", "outcome_good", "quality", "outcome_id"],
+  "properties": {
+    "schema_version": {"const": "decision-economic-journal@1"},
+    "decision_id": {"type": "string", "pattern": "^decision-[0-9a-f]{64}$"},
+    "decision_content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "assessed_at": {"type": "string", "format": "date-time"},
+    "realized_active_return": {"$ref": "decision_economic_journal.schema.json#/$defs/return_metric"},
+    "regression_alpha": {"$ref": "decision_economic_journal.schema.json#/$defs/return_metric"},
+    "process_good": {"type": "boolean"}, "outcome_good": {"type": "boolean"},
+    "quality": {"enum": ["GOOD_DECISION_GOOD_OUTCOME", "GOOD_DECISION_BAD_OUTCOME", "BAD_DECISION_GOOD_OUTCOME", "BAD_DECISION_BAD_OUTCOME"]},
+    "outcome_id": {"type": "string", "pattern": "^outcome-[0-9a-f]{64}$"}
+  }
+}

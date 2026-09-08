@@ -1,1 +1,99 @@
-"""CAPM required-return model."""
+"""CAPM required return with estimated and shrinkable beta."""
+
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal, localcontext
+from typing import Sequence
+
+from asset_management.domain.errors import DataQualityError
+from asset_management.quality.models import QualityStatus
+from asset_management.domain.horizon import SignalValidity
+from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
+
+from .models import BetaEstimate, PricingResult
+from .risk_free import annual_to_horizon
+
+
+def estimate_beta(asset_returns: Sequence[Decimal], market_returns: Sequence[Decimal], *,
+                  as_of: datetime, minimum_observations: int = 60,
+                  instability_standard_error: Decimal = Decimal("0.25"),
+                  prior_beta: Decimal = Decimal(1)) -> BetaEstimate:
+    if as_of.tzinfo is None or as_of.utcoffset() is None:
+        raise DataQualityError("BETA_AS_OF_NOT_AWARE")
+    if len(asset_returns) != len(market_returns) or len(asset_returns) < minimum_observations:
+        raise DataQualityError("BETA_HISTORY_MISSING")
+    if minimum_observations < 3 or instability_standard_error <= 0:
+        raise ValueError("BETA_POLICY_INVALID")
+    n = len(asset_returns)
+    if any(not value.is_finite() for value in (*asset_returns, *market_returns)):
+        raise DataQualityError("BETA_INPUT_INVALID")
+    x_mean = sum(market_returns) / Decimal(n)
+    y_mean = sum(asset_returns) / Decimal(n)
+    sxx = sum((x - x_mean) ** 2 for x in market_returns)
+    if sxx == 0:
+        raise DataQualityError("BETA_MARKET_VARIANCE_ZERO")
+    sxy = sum((x - x_mean) * (y - y_mean) for x, y in zip(market_returns, asset_returns))
+    raw = sxy / sxx
+    alpha = y_mean - raw * x_mean
+    residuals = tuple(y - alpha - raw * x for x, y in zip(market_returns, asset_returns))
+    sse = sum(value * value for value in residuals)
+    syy = sum((y - y_mean) ** 2 for y in asset_returns)
+    r_squared = Decimal(1) - sse / syy if syy else Decimal(0)
+    with localcontext() as context:
+        context.prec = 34
+        standard_error = (sse / Decimal(n - 2) / sxx).sqrt()
+    reliability = Decimal(1) / (Decimal(1) + (standard_error / instability_standard_error) ** 2)
+    beta = reliability * raw + (Decimal(1) - reliability) * prior_beta
+    quality = QualityStatus.ESTIMATED if reliability < Decimal("0.8") else QualityStatus.VALID
+    return BetaEstimate(beta, raw, standard_error, n, n, r_squared, as_of, quality, reliability)
+
+
+def capm_required_return(*, instrument_id: str, risk_free_rate: Decimal,
+                         beta: BetaEstimate, market_risk_premium: Decimal,
+                         horizon: int, as_of: datetime,
+                         validity: SignalValidity,
+                         model_registry: ModelRegistry,
+                         authorization: ModelAuthorization,
+                         uncertainty_z: Decimal = Decimal("1.96")) -> PricingResult:
+    model_registry.require_authorization(
+        authorization, model_key="CAPM@1", scope=ModelScope.REQUIRED_RETURN, at=as_of)
+    return _capm_numeric(instrument_id=instrument_id, risk_free_rate=risk_free_rate, beta=beta,
+                         market_risk_premium=market_risk_premium, horizon=horizon, as_of=as_of,
+                         validity=validity, uncertainty_z=uncertainty_z)
+
+
+def _capm_numeric(*, instrument_id, risk_free_rate, beta, market_risk_premium, horizon,
+                  as_of, validity, uncertainty_z=Decimal("1.96")):
+    if (as_of.tzinfo is None or as_of.utcoffset() is None or
+            not risk_free_rate.is_finite() or not market_risk_premium.is_finite() or
+            uncertainty_z < 0):
+        raise DataQualityError("CAPM_INPUT_INVALID")
+    if beta.as_of > as_of or beta.quality in {QualityStatus.MISSING, QualityStatus.BLOCKED,
+                                             QualityStatus.CONFLICT, QualityStatus.QUARANTINED}:
+        raise DataQualityError("BETA_NOT_ELIGIBLE")
+    annual = risk_free_rate + beta.beta * market_risk_premium
+    annual_uncertainty = abs(market_risk_premium) * beta.standard_error
+    lower_annual = max(Decimal("-0.999999"), annual - uncertainty_z * annual_uncertainty)
+    upper_annual = annual + uncertainty_z * annual_uncertainty
+    point = annual_to_horizon(annual, horizon)
+    lower = annual_to_horizon(lower_annual, horizon)
+    upper = annual_to_horizon(upper_annual, horizon)
+    horizon_uncertainty = max(point-lower, upper-point) / uncertainty_z if uncertainty_z else Decimal(0)
+    return PricingResult(
+        instrument_id, horizon, point, lower, upper,
+        "CAPM", "CAPM@1", {"MKT": beta.beta}, horizon_uncertainty, beta.quality, as_of,
+        validity,
+    )
+
+
+def capm_pricing_baseline_return(*, currency, currency_basis, asset_scope,
+                                 model_registry, authorization, **inputs):
+    """Canonical v2 output; legacy REQUIRED_RETURN authority is insufficient."""
+    if asset_scope not in ("EQUITY", "EQUITY_ETF"):
+        raise DataQualityError("PRICING_ASSET_SCOPE_NOT_APPLICABLE")
+    model_registry.require_authorization(authorization, model_key="CAPM@2",
+        scope=ModelScope.PRICING_BASELINE_RETURN, at=inputs['as_of'])
+    result = _capm_numeric(**inputs)
+    return result.economic_payload(currency=currency, currency_basis=currency_basis,
+        formula_version="capm-pricing-baseline@2", model_key="CAPM@2")

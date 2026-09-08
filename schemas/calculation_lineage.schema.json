@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "calculation_lineage.schema.json",
+  "title": "AMA-37 Calculation Lineage Graph",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["final_node_id", "nodes", "graph_hash"],
+  "properties": {
+    "final_node_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "graph_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "nodes": {"type": "array", "minItems": 4, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/node"}}
+  },
+  "$defs": {
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["node_id", "node_type", "formula_version", "parameter_set_id", "input_ids", "intermediate_values", "output_value", "output_hash", "raw_manifest_id"],
+      "properties": {
+        "node_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "node_type": {"enum": ["RAW_DATA", "FEATURE", "INTERMEDIATE_CALCULATION", "FINAL_ESTIMATE"]},
+        "formula_version": {"type": "string", "minLength": 1},
+        "parameter_set_id": {"type": "string", "minLength": 1},
+        "input_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+        "intermediate_values": {"type": "object", "minProperties": 1},
+        "output_value": {},
+        "output_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "raw_manifest_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

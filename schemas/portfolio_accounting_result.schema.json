@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reporting_currency", "ending_nav", "net_external_flow", "total_pnl",
+    "realized_pnl", "unrealized_pnl", "dividend_income", "interest_income",
+    "fee_cost", "tax_cost", "fx_contribution", "time_weighted_return", "content_hash"],
+  "properties": {
+    "reporting_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+    "ending_nav": {"type": "string"}, "net_external_flow": {"type": "string"},
+    "total_pnl": {"type": "string"}, "realized_pnl": {"type": "string"},
+    "unrealized_pnl": {"type": "string"}, "dividend_income": {"type": "string"},
+    "interest_income": {"type": "string"}, "fee_cost": {"type": "string"},
+    "tax_cost": {"type": "string"}, "fx_contribution": {"type": "string"},
+    "time_weighted_return": {"type": "string"},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

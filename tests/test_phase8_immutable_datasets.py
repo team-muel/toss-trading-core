@@ -256,4 +256,3 @@ def test_toss_adapter_connects_verified_raw_response_to_dataset_lineage(tmp_path
                                        credentials_classified=True)
     with pytest.raises(ValueError, match="CREDENTIALS_NOT_REGISTERED"):
         TossDatasetAdapter(Client(), ProviderDatasetAdapter(incomplete))
-

@@ -1,0 +1,27 @@
+{
+  "decision": "PASS",
+  "reason_codes": [],
+  "evidence_artifact_ids": [
+    "github-actions:33995650766",
+    "pytest:tests/test_phase10_data_quality.py::test_cross_source_conflict_is_recorded_and_never_averaged",
+    "pytest:tests/test_phase10_data_quality.py::test_degraded_source_reduces_confidence_but_unknown_blocks",
+    "pytest:tests/test_phase10_data_quality.py::test_missing_conflict_and_quarantine_propagate_to_no_trade",
+    "pytest:tests/test_phase10_data_quality.py::test_schema_timezone_and_missing_are_not_filled_with_zero",
+    "pytest:tests/test_phase10_data_quality.py::test_stale_source_blocks_features_and_decision",
+    "pytest:tests/test_phase8_immutable_datasets.py::test_failures_preserve_raw_and_health",
+    "pytest:tests/test_phase8_immutable_datasets.py::test_gold_lineage_and_missing_conflicting_parents",
+    "pytest:tests/test_phase8_immutable_datasets.py::test_manifest_schema_matches_serialized_contract",
+    "pytest:tests/test_phase8_immutable_datasets.py::test_raw_first_lineage_utc_secrets_and_dedup",
+    "pytest:tests/test_phase9_data_collection.py::test_analyst_estimates_require_historical_known_snapshot",
+    "pytest:tests/test_phase9_data_collection.py::test_company_filings_enforce_priority_and_all_timestamps",
+    "pytest:tests/test_phase9_data_collection.py::test_consensus_surprise_requires_real_pre_release_snapshot",
+    "pytest:tests/test_phase9_data_collection.py::test_cross_provider_price_context_requires_non_weakened_combined_license",
+    "pytest:tests/test_phase9_data_collection.py::test_daily_etf_prices_require_complete_fields_and_canonical_mapping",
+    "pytest:tests/test_phase9_data_collection.py::test_fx_separates_reporting_and_execution_quotes",
+    "pytest:tests/test_phase9_data_collection.py::test_macro_minimum_set_and_release_times",
+    "pytest:tests/test_phase9_data_collection.py::test_risk_free_curve_requires_all_four_horizons"
+  ],
+  "evaluated_at": "2026-09-06T00:00:00+00:00",
+  "code_revision": "e610400",
+  "content_hash": "2e310a0829a7f5de119180a9f9dc53ea8f7ae2f1227d3c7c535828866183ca63"
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["parent_id", "mode", "state", "reason", "input_hash", "participation", "cancel_replace_policy", "fallback", "requires_fresh_authorization", "children"],
+  "properties": {
+    "parent_id": {"type": "string"},
+    "mode": {"enum": ["IMMEDIATE", "PASSIVE_LIMIT", "TWAP_LITE", "POV_LITE", "OPEN_CLOSE_AWARE", "EVENT_DEFER"]},
+    "state": {"enum": ["PLANNED", "NO_TRADE"]}, "reason": {"type": "string"},
+    "input_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "participation": {"type": "string"}, "cancel_replace_policy": {"const": "CANCEL_CONFIRM_REASSESS"},
+    "fallback": {"const": "DEFER"}, "requires_fresh_authorization": {"const": true},
+    "children": {"type": "array", "items": {"type": "object", "additionalProperties": false,
+      "required": ["child_id", "sequence", "quantity", "limit_price", "not_before", "expires_at", "volume_cap"],
+      "properties": {"child_id": {"type": "string"}, "sequence": {"type": "integer", "minimum": 1},
+        "quantity": {"type": "string"}, "limit_price": {"type": "string"},
+        "not_before": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"}, "volume_cap": {"type": "string"}}}}
+  }
+}

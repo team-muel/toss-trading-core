@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["decision", "reason_codes", "blocker_ids", "accepted_blocker_ids", "evidence_artifact_ids",
+    "evaluated_at", "code_revision", "content_hash"],
+  "properties": {
+    "decision": {"enum": ["PASS", "FAIL"]},
+    "reason_codes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "blocker_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "accepted_blocker_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "evidence_artifact_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "evaluated_at": {"type": "string", "format": "date-time"},
+    "code_revision": {"type": "string", "minLength": 1},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

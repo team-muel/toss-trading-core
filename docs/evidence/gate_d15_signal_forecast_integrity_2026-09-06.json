@@ -1,0 +1,27 @@
+{
+  "decision": "PASS",
+  "reason_codes": [],
+  "evidence_artifact_ids": [
+    "pytest:tests/test_phase_m35_forecast_combination.py::test_combiner_uses_neutralization_oos_cost_and_correlation",
+    "pytest:tests/test_phase_m35_forecast_combination.py::test_future_oos_evidence_and_parameter_conflicts_fail_closed",
+    "pytest:tests/test_phase_m35_signal_diagnostics.py::test_cross_sectional_diagnostics_store_pit_metrics_and_post_cost_value",
+    "pytest:tests/test_phase_m35_signal_diagnostics.py::test_cross_sectional_leakage_and_coverage_fail_closed",
+    "pytest:tests/test_phase_m35_signal_diagnostics.py::test_ic_decay_stores_separate_horizon_metrics",
+    "pytest:tests/test_phase_m35_signal_diagnostics.py::test_time_series_future_outcome_and_forged_signal_fail_closed",
+    "pytest:tests/test_phase_m35_signal_diagnostics.py::test_time_series_prioritizes_calibration_utility_and_stability",
+    "pytest:tests/test_phase_m35_signal_forecast_calibration.py::test_minimum_history_and_future_outcome_fail_closed",
+    "pytest:tests/test_phase_m35_signal_forecast_calibration.py::test_time_ordered_calibration_emits_cost_aware_forecast_components",
+    "pytest:tests/test_phase_m35_signal_neutralization.py::test_future_outcome_and_snapshot_mismatch_fail_closed",
+    "pytest:tests/test_phase_m35_signal_neutralization.py::test_neutralization_preserves_pit_transform_lineage_and_incremental_metrics",
+    "pytest:tests/test_phase_m35_signal_registry.py::test_current_universe_future_feature_transform_and_history_gaps_fail_closed",
+    "pytest:tests/test_phase_m35_signal_registry.py::test_missing_coverage_returns_abstain_without_publishing_signal",
+    "pytest:tests/test_phase_m35_signal_registry.py::test_signal_contract_is_complete_versioned_and_separate_from_features",
+    "pytest:tests/test_phase_m35_signal_registry.py::test_signal_snapshot_hash_and_feature_manifest_lineage_cannot_be_fabricated",
+    "pytest:tests/test_phase_m35_signal_registry.py::test_signal_uses_only_pit_feature_snapshots_and_publishes_separate_value",
+    "pytest:tests/test_phase_m35_strategy_registry.py::test_definition_changes_cannot_silently_swap_and_invalid_lifecycle_fails_closed",
+    "pytest:tests/test_phase_m35_strategy_registry.py::test_strategy_contract_lifecycle_attribution_and_live_fail_closed"
+  ],
+  "evaluated_at": "2026-09-06T00:00:00+00:00",
+  "code_revision": "beea069",
+  "content_hash": "13c6b9a1353978279a62d72640317f5aa9fa932af74e7e8fab2c10faeb9275d9"
+}

@@ -210,4 +210,3 @@ def test_action_comparisons_are_idempotent_and_auditable(db):
     with pytest.raises(ReconciliationError):
         repo.reconcile_split('split', **dict(kwargs, after_quantity='19'))
     assert db.execute("SELECT COUNT(*) FROM am_corporate_action_comparison WHERE status='MISMATCH'").fetchone()[0] == 1
-

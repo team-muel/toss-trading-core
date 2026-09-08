@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["neutralization_id", "semantic_type", "candidate_signal_run_id", "baseline_signal_run_ids", "universe_manifest_id", "as_of", "information_cutoff", "formula_version", "parameter_set_id", "transform_order", "residual_values", "residual_output_hash", "signal_correlation_matrix", "common_exposure", "raw_ic", "partial_correlation", "incremental_ic", "oos_mae_before", "oos_mae_after", "oos_mae_improvement", "coverage_before", "coverage_after", "turnover_before", "turnover_after", "cost_before", "cost_after", "code_revision"],
+  "properties": {
+    "neutralization_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "semantic_type": {"const": "RESIDUALIZED_SIGNAL_COMPONENT"},
+    "candidate_signal_run_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "baseline_signal_run_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "universe_manifest_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "as_of": {"type": "string", "format": "date-time"},
+    "information_cutoff": {"type": "string", "format": "date-time"},
+    "formula_version": {"type": "string", "minLength": 1},
+    "parameter_set_id": {"type": "string", "minLength": 1},
+    "transform_order": {"type": "array", "minItems": 3, "items": {"type": "string"}},
+    "residual_values": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}},
+    "residual_output_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "signal_correlation_matrix": {"type": "object", "minProperties": 2},
+    "common_exposure": {"type": "object", "minProperties": 1},
+    "raw_ic": {"type": "string"}, "partial_correlation": {"type": "string"},
+    "incremental_ic": {"type": "string"}, "oos_mae_before": {"type": "string"},
+    "oos_mae_after": {"type": "string"}, "oos_mae_improvement": {"type": "string"},
+    "coverage_before": {"type": "string"}, "coverage_after": {"type": "string"},
+    "turnover_before": {"type": "string"}, "turnover_after": {"type": "string"},
+    "cost_before": {"type": "string"}, "cost_after": {"type": "string"},
+    "code_revision": {"type": "string", "pattern": "^git:[0-9a-f]{7,40}$"}
+  }
+}

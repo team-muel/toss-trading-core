@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["order_intent_id", "client_order_id", "source_risk_decision_id", "target_hash", "instrument_id", "side", "quantity", "notional_amount", "limit_price", "expected_fee", "quote_observed_at", "content_hash"],
+  "properties": {
+    "order_intent_id": {"type": "string", "pattern": "^intent-[0-9a-f]{64}$"},
+    "client_order_id": {"type": "string", "pattern": "^client-[0-9a-f]{64}$"},
+    "source_risk_decision_id": {"type": "string", "minLength": 1},
+    "target_hash": {"type": "string", "minLength": 1},
+    "instrument_id": {"type": "string", "minLength": 1},
+    "side": {"enum": ["BUY", "SELL"]},
+    "quantity": {"type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$"},
+    "notional_amount": {"type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$"},
+    "limit_price": {"type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$"},
+    "expected_fee": {"type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?$"},
+    "quote_observed_at": {"type": "string", "format": "date-time"},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

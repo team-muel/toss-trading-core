@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "migration_version",
+    "source_hash",
+    "legacy_contract",
+    "deprecated_field",
+    "economic_value",
+    "content_hash"
+  ],
+  "properties": {
+    "migration_version": {
+      "const": "economic-migration@1"
+    },
+    "source_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "legacy_contract": {
+      "enum": [
+        "pricing-result@1",
+        "alpha-estimate@1",
+        "expected-return@1"
+      ]
+    },
+    "deprecated_field": {
+      "enum": [
+        "required_return",
+        "alpha",
+        "net_expected_return",
+        "gross_expected_return"
+      ]
+    },
+    "economic_value": {
+      "$ref": "economic_value.schema.json"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "additionalProperties": false
+}

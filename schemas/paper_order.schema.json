@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Persistent paper order receipt",
+  "type": "object",
+  "required": ["client_order_id", "broker_order_id", "status", "filled_quantity", "remaining_fee", "request"],
+  "properties": {
+    "client_order_id": {"type": "string", "minLength": 1},
+    "broker_order_id": {"type": "string", "pattern": "^paper-[a-f0-9]{64}$"},
+    "status": {"enum": ["OPEN", "PARTIALLY_FILLED", "FILLED", "CANCELED"]},
+    "filled_quantity": {"type": "string"},
+    "remaining_fee": {"type": "string"},
+    "request": {"type": "object", "required": ["account", "client_order_id", "order_intent_id", "instrument_id", "side", "quantity", "limit_price", "expected_fee"]}
+  },
+  "additionalProperties": false
+}

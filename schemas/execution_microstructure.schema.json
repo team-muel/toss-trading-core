@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["action", "reason_codes", "side", "policy_version", "decision_price", "decision_observed_at", "decision_available_at", "decision_currency", "decision_source", "arrival_bid", "arrival_ask", "arrival_mid", "spread_absolute", "spread_bps", "executable_price_reference", "instrument_id", "exchange", "currency", "session", "auction_state", "trading_halted", "suspended", "volatility_spike", "abnormal_spread", "quote_observed_at", "quote_available_at", "quote_source", "calendar_source", "calendar_available_at", "evaluated_at"],
+  "properties": {
+    "action": {"enum": ["ALLOW", "DEFER", "BLOCK"]},
+    "reason_codes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "side": {"enum": ["BUY", "SELL"]}, "policy_version": {"type": "string", "minLength": 1},
+    "decision_price": {"type": "string"}, "decision_observed_at": {"type": "string", "format": "date-time"},
+    "decision_available_at": {"type": "string", "format": "date-time"},
+    "decision_currency": {"type": "string", "minLength": 1}, "decision_source": {"type": "string", "minLength": 1},
+    "arrival_bid": {"type": "string"},
+    "arrival_ask": {"type": "string"}, "arrival_mid": {"type": "string"},
+    "spread_absolute": {"type": "string"}, "spread_bps": {"type": "string"},
+    "executable_price_reference": {"type": ["string", "null"]},
+    "instrument_id": {"type": "string", "minLength": 1}, "exchange": {"type": "string", "minLength": 1},
+    "currency": {"type": "string", "minLength": 1},
+    "session": {"enum": ["PREMARKET", "REGULAR", "AFTERHOURS", "CLOSED"]},
+    "auction_state": {"enum": ["NONE", "OPENING", "CLOSING"]},
+    "trading_halted": {"type": "boolean"}, "suspended": {"type": "boolean"},
+    "volatility_spike": {"type": "boolean"}, "abnormal_spread": {"type": "boolean"},
+    "quote_observed_at": {"type": "string", "format": "date-time"},
+    "quote_available_at": {"type": "string", "format": "date-time"},
+    "quote_source": {"type": "string", "minLength": 1}, "calendar_source": {"type": "string", "minLength": 1},
+    "calendar_available_at": {"type": "string", "format": "date-time"},
+    "evaluated_at": {"type": "string", "format": "date-time"}
+  }
+}

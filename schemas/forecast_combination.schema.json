@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["combined_forecast_id", "semantic_type", "source_forecast_calibration_ids", "neutralization_lineage_ids", "universe_manifest_id", "as_of", "information_cutoff", "parameter_registry_key", "formula_version", "parameter_set_id", "contributions", "effective_independent_forecasts", "combined_uncertainty", "expected_implementation_cost", "components"],
+  "properties": {
+    "combined_forecast_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "semantic_type": {"const": "combined_signal_forecast_component"},
+    "source_forecast_calibration_ids": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "neutralization_lineage_ids": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}},
+    "universe_manifest_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "as_of": {"type": "string", "format": "date-time"},
+    "information_cutoff": {"type": "string", "format": "date-time"},
+    "parameter_registry_key": {"type": "string", "minLength": 1},
+    "formula_version": {"type": "string", "minLength": 1},
+    "parameter_set_id": {"type": "string", "minLength": 1},
+    "contributions": {"type": "object", "minProperties": 2},
+    "effective_independent_forecasts": {"type": "string"},
+    "combined_uncertainty": {"type": "string"},
+    "expected_implementation_cost": {"type": "string"},
+    "components": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/component"}}
+  },
+  "$defs": {"component": {"type": "object", "additionalProperties": false,
+    "required": ["semantic_type", "gross_point_estimate", "net_point_estimate", "uncertainty", "lower_bound", "upper_bound", "currency", "unit", "horizon", "valid_until"],
+    "properties": {"semantic_type": {"const": "combined_signal_forecast_component"},
+      "gross_point_estimate": {"type": "string"}, "net_point_estimate": {"type": "string"},
+      "uncertainty": {"type": "string"}, "lower_bound": {"type": "string"},
+      "upper_bound": {"type": "string"}, "currency": {"const": "USD"},
+      "unit": {"const": "DECIMAL_RETURN"}, "horizon": {"enum": [21, 63, 126, 252]},
+      "valid_until": {"type": "string", "format": "date-time"}}}}
+}

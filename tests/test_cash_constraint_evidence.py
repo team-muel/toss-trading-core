@@ -1,0 +1,136 @@
+from datetime import timedelta
+from decimal import Decimal as D
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+from asset_management.data.raw_store import SQLiteRawResponseStore
+from asset_management.domain.errors import DataQualityError, ReconciliationError
+from asset_management.ledger import CashLedger, OpenBuyOrder, cash_state_from_buying_power
+from asset_management.broker.toss_read import TossReadAdapter
+from asset_management.time.clock import FrozenClock
+from test_phase4_cash_position_settlement import ledger, NOW
+from test_phase0_2_integration_hardening import FakeCollectorClient
+
+
+def raw(conn, **changes):
+    values = dict(source='toss', endpoint='/api/v1/buying-power', http_method='GET',
+                  request_payload={'currency': 'USD'}, status_code=200,
+                  body={'result': {'currency': 'USD', 'cashBuyingPower': '700'}},
+                  requested_at=NOW, received_at=NOW, account_id='account-1', schema_version='1.2.14')
+    values.update(changes)
+    return SQLiteRawResponseStore(conn).append(**values)
+
+
+def calculate(conn, source, **changes):
+    args = dict(source_response_id=source, account_id='account-1', currency='USD', as_of_utc=NOW,
+                max_age=timedelta(seconds=60), operational_liquidity_reserve=D(100), policy_version='cash-policy@1')
+    args.update(changes)
+    return cash_state_from_buying_power(conn, **args)
+
+
+def opening(conn):
+    CashLedger(conn).record_opening(account_id='account-1', currency='USD', as_of_utc=NOW,
+                                    opening_balance='1000', evidence='raw-order', approved_by='fixture-owner')
+
+
+def test_verified_constraint_reuses_cash_and_reservations_without_changing_assets(ledger):
+    opening(ledger)
+    cash = CashLedger(ledger)
+    cash.reserve_open_order(OpenBuyOrder('order-1', 'account-1', 'USD', remaining_amount=D(200)),
+                            source_response_id='raw-order', observed_at_utc=NOW)
+    source = raw(ledger)
+    result = calculate(ledger, source, operational_liquidity_reserve=D(150))
+    assert D(result['settled_cash']) == 1000
+    assert D(result['reserved_cash']) == 200
+    assert D(result['internal_free_cash']) == 650
+    assert D(result['broker_buying_power']) == 700
+    assert D(result['cash_constrained_buy_limit']) == 650
+    assert cash.state(account_id='account-1', currency='USD', as_of_utc=NOW).settled_cash == 1000
+    assert calculate(ledger, source, operational_liquidity_reserve=D(150)) == result
+    schema = json.loads((Path(__file__).parents[1] / 'schemas/cash_constraint_evidence.schema.json').read_text())
+    assert set(schema['required']) == set(result)
+
+
+def test_buying_power_cannot_supply_missing_opening_cash(ledger):
+    with pytest.raises(DataQualityError, match='OPENING_BALANCE_UNKNOWN'):
+        calculate(ledger, raw(ledger))
+
+
+@pytest.mark.parametrize('changes', [
+    {'account_id': 'another-account'}, {'source': 'other'}, {'endpoint': '/api/v1/holdings'},
+    {'status_code': 500}, {'schema_version': 'unknown'},
+])
+def test_raw_source_context_must_match(ledger, changes):
+    with pytest.raises(ReconciliationError, match='SOURCE_CONTEXT_MISMATCH'):
+        calculate(ledger, raw(ledger, **changes))
+
+
+def test_write_response_is_already_rejected_at_raw_store_boundary(ledger):
+    with pytest.raises(sqlite3.IntegrityError, match='read-only raw store'):
+        raw(ledger, http_method='POST')
+
+
+def test_corrupted_body_hash_cannot_be_used_as_constraint(ledger):
+    source = raw(ledger)
+    ledger.execute('''INSERT INTO am_raw_api_response
+        SELECT 'corrupt', source, endpoint, http_method, request_hash, status_code,
+               ?, body_json, requested_at_utc, received_at_utc, account_id, schema_version, headers_json
+        FROM am_raw_api_response WHERE raw_response_id=?''', ('0' * 64, source))
+    with pytest.raises(ReconciliationError, match='RAW_EVIDENCE_INVALID'):
+        calculate(ledger, 'corrupt')
+
+
+@pytest.mark.parametrize('value', ['0', '700'])
+def test_broker_constraint_can_reduce_but_never_increase_cash(ledger, value):
+    opening(ledger)
+    source = raw(ledger, body={'result': {'currency': 'USD', 'cashBuyingPower': value}})
+    result = calculate(ledger, source)
+    assert D(result['internal_free_cash']) == 900
+    assert D(result['cash_constrained_buy_limit']) == D(value)
+
+
+@pytest.mark.parametrize('value', [None, 12.5, 'NaN', 'Infinity', '-1'])
+def test_invalid_or_negative_constraint_fails_closed(ledger, value):
+    with pytest.raises(ReconciliationError, match='CASH_CONSTRAINT_'):
+        calculate(ledger, raw(ledger, body={'result': {'currency': 'USD', 'cashBuyingPower': value}}))
+
+
+def test_wrong_currency_stale_future_and_delayed_receipt_are_rejected(ledger):
+    with pytest.raises(ReconciliationError, match='CURRENCY_MISMATCH'):
+        calculate(ledger, raw(ledger, body={'result': {'currency': 'KRW', 'cashBuyingPower': '700'}}))
+    source = raw(ledger)
+    for instant in (NOW - timedelta(seconds=1), NOW + timedelta(seconds=61)):
+        with pytest.raises(ReconciliationError, match='FUTURE_OR_STALE'):
+            calculate(ledger, source, as_of_utc=instant)
+    source = raw(ledger, requested_at=NOW - timedelta(seconds=61))
+    with pytest.raises(ReconciliationError, match='FUTURE_OR_STALE'):
+        calculate(ledger, source)
+
+
+def test_missing_raw_invalid_policy_and_insufficient_reserve_rejected(ledger):
+    opening(ledger)
+    with pytest.raises(ReconciliationError, match='RAW_EVIDENCE_INVALID'):
+        calculate(ledger, 'missing')
+    source = raw(ledger)
+    with pytest.raises(ReconciliationError, match='TIME_POLICY_INVALID'):
+        calculate(ledger, source, max_age=timedelta(0))
+    for reserve in (D(-1), D('NaN'), 1.5):
+        with pytest.raises(ReconciliationError, match='RESERVE_INVALID'):
+            calculate(ledger, source, operational_liquidity_reserve=reserve)
+    with pytest.raises(ReconciliationError, match='RESERVE_EXCEEDS_AVAILABLE'):
+        calculate(ledger, source, operational_liquidity_reserve=D(1001))
+
+
+def test_live_collection_rejects_wrong_currency_and_negative_buying_power():
+    for row in ({'currency': 'KRW', 'cashBuyingPower': '700'},
+                {'currency': 'USD', 'cashBuyingPower': '-1'}):
+        client = FakeCollectorClient()
+        client.get_buying_power = lambda **query: client._result('/buying-power', {'result': row})
+        adapter = TossReadAdapter(client, FrozenClock(NOW))
+        with pytest.raises(DataQualityError, match='CASH_CONSTRAINT_'):
+            adapter.collect_account_truth(runtime_run_id='fixture-run')
+        with pytest.raises(DataQualityError, match='CASH_CONSTRAINT_'):
+            adapter.buying_power('USD')
