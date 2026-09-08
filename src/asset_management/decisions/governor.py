@@ -51,6 +51,22 @@ SOFT_REDUCTIONS: tuple[tuple[str, ReasonCode], ...] = (
 )
 
 
+def target_weight_hash(weights: Mapping[str, Decimal]) -> str:
+    """Canonical hash of a complete portfolio target weight map."""
+    if not isinstance(weights, Mapping) or not weights:
+        raise InvariantViolation("portfolio target weights are required")
+    normalized: dict[str, Decimal] = {}
+    for key, value in weights.items():
+        if not isinstance(key, str) or not key.strip():
+            raise InvariantViolation("portfolio target weights require named instruments")
+        normalized[key] = exact_decimal(value)
+    if (any(value < 0 for value in normalized.values()) or
+            sum(normalized.values(), Decimal("0")) != Decimal("1")):
+        raise InvariantViolation("portfolio target weights must be non-negative and sum to one")
+    payload = {key: str(value) for key, value in sorted(normalized.items())}
+    return sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class RiskGovernorPolicy:
     policy_version: str
@@ -133,10 +149,36 @@ class ApprovedRiskDecision:
     portfolio_target_hash: str
     policy_version: str
     content_hash: str
+    approved_target_hash: str | None = None
 
     def __post_init__(self) -> None:
         if self.state not in (DecisionState.ALLOW, DecisionState.REDUCE):
             raise InvariantViolation("only ALLOW or REDUCE is an approved risk decision")
+        if self.approved_target_hash is not None and len(self.approved_target_hash) != 64:
+            raise InvariantViolation("approved target hash is invalid")
+
+    def bind_target(self, weights: Mapping[str, Decimal], *, cash_instrument_id: str
+                    ) -> tuple["ApprovedRiskDecision", dict[str, Decimal]]:
+        """Bind this approval to its authorized portfolio target and risk-reduced result."""
+        normalized = {key: exact_decimal(value) for key, value in weights.items()}
+        if target_weight_hash(normalized) != self.portfolio_target_hash:
+            raise InvariantViolation("portfolio target weights do not match risk-approved target hash")
+        if not cash_instrument_id.strip() or cash_instrument_id not in normalized:
+            raise InvariantViolation("approved target requires an explicit cash instrument")
+        result = {
+            key: (value if key == cash_instrument_id else value * self.exposure_multiplier)
+            for key, value in normalized.items()
+        }
+        result[cash_instrument_id] = Decimal("1") - sum(
+            (value for key, value in result.items() if key != cash_instrument_id), Decimal("0")
+        )
+        approved_hash = target_weight_hash(result)
+        bound = ApprovedRiskDecision(
+            self.risk_decision_id, self.state, self.exposure_multiplier,
+            self.runtime_run_id, self.portfolio_target_id, self.portfolio_target_hash,
+            self.policy_version, self.content_hash, approved_hash,
+        )
+        return bound, result
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,25 +209,14 @@ class RiskDecision:
             self.policy_version, self.content_hash,
         )
 
+    def authorize_target(self, weights: Mapping[str, Decimal], *, cash_instrument_id: str
+                         ) -> tuple[ApprovedRiskDecision, dict[str, Decimal]]:
+        return self.authorize().bind_target(weights, cash_instrument_id=cash_instrument_id)
+
     def apply_to_target(self, weights: Mapping[str, Decimal], *,
                         cash_instrument_id: str) -> dict[str, Decimal]:
         """Apply the approved exposure cap to risky weights and move residual to cash."""
-        if not self.approved:
-            raise NoTrade(f"{self.state.value} decision cannot produce executable weights")
-        normalized = {key: exact_decimal(value) for key, value in weights.items()}
-        if not cash_instrument_id.strip() or cash_instrument_id not in normalized:
-            raise InvariantViolation("approved target requires an explicit cash instrument")
-        if any(not key.strip() or value < 0 for key, value in normalized.items()):
-            raise InvariantViolation("target weights require named instruments and non-negative values")
-        if sum(normalized.values(), Decimal("0")) != Decimal("1"):
-            raise InvariantViolation("approved target weights must sum to one")
-        result = {
-            key: (value if key == cash_instrument_id else value * self.exposure_multiplier)
-            for key, value in normalized.items()
-        }
-        result[cash_instrument_id] = Decimal("1") - sum(
-            (value for key, value in result.items() if key != cash_instrument_id), Decimal("0")
-        )
+        _, result = self.authorize_target(weights, cash_instrument_id=cash_instrument_id)
         return result
 
 
@@ -237,11 +268,11 @@ class RiskGovernor:
             "reason_codes": [reason.value for reason in reasons],
         }
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        digest = sha256(encoded.encode("utf-8")).hexdigest()
+        digest_value = sha256(encoded.encode("utf-8")).hexdigest()
         return RiskDecision(
-            f"risk-{digest}", state, multiplier, reasons, inputs.runtime_run_id,
+            f"risk-{digest_value}", state, multiplier, reasons, inputs.runtime_run_id,
             inputs.portfolio_target_id, inputs.portfolio_target_hash, inputs.policy_version,
-            inputs.as_of_utc, tuple(sorted(inputs.evidence_ids)), digest,
+            inputs.as_of_utc, tuple(sorted(inputs.evidence_ids)), digest_value,
         )
 
     def evaluate(self, *, statuses: tuple[DataStatus, ...], reconciled: bool,
