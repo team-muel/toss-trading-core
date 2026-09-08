@@ -38,11 +38,17 @@ def test_horizons_and_compounding():
     assert abs(annual_to_horizon(D("0.21"), 63) - ((D("1.21").sqrt().sqrt()) - 1)) < D("1e-26")
     with pytest.raises(DataQualityError): annual_to_horizon(D("0.1"), 30)
 
-def test_risk_free_curve_is_complete_and_point_in_time():
-    points = [RiskFreePoint(NOW, h, D("0.03"), "treasury", QualityStatus.VALID) for h in HORIZONS]
+def test_risk_free_curve_is_complete_point_in_time_and_availability_bound():
+    points = [RiskFreePoint(NOW, NOW, h, D("0.03"), "treasury", "a"*64, QualityStatus.VALID) for h in HORIZONS]
     curve = RiskFreeCurve(points)
     assert curve.rate(horizon=63, information_cutoff=NOW) == D("0.03")
     with pytest.raises(DataQualityError): curve.rate(horizon=63, information_cutoff=NOW-timedelta(seconds=1))
+    future = [replace(point, available_at=NOW+timedelta(seconds=1)) for point in points]
+    with pytest.raises(DataQualityError, match="RISK_FREE_POINT_NOT_ELIGIBLE"):
+        RiskFreeCurve(future).rate(horizon=63, information_cutoff=NOW)
+    mixed = list(points); mixed[-1] = replace(mixed[-1], dataset_manifest_id="b"*64)
+    with pytest.raises(DataQualityError, match="RISK_FREE_CURVE_MANIFEST_CONFLICT"):
+        RiskFreeCurve(mixed)
 
 def test_manual_capm_and_output_is_not_an_order():
     beta = BetaEstimate(D("1.2"), D("1.2"), D("0.1"), 252, 252, D("0.8"), NOW, QualityStatus.VALID, D(1))
@@ -78,7 +84,7 @@ def test_capm_cannot_run_without_matching_registry_authorization():
             market_risk_premium=D("0.05"), horizon=252, as_of=NOW, validity=VALIDITY,
             model_registry=CAPM_REGISTRY, authorization=None)
 
-def test_beta_missing_fails_and_unstable_estimate_shrinks():
+def test_beta_missing_fails_unstable_estimate_shrinks_and_duplicates_reject():
     with pytest.raises(DataQualityError): estimate_beta([D(".01")]*3, [D(".01")]*3, as_of=NOW)
     market_values = [D(i % 11 - 5)/100 for i in range(80)]
     asset_values = [D("2")*x + D((i*7)%13-6)/20 for i,x in enumerate(market_values)]
@@ -91,6 +97,11 @@ def test_beta_missing_fails_and_unstable_estimate_shrinks():
     future[-1] = replace(future[-1], available_at=NOW + timedelta(seconds=1))
     with pytest.raises(DataQualityError, match="BETA_PIT_EVIDENCE_INVALID"):
         estimate_beta(future, market, as_of=NOW)
+    duplicate_asset=list(asset); duplicate_market=list(market)
+    duplicate_asset[-1]=replace(duplicate_asset[-1],event_time=duplicate_asset[-2].event_time)
+    duplicate_market[-1]=replace(duplicate_market[-1],event_time=duplicate_market[-2].event_time)
+    with pytest.raises(DataQualityError, match="BETA_DUPLICATE_OBSERVATION"):
+        estimate_beta(duplicate_asset, duplicate_market, as_of=NOW)
 
 def _premiums():
     return {name: FactorPremium(name, D(".01"), D(".002"), NOW, NOW, "pit", QualityStatus.VALID)
