@@ -27,11 +27,10 @@ VALID_UNTIL = NOW + timedelta(days=21)
 MANIFEST = "a" * 64
 FEATURE_MANIFEST = "b" * 64
 HISTORY_MANIFEST = "c" * 64
-PRICING_REASON = "integration-fixture-has-no-approved-pricing-model"
 PRICING_EVIDENCE = PricingApplicabilityEvidence.create(
     scope_key="integrated-quality-momentum@1",
-    applicable=False,
-    reason=PRICING_REASON,
+    applicable=True,
+    reason=None,
     policy_version="pricing-applicability@1",
 )
 
@@ -190,9 +189,9 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
             feature_values={feature.feature_id: Decimal(feature.value)},
             signal_values={key: Decimal(value) for key, value in signal.values.items()},
             forecast_values=forecast_values,
-            pricing_outputs={},
-            pricing_applicable=False,
-            pricing_non_applicability_reason=PRICING_REASON,
+            pricing_outputs={"pricing-baseline": Decimal(".06")},
+            pricing_applicable=True,
+            pricing_non_applicability_reason=None,
             pricing_applicability_evidence_id=PRICING_EVIDENCE.evidence_id,
             risk_outputs={"exposure_multiplier": risk.exposure_multiplier},
             target_weights=approved_weights,
@@ -219,5 +218,6 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
         inputs.input_hash,
         runtimes=(DecisionRuntime.HISTORICAL_REPLAY, DecisionRuntime.PAPER),
     ) == replay.semantic_hash
-    assert replay.decision.pricing_applicable is False
+    assert replay.decision.pricing_applicable is True
+    assert replay.decision.pricing_outputs["pricing-baseline"] == Decimal(".06")
     assert sum(replay.decision.target_weights.values()) == Decimal("1")
