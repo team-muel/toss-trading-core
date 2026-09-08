@@ -1,6 +1,9 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from dataclasses import replace
+from pathlib import Path
+import json
+import jsonschema
 import pytest
 
 from asset_management.domain.errors import DataQualityError, InvariantViolation
@@ -37,6 +40,35 @@ def test_risk_free_curve_is_complete_and_point_in_time():
     curve = RiskFreeCurve(points)
     assert curve.rate(horizon=63, information_cutoff=NOW) == D("0.03")
     with pytest.raises(DataQualityError): curve.rate(horizon=63, information_cutoff=NOW-timedelta(seconds=1))
+
+
+def test_risk_free_curve_preserves_context_and_rejects_mixed_currency_or_horizon():
+    points = [RiskFreePoint(NOW, h, D("0.04"), "treasury", QualityStatus.VALID,
+                            currency="USD", uncertainty=D("0.001")) for h in HORIZONS]
+    output = RiskFreeCurve(points).return_for(currency="USD", horizon=63, information_cutoff=NOW)
+    assert output.holding_period_risk_free_return == annual_to_horizon(D("0.04"), 63)
+    assert output.payload()["currency"] == "USD"
+    schema = json.loads(Path("schemas/risk_free_return.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema).validate(output.payload())
+    with pytest.raises(DataQualityError, match="RISK_FREE_CURRENCY_MISMATCH"):
+        require_risk_free_alignment(risk_free=output, currency="KRW", forecast_horizon=63,
+                                    information_cutoff=NOW)
+    with pytest.raises(DataQualityError, match="RISK_FREE_HORIZON_MISMATCH"):
+        require_risk_free_alignment(risk_free=output, currency="USD", forecast_horizon=126,
+                                    information_cutoff=NOW)
+    with pytest.raises(DataQualityError, match="RISK_FREE_CURRENCY_MISMATCH"):
+        capm_pricing_baseline_from_risk_free(risk_free=output, currency="KRW",
+                                              horizon=63, as_of=NOW)
+
+
+def test_risk_free_curve_rejects_mixed_currency_or_convention():
+    points = [RiskFreePoint(NOW, h, D("0.04"), "treasury", QualityStatus.VALID,
+                            currency="USD") for h in HORIZONS]
+    with pytest.raises(DataQualityError, match="RISK_FREE_CURVE_CURRENCY_CONFLICT"):
+        RiskFreeCurve((*points[:-1], replace(points[-1], currency="KRW")))
+    with pytest.raises(ValueError, match="RISK_FREE_POINT_INVALID"):
+        RiskFreePoint(NOW, 21, D("0.04"), "treasury", QualityStatus.VALID,
+                      day_count="ACT/365F")
 
 def test_manual_capm_and_output_is_not_an_order():
     beta = BetaEstimate(D("1.2"), D("1.2"), D("0.1"), 252, 252, D("0.8"), NOW, QualityStatus.VALID, D(1))

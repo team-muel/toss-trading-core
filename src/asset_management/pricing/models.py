@@ -24,11 +24,20 @@ class RiskFreePoint:
     annualized_rate: Decimal
     source: str
     quality: QualityStatus
+    currency: str = "USD"
+    day_count: str = "BUS/252"
+    compounding: str = "EFFECTIVE_ANNUAL"
+    formula_version: str = "risk-free-curve@2"
+    uncertainty: Decimal = Decimal(0)
 
     def __post_init__(self) -> None:
         if self.as_of.tzinfo is None or self.as_of.utcoffset() is None:
             raise ValueError("RISK_FREE_AS_OF_NOT_AWARE")
-        if self.horizon not in HORIZONS or not self.annualized_rate.is_finite() or not self.source.strip():
+        if (self.horizon not in HORIZONS or not self.annualized_rate.is_finite() or
+                not self.source.strip() or not self.currency.strip() or
+                self.day_count != "BUS/252" or self.compounding != "EFFECTIVE_ANNUAL" or
+                not self.formula_version.strip() or not self.uncertainty.is_finite() or
+                self.uncertainty < 0):
             raise ValueError("RISK_FREE_POINT_INVALID")
 
 

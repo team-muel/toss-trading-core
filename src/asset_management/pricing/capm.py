@@ -12,7 +12,7 @@ from asset_management.domain.horizon import SignalValidity
 from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
 
 from .models import BetaEstimate, PricingResult
-from .risk_free import annual_to_horizon
+from .risk_free import RiskFreeReturn, annual_to_horizon, require_risk_free_alignment
 
 
 def estimate_beta(asset_returns: Sequence[Decimal], market_returns: Sequence[Decimal], *,
@@ -97,3 +97,12 @@ def capm_pricing_baseline_return(*, currency, currency_basis, asset_scope,
     result = _capm_numeric(**inputs)
     return result.economic_payload(currency=currency, currency_basis=currency_basis,
         formula_version="capm-pricing-baseline@2", model_key="CAPM@2")
+
+
+def capm_pricing_baseline_from_risk_free(*, risk_free: RiskFreeReturn,
+                                         currency: str, **inputs):
+    """Canonical CAPM entry point that rejects a misaligned curve input."""
+    require_risk_free_alignment(risk_free=risk_free, currency=currency,
+        forecast_horizon=inputs["horizon"], information_cutoff=inputs["as_of"])
+    return capm_pricing_baseline_return(currency=currency, risk_free_rate=risk_free.annualized_rate,
+        **inputs)
