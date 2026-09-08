@@ -72,7 +72,6 @@ class SubmissionJournal:
         encoded = canonical(payload).decode()
         client = intent.client_order_id
         source = intent.source_order_intent
-        # Stable across quote refreshes and risk-decision revisions of the same economic target.
         economic = digest(canonical([account, source.run_id, source.portfolio_target_id,
                                      intent.instrument_id, intent.side.value]))
         self.conn.execute('BEGIN IMMEDIATE')
@@ -99,7 +98,6 @@ class SubmissionJournal:
             raise
         try:
             response = submit(json.loads(encoded))
-            # ACK alone cannot establish fill/account truth; retain it for reconciliation.
             safe_response = response if isinstance(response, dict) else {'invalid_response': True}
             safe_response = {'response_hash': digest(canonical(safe_response))}
         except Exception:
@@ -107,17 +105,40 @@ class SubmissionJournal:
         with self.conn:
             return self._record(client, 'UNKNOWN_BROKER_STATE', 'RECONCILIATION_REQUIRED', safe_response)
 
-    def mark_ambiguous(self, client, *, operation: str):
-        """Call before cancel/replace transport; a crash leaves an unresolved durable record."""
+    def mark_ambiguous(self, client, *, operation: str, at: datetime):
+        """Persist the operation boundary before cancel/replace/recovery transport is attempted."""
         if operation not in ('CANCEL', 'REPLACE', 'BOOT_RECOVERY'):
             raise DataQualityError('RECOVERY_OPERATION_INVALID')
+        instant = utc_stamp(at)
         self._row(client)
         with self.conn:
-            return self._record(client, 'UNKNOWN_BROKER_STATE', operation + '_RECONCILIATION_REQUIRED', {})
+            return self._record(
+                client, 'UNKNOWN_BROKER_STATE', operation + '_RECONCILIATION_REQUIRED',
+                {'ambiguous_at': instant.isoformat(), 'operation': operation},
+            )
+
+    def _recovery_cutoff(self, client: str, row) -> datetime:
+        """Newest durable ambiguity boundary; evidence before it cannot clear recovery."""
+        cutoff = utc_stamp(datetime.fromisoformat(str(row[5])))
+        audits = self.conn.execute(
+            'SELECT evidence FROM submission_audit WHERE client=? ORDER BY sequence DESC', (client,)
+        ).fetchall()
+        for (encoded,) in audits:
+            try:
+                evidence = json.loads(encoded)
+                marker = evidence.get('ambiguous_at') if isinstance(evidence, dict) else None
+                if isinstance(marker, str):
+                    instant = utc_stamp(datetime.fromisoformat(marker))
+                    if instant > cutoff:
+                        cutoff = instant
+                    break
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return cutoff
 
     def _authority_verified(self, *, query: dict[str, str], evidence: dict[str, object],
-                            order_intent_id: str) -> tuple[bool, str]:
-        """Verify lookup candidates against append-only account/order ledger authority."""
+                            order_intent_id: str, freshness_cutoff: datetime) -> tuple[bool, str]:
+        """Verify candidate IDs against append-only authority and post-operation freshness."""
         authority = self.authority_conn
         if authority is None:
             return False, 'RECOVERY_AUTHORITY_UNAVAILABLE'
@@ -154,7 +175,7 @@ class SubmissionJournal:
                 (broker_order_id,),
             ).fetchone()
             recon_row = authority.execute(
-                '''SELECT account_snapshot_id, account_id, status
+                '''SELECT account_snapshot_id, account_id, status, completed_at_utc
                    FROM am_account_reconciliation_v2 WHERE reconciliation_run_id=?''',
                 (reconciliation_id,),
             ).fetchone()
@@ -184,6 +205,7 @@ class SubmissionJournal:
                 (query['account'],),
             ).fetchone()
             raw = SQLiteRawResponseStore(authority).verified(source_response_id)
+            recon_completed = utc_stamp(datetime.fromisoformat(str(recon_row[3]))) if recon_row is not None else None
         except (sqlite3.Error, KeyError, ValueError, TypeError):
             return False, 'RECOVERY_AUTHORITY_UNAVAILABLE_OR_INVALID'
         if (client_row is None or str(client_row[0]) != order_intent_id or
@@ -194,16 +216,16 @@ class SubmissionJournal:
                 str(recon_row[1]) != query['account'] or str(recon_row[2]) not in {'MATCH', 'TOLERANCE_MATCH'} or
                 newest_recon is None or str(newest_recon[0]) != reconciliation_id or
                 snapshot_row is None or str(snapshot_row[0]) != query['account'] or raw_link is None or
-                bad_item is not None or open_issue is not None or
+                bad_item is not None or open_issue is not None or recon_completed is None or
+                recon_completed < freshness_cutoff or raw.received_at < freshness_cutoff or
                 (raw.account_id is not None and raw.account_id != query['account'])):
-            return False, 'BROKER_EVIDENCE_CONFLICT_OR_INCOMPLETE'
+            return False, 'BROKER_EVIDENCE_CONFLICT_OR_STALE'
         if status in {'PARTIALLY_FILLED', 'FILLED'}:
             try:
                 posting = authority.execute(
                     '''SELECT 1 FROM am_execution_posting posting
                        JOIN am_execution_delta delta USING(execution_delta_id)
-                       JOIN am_execution_snapshot snap
-                         ON snap.execution_snapshot_id=delta.to_snapshot_id
+                       JOIN am_execution_snapshot snap ON snap.execution_snapshot_id=delta.to_snapshot_id
                        WHERE snap.broker_order_id=? LIMIT 1''',
                     (broker_order_id,),
                 ).fetchone()
@@ -222,6 +244,7 @@ class SubmissionJournal:
         query = dict(client_order_id=client, account=row[2], instrument_id=payload['instrument_id'],
                      quantity=payload['quantity'], side=payload['side'],
                      started_at=row[5], expires_at=row[6])
+        freshness_cutoff = self._recovery_cutoff(client, row)
         try:
             evidence = lookup(query)
         except Exception:
@@ -229,13 +252,15 @@ class SubmissionJournal:
         state, reason = 'UNKNOWN_BROKER_STATE', 'BROKER_LOOKUP_UNAVAILABLE_OR_UNPROVEN'
         if isinstance(evidence, dict):
             verified, reason = self._authority_verified(
-                query=query, evidence=evidence, order_intent_id=payload['order_intent_id'])
+                query=query, evidence=evidence, order_intent_id=payload['order_intent_id'],
+                freshness_cutoff=freshness_cutoff,
+            )
             if verified:
                 state = str(evidence['status'])
-        # Persist identifiers only; untrusted transport data may contain credentials.
         audit = {k: evidence[k] for k in ('broker_order_id', 'snapshot_id', 'reconciliation_id',
                                            'source_response_id')
                  if isinstance(evidence, dict) and isinstance(evidence.get(k), str)}
+        audit['freshness_cutoff'] = freshness_cutoff.isoformat()
         self.conn.execute('BEGIN IMMEDIATE')
         try:
             current = self._row(client)
