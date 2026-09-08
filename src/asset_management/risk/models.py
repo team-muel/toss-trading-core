@@ -129,6 +129,9 @@ class RiskGate:
 
 def optimizer_risk_gate(*, covariance_valid: bool, inverse_fallback: bool,
                         return_panel_valid: bool, tail_risk_valid: bool) -> RiskGate:
+    evidence = (covariance_valid, inverse_fallback, return_panel_valid, tail_risk_valid)
+    if any(type(value) is not bool for value in evidence):
+        return RiskGate("BLOCK_OPTIMIZER", ("RISK_GATE_EVIDENCE_TYPE_INVALID",))
     reasons = []
     if not covariance_valid:
         reasons.append("COVARIANCE_INVALID")
