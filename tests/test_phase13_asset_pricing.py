@@ -26,6 +26,12 @@ def model_access(model_id):
 CAPM_REGISTRY,CAPM_AUTH=model_access("CAPM")
 MULTIFACTOR_REGISTRY,MULTIFACTOR_AUTH=model_access("MULTIFACTOR")
 
+def _observations(values, *, manifest="a"*64):
+    start = NOW - timedelta(days=len(values))
+    return [ReturnObservation(value, start + timedelta(days=index),
+                              start + timedelta(days=index, hours=1), manifest)
+            for index, value in enumerate(values)]
+
 def test_horizons_and_compounding():
     assert HORIZONS == (21, 63, 126, 252)
     assert annual_to_horizon(D("0.21"), 252) == D("0.21")
@@ -74,11 +80,17 @@ def test_capm_cannot_run_without_matching_registry_authorization():
 
 def test_beta_missing_fails_and_unstable_estimate_shrinks():
     with pytest.raises(DataQualityError): estimate_beta([D(".01")]*3, [D(".01")]*3, as_of=NOW)
-    market = [D(i % 11 - 5)/100 for i in range(80)]
-    asset = [D("2")*x + D((i*7)%13-6)/20 for i,x in enumerate(market)]
+    market_values = [D(i % 11 - 5)/100 for i in range(80)]
+    asset_values = [D("2")*x + D((i*7)%13-6)/20 for i,x in enumerate(market_values)]
+    market = _observations(market_values, manifest="b"*64)
+    asset = _observations(asset_values, manifest="c"*64)
     beta = estimate_beta(asset, market, as_of=NOW)
     assert beta.standard_error > 0 and beta.observation_count == 80
     assert abs(beta.beta-D(1)) < abs(beta.raw_beta-D(1))
+    future = list(asset)
+    future[-1] = replace(future[-1], available_at=NOW + timedelta(seconds=1))
+    with pytest.raises(DataQualityError, match="BETA_PIT_EVIDENCE_INVALID"):
+        estimate_beta(future, market, as_of=NOW)
 
 def _premiums():
     return {name: FactorPremium(name, D(".01"), D(".002"), NOW, NOW, "pit", QualityStatus.VALID)
@@ -104,6 +116,8 @@ def test_black_litterman_equilibrium_views_and_gate():
     prior = equilibrium_returns(cov, (D(".6"), D(".4")), D("2"))
     assert prior == (D(".056"), D(".084"))
     with pytest.raises(DataQualityError): posterior_returns(cov, (D(".6"),D(".4")), D(2), (), capm_stable=False, supply_stable=True, market_caps_stable=True)
+    with pytest.raises(DataQualityError, match="BLACK_LITTERMAN_PREREQUISITE_UNKNOWN"):
+        posterior_returns(cov, (D(".6"),D(".4")), D(2), (), capm_stable="false", supply_stable=True, market_caps_stable=True)
     view = BlackLittermanView((D(1),D(-1)), D(".03"), D(".5"))
     post = posterior_returns(cov,(D(".6"),D(".4")),D(2),(view,),capm_stable=True,supply_stable=True,market_caps_stable=True)
     assert post != prior
