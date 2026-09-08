@@ -1,6 +1,9 @@
 import hashlib
 import json
 import unittest
+from pathlib import Path
+
+import yaml
 
 from scripts.check_toss_openapi import verify_openapi_document
 
@@ -86,6 +89,14 @@ class TossOpenApiContractTest(unittest.TestCase):
             "write operation cannot be required: POST /api/v1/conditional-orders",
             errors,
         )
+
+    def test_checked_in_policy_and_review_agree_on_the_approved_contract(self):
+        root = Path(__file__).parents[1]
+        policy = yaml.safe_load((root / "config/default_policy.yaml").read_text())
+        review = json.loads((root / "config/toss_openapi_contract.json").read_text())
+        runtime = policy["runtime"]
+        self.assertEqual(str(runtime["toss_openapi_schema_version"]), review["approved_version"])
+        self.assertEqual(runtime["toss_openapi_schema_hash"], review["approved_sha256"])
 
 
 if __name__ == "__main__":
