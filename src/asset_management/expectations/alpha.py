@@ -17,7 +17,8 @@ def calculate_alpha(expected: ExpectedReturnEstimate, required: PricingResult, *
     lower = expected.lower_bound-required.upper_bound
     upper = expected.upper_bound-required.lower_bound
     reasons = []
-    if lower <= 0 <= upper: reasons.append("ALPHA_INTERVAL_CROSSES_ZERO")
+    if lower <= 0:
+        reasons.append("ALPHA_CONSERVATIVE_BOUND_NONPOSITIVE")
     if expected.quality_status is not QualityStatus.VALID or required.quality_status is not QualityStatus.VALID:
         reasons.append("LOW_DATA_QUALITY")
     if model_conflict: reasons.append("MODEL_CONFLICT")
