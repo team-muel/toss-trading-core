@@ -20,14 +20,9 @@ UNIVERSE = ("AAA", "BBB", "CCC", "DDD", "EEE")
 UNIVERSE_ID = "a" * 64
 
 
-def cross_observation(*, number=1, horizon=5, values=None, available_at=None):
-    as_of = NOW - timedelta(days=20 + number)
-    values = values or {
-        "AAA": Decimal("0.1"), "BBB": Decimal("0.2"), "CCC": Decimal("0.3"),
-        "DDD": Decimal("0.4"), "EEE": Decimal("0.5"),
-    }
+def _signal_snapshot(number, as_of, values):
     rendered_values = {key: None if value is None else str(value) for key, value in values.items()}
-    snapshot = SignalSnapshot(
+    return SignalSnapshot(
         f"{number:064x}", "value.relative_strength", "1", "SIGNAL_VALUE",
         as_of.isoformat(), as_of.isoformat(), rendered_values, QualityStatus.VALID.value,
         str(Decimal(sum(value is not None for value in values.values())) / Decimal(len(values))),
@@ -36,6 +31,23 @@ def cross_observation(*, number=1, horizon=5, values=None, available_at=None):
         SignalValidity(21, 21, NOW + timedelta(days=1), DecayProfile.LINEAR),
         digest(canonical(rendered_values)),
     )
+
+
+def prior_snapshot(current_as_of):
+    return _signal_snapshot(900, current_as_of - timedelta(days=1), {
+        "AAA": Decimal("0.5"), "BBB": Decimal("0.4"), "CCC": Decimal("0.3"),
+        "DDD": Decimal("0.2"), "EEE": Decimal("0.1"),
+    })
+
+
+def cross_observation(*, number=1, horizon=5, values=None, available_at=None,
+                      previous_top=(), previous_snapshot=None):
+    as_of = NOW - timedelta(days=20 + number)
+    values = values or {
+        "AAA": Decimal("0.1"), "BBB": Decimal("0.2"), "CCC": Decimal("0.3"),
+        "DDD": Decimal("0.4"), "EEE": Decimal("0.5"),
+    }
+    snapshot = _signal_snapshot(number, as_of, values)
     return CrossSectionalObservation(
         signal_run_id=f"{number:064x}", signal_id="value.relative_strength", signal_version="1",
         as_of=as_of, information_cutoff=as_of, embargo_until=as_of + timedelta(days=5),
@@ -53,8 +65,9 @@ def cross_observation(*, number=1, horizon=5, values=None, available_at=None):
             "DDD": {"sector": "technology", "size": "mid", "liquidity": "medium"},
             "EEE": {"sector": "health", "size": "small", "liquidity": "low"},
         },
-        previous_top_quantile_members=("AAA",), holding_period_overlap=Decimal("0.6"),
+        previous_top_quantile_members=tuple(previous_top), holding_period_overlap=Decimal("0.6"),
         horizon_days=horizon, code_revision="git:abcdef0", signal_snapshot=snapshot,
+        previous_signal_snapshot=previous_snapshot,
     )
 
 
@@ -97,6 +110,25 @@ def test_cross_sectional_diagnostics_store_pit_metrics_and_post_cost_value(tmp_p
     assert metrics["holding_period_overlap"] == "0.6"
     stored = json.loads((tmp_path / "catalog" / "signal-diagnostics" / f"{result.catalog_id}.json").read_text())
     assert stored == result.report.payload()
+
+
+def test_turnover_members_must_be_derived_from_prior_immutable_signal(tmp_path):
+    current_as_of = NOW - timedelta(days=21)
+    prior = prior_snapshot(current_as_of)
+    valid = cross_observation(previous_top=("AAA",), previous_snapshot=prior)
+    result = SignalDiagnosticsStore(ImmutableDatasetStore(tmp_path)).evaluate_cross_sectional(
+        valid, config=DiagnosticConfig(transaction_cost_per_turnover=Decimal("0.001")), evaluated_at=NOW)
+    assert result.status == "READY" and result.report is not None
+    assert result.report.metrics["turnover"] == "1"
+
+    forged = cross_observation(number=2, previous_top=("EEE",),
+                               previous_snapshot=prior_snapshot(NOW - timedelta(days=22)))
+    rejected = SignalDiagnosticsStore(ImmutableDatasetStore(tmp_path / "forged")).evaluate_cross_sectional(
+        forged, config=DiagnosticConfig(), evaluated_at=NOW)
+    assert (rejected.status, rejected.reason_code) == ("ABSTAIN", "DIAGNOSTIC_TURNOVER_PROVENANCE_INVALID")
+
+    with pytest.raises(InvariantViolation, match="DIAGNOSTIC_TURNOVER_PROVENANCE_MISSING"):
+        cross_observation(number=3, previous_top=("AAA",))
 
 
 @pytest.mark.parametrize("observation", [
