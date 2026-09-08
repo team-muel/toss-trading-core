@@ -8,6 +8,7 @@ simulated positions, forecasts, expected returns, portfolio weights, or order in
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
 from math import isfinite
@@ -22,6 +23,18 @@ from asset_management.domain.horizon import DECISION_HORIZONS
 
 
 _HASH = re.compile(r"[0-9a-f]{64}")
+
+
+def _utc(value: datetime, reason: str) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise InvariantViolation(reason)
+    return value.astimezone(timezone.utc)
+
+
+def _text(value: str, reason: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise InvariantViolation(reason)
+    return value
 
 
 class GrossNetBasis(StrEnum):
@@ -84,12 +97,21 @@ class ResearchSignalBridgeRecord:
     research_expression_hash: str
     research_lineage_id: str
     dataset_manifest_ids: tuple[str, ...]
+    universe_version: str
+    signal_universe_version: str
+    source_run_id: str
+    signal_time_utc: datetime
+    information_cutoff_utc: datetime
     code_revision: str
     consumed_decay_stages: tuple[DecayStage, ...]
     observed_unconsumed_decay_stages: tuple[DecayStage, ...]
     bridge_version: str
 
     def __post_init__(self) -> None:
+        signal_time = _utc(self.signal_time_utc, "RESEARCH_SIGNAL_BRIDGE_TIME_INVALID")
+        cutoff = _utc(self.information_cutoff_utc, "RESEARCH_SIGNAL_BRIDGE_TIME_INVALID")
+        if cutoff > signal_time:
+            raise InvariantViolation("RESEARCH_SIGNAL_BRIDGE_CUTOFF_AFTER_SIGNAL")
         if (
             self.semantic_type != "SIGNAL_VALUE"
             or not self.signal_key.strip()
@@ -104,6 +126,8 @@ class ResearchSignalBridgeRecord:
             or not self.code_revision.strip()
         ):
             raise InvariantViolation("RESEARCH_SIGNAL_BRIDGE_RECORD_INVALID")
+        for value in (self.universe_version, self.signal_universe_version, self.source_run_id):
+            _text(value, "RESEARCH_SIGNAL_BRIDGE_LINEAGE_INVALID")
         values = dict(sorted(self.values.items()))
         if not values or any(
             not key.strip() or not isinstance(value, Decimal) or not value.is_finite()
@@ -120,6 +144,8 @@ class ResearchSignalBridgeRecord:
             raise InvariantViolation("RESEARCH_SIGNAL_BRIDGE_DECAY_INVALID")
         object.__setattr__(self, "values", MappingProxyType(values))
         object.__setattr__(self, "dataset_manifest_ids", tuple(sorted(self.dataset_manifest_ids)))
+        object.__setattr__(self, "signal_time_utc", signal_time)
+        object.__setattr__(self, "information_cutoff_utc", cutoff)
 
     def payload(self) -> dict[str, object]:
         return {
@@ -133,6 +159,11 @@ class ResearchSignalBridgeRecord:
             "research_expression_hash": self.research_expression_hash,
             "research_lineage_id": self.research_lineage_id,
             "dataset_manifest_ids": list(self.dataset_manifest_ids),
+            "universe_version": self.universe_version,
+            "signal_universe_version": self.signal_universe_version,
+            "source_run_id": self.source_run_id,
+            "signal_time_utc": self.signal_time_utc.isoformat(),
+            "information_cutoff_utc": self.information_cutoff_utc.isoformat(),
             "code_revision": self.code_revision,
             "consumed_decay_stages": [stage.value for stage in self.consumed_decay_stages],
             "observed_unconsumed_decay_stages": [stage.value for stage in self.observed_unconsumed_decay_stages],
@@ -151,6 +182,12 @@ def bridge_history_result(
         raise InvariantViolation("RESEARCH_SIGNAL_BRIDGE_INPUT_INVALID")
     if not point.dataset_manifest_ids or not point.code_revision:
         raise InvariantViolation("RESEARCH_SIGNAL_BRIDGE_LINEAGE_INVALID")
+    for value in (point.universe_version, point.signal_universe_version, point.source_run_id):
+        _text(value, "RESEARCH_SIGNAL_BRIDGE_LINEAGE_INVALID")
+    signal_time = _utc(point.signal_time_utc, "RESEARCH_SIGNAL_BRIDGE_TIME_INVALID")
+    cutoff = _utc(point.information_cutoff_utc, "RESEARCH_SIGNAL_BRIDGE_TIME_INVALID")
+    if cutoff > signal_time:
+        raise InvariantViolation("RESEARCH_SIGNAL_BRIDGE_CUTOFF_AFTER_SIGNAL")
     if any(value is None or not isfinite(value) for value in point.raw.values()):
         raise InvariantViolation("RESEARCH_SIGNAL_BRIDGE_VALUES_INVALID")
     values = {key: Decimal(str(value)) for key, value in point.raw.items()}
@@ -169,8 +206,8 @@ def bridge_history_result(
         "signal_universe_version": point.signal_universe_version,
         "source_run_id": point.source_run_id,
         "code_revision": point.code_revision,
-        "signal_time_utc": point.signal_time_utc.isoformat(),
-        "information_cutoff_utc": point.information_cutoff_utc.isoformat(),
+        "signal_time_utc": signal_time.isoformat(),
+        "information_cutoff_utc": cutoff.isoformat(),
         "bridge_version": contract.bridge_version,
     }
     return ResearchSignalBridgeRecord(
@@ -184,6 +221,11 @@ def bridge_history_result(
         research_expression_hash=result.expression_hash,
         research_lineage_id=digest(canonical(lineage_payload)),
         dataset_manifest_ids=point.dataset_manifest_ids,
+        universe_version=point.universe_version,
+        signal_universe_version=point.signal_universe_version,
+        source_run_id=point.source_run_id,
+        signal_time_utc=signal_time,
+        information_cutoff_utc=cutoff,
         code_revision=point.code_revision,
         consumed_decay_stages=tuple(consumed),
         observed_unconsumed_decay_stages=tuple(observed),
