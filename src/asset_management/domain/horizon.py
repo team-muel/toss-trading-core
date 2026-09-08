@@ -80,8 +80,12 @@ def require_horizon_alignment(signals: Iterable[SignalValidity]) -> SignalValidi
     if not values:
         raise DataQualityError("SIGNAL_SET_EMPTY")
     first = values[0]
-    # A combined signal must share one complete validity contract. Equal horizon
-    # numbers are insufficient when expiry or decay semantics differ.
-    if any(item != first for item in values[1:]):
-        raise DataQualityError("SIGNAL_VALIDITY_MISMATCH")
+    for item in values[1:]:
+        if (item.forecast_horizon != first.forecast_horizon or
+                item.holding_horizon != first.holding_horizon):
+            raise DataQualityError("SIGNAL_HORIZON_MISMATCH")
+        # Matching horizon numbers are not sufficient: expiry and decay semantics
+        # are part of the same validity contract and must also align exactly.
+        if item != first:
+            raise DataQualityError("SIGNAL_VALIDITY_MISMATCH")
     return first
