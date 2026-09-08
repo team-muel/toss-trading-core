@@ -12,6 +12,8 @@ from asset_management.data.immutable import ImmutableDatasetStore, StoredDataset
 from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityGate, QualityStatus
 
+from . import company as company_transforms
+from . import market as market_transforms
 from .models import FeatureContext, FeatureDefinition, FeatureInput, FeatureSnapshot, FeatureValue, utc
 from .registry import FeatureRegistry
 
@@ -22,6 +24,13 @@ class FeatureRunResult:
     reason_code: str
     snapshot: FeatureSnapshot
     manifest_id: str | None
+
+
+def _approved_transform(definition: FeatureDefinition) -> Callable[..., Decimal] | None:
+    """Resolve executable code from the immutable feature contract, never from caller identity."""
+    module = {"market": market_transforms, "company": company_transforms}.get(definition.namespace)
+    candidate = getattr(module, definition.transformation, None) if module is not None else None
+    return candidate if callable(candidate) else None
 
 
 class FeatureStore:
@@ -39,7 +48,11 @@ class FeatureStore:
         reason: str | None = None
         value: Decimal | None = None
         quality = QualityStatus.VALID
-        if transform.__name__ != definition.transformation:
+        approved_transform = _approved_transform(definition)
+        if approved_transform is None:
+            quality, reason = QualityStatus.BLOCKED, "FEATURE_TRANSFORM_NOT_APPROVED"
+        elif transform is not approved_transform:
+            # Function names are not authority: a caller can trivially forge __name__.
             quality, reason = QualityStatus.BLOCKED, "FEATURE_TRANSFORMATION_MISMATCH"
         elif quality_gate.action != "ALLOW":
             quality = QualityStatus.BLOCKED
@@ -51,7 +64,8 @@ class FeatureStore:
             quality, reason = QualityStatus.QUARANTINED, "FEATURE_INPUT_AFTER_CUTOFF"
         else:
             try:
-                value = transform(*(inputs[name].values["value"] for name in definition.input_fields), **params)
+                value = approved_transform(
+                    *(inputs[name].values["value"] for name in definition.input_fields), **params)
                 if not isinstance(value, Decimal) or not value.is_finite():
                     raise DataQualityError("FEATURE_OUTPUT_INVALID")
             except (DataQualityError, KeyError, TypeError, ValueError) as exc:
