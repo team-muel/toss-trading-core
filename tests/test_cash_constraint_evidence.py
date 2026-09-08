@@ -1,5 +1,6 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal as D
+import hashlib
 import json
 import sqlite3
 from pathlib import Path
@@ -12,8 +13,48 @@ from asset_management.domain.errors import DataQualityError, ReconciliationError
 from asset_management.ledger import CashLedger, OpenBuyOrder, cash_state_from_buying_power
 from asset_management.broker.toss_read import TossReadAdapter
 from asset_management.time.clock import FrozenClock
-from test_phase4_cash_position_settlement import ledger, NOW
 from toss_trading.broker.toss import TossApiResult
+
+
+ROOT = Path(__file__).parents[1]
+NOW = datetime(2026, 9, 4, 2, tzinfo=timezone.utc)
+
+
+def _schema(conn):
+    conn.executescript((ROOT / "schemas/asset_management.sql").read_text(encoding="utf-8"))
+    for path in sorted((ROOT / "schemas/migrations").glob("*.sql")):
+        conn.executescript(path.read_text(encoding="utf-8"))
+
+
+def _seed_raw_order(conn):
+    body_json = json.dumps({"settlementDate": "2026-09-05"}, sort_keys=True, separators=(",", ":"))
+    response_hash = hashlib.sha256(body_json.encode()).hexdigest()
+    conn.execute(
+        """INSERT INTO am_raw_api_response VALUES
+           ('raw-order', 'toss', '/api/v1/orders/id', 'GET', 'req-raw-order', 200, ?, ?, ?, ?,
+            'account-1', 'v1', '{}')""",
+        (response_hash, body_json, NOW.isoformat(), NOW.isoformat()),
+    )
+
+
+@pytest.fixture
+def ledger():
+    conn = sqlite3.connect(":memory:")
+    conn.execute("PRAGMA foreign_keys=ON")
+    _schema(conn)
+    conn.execute(
+        "INSERT INTO am_runtime_run VALUES ('run-1', ?, ?, 'rev', ?)",
+        (NOW.isoformat(), NOW.isoformat(), NOW.isoformat()),
+    )
+    _seed_raw_order(conn)
+    conn.execute(
+        """INSERT INTO am_broker_order VALUES
+        ('order-1','run-1','account-1','OPEN',
+         '{"symbol":"SPY","side":"SELL","currency":"USD","quantity":"1"}',
+         'raw-order')"""
+    )
+    yield conn
+    conn.close()
 
 
 class FakeCollectorClient:
@@ -155,7 +196,7 @@ def test_verified_constraint_reuses_cash_and_reservations_without_changing_asset
     assert cash.state(account_id="account-1", currency="USD", as_of_utc=NOW).settled_cash == 1000
     assert calculate(ledger, source, operational_liquidity_reserve=D(150)) == result
     schema = json.loads(
-        (Path(__file__).parents[1] / "schemas/cash_constraint_evidence.schema.json").read_text()
+        (ROOT / "schemas/cash_constraint_evidence.schema.json").read_text()
     )
     assert set(schema["required"]) == set(result)
 
