@@ -52,7 +52,7 @@ integration through the common decision path.
 
 | Area | Remaining work |
 |---|---|
-| AMA-9/10 | Period accounting now consumes reconciled opening/closing NAV via account_period_with_nav and reuses contribution/TWR equations. Still bind inclusion evidence and snapshot freshness/content to actual provider contracts and the operational ledger; fixture success alone is not account-period acceptance |
+| AMA-9/10 | Period accounting consumes reconciled opening/closing NAV; cash constraints now bind verified Toss raw responses to existing CashLedger openings/events/reservations. Reviewed Toss 1.2.14 fields do not establish accounting NAV/settlement inclusion: a separately verified accounting source and operational snapshot adoption remain required. See toss_accounting_evidence.md |
 | AMA-38/41/43 | Register/approve actual v2 models; propagate currency/horizon facts from risk-free and factor inputs (AMA-40/42), beyond explicit output metadata |
 | AMA-44/45 | Migrate historical expected-return stores; wire typed canonical forecasts and applicable model-relative alpha through the common decision path; legacy calculate_alpha is not the new asset-scope entry point |
 | AMA-36/47 | Bind contribution currency/horizon/model lineage in actual state construction; migrate versioned stored datasets without changing old hashes |

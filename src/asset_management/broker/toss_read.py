@@ -44,7 +44,16 @@ class TossReadAdapter:
         return order_detail(self._client.get_order(order_id).body)
 
     def buying_power(self, currency: str) -> dict:
-        return require_buying_power(self._client.get_buying_power(currency=currency).body)
+        return self._validated_buying_power(self._client.get_buying_power(currency=currency).body, currency)
+
+    @staticmethod
+    def _validated_buying_power(body, currency):
+        row = require_buying_power(body)
+        if currency not in ('USD', 'KRW') or row['currency'] != currency:
+            raise DataQualityError('CASH_CONSTRAINT_CURRENCY_MISMATCH')
+        if require_decimal_string(row['cashBuyingPower'], 'buyingPower.cashBuyingPower') < 0:
+            raise DataQualityError('CASH_CONSTRAINT_NEGATIVE')
+        return row
 
     def sellable_quantity(self, symbol: str) -> dict:
         return require_sellable_quantity(self._client.get_sellable_quantity(symbol=symbol).body)
@@ -136,8 +145,7 @@ class TossReadAdapter:
         buying_power_rows = []
         for currency in sorted(currencies):
             result = keep(self._client.get_buying_power(currency=currency))
-            row = require_buying_power(result.body)
-            require_decimal_string(row["cashBuyingPower"], "buyingPower.cashBuyingPower")
+            row = self._validated_buying_power(result.body, currency)
             buying_power_rows.append(row)
 
         sellable_rows = []

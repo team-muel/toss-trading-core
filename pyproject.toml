@@ -57,8 +57,8 @@ where = ["src"]
 "share/toss-trading/schemas/paper" = ["schemas/paper_order.schema.json"]
 "share/toss-trading/docs/paper" = ["docs/persistent_paper_broker.md"]
 
-"share/toss-trading/schemas/economics" = ["schemas/economic_value.schema.json", "schemas/economic_migration.schema.json", "schemas/portfolio_accounting_result.v2.schema.json", "schemas/portfolio_accounting_result.schema.json", "schemas/decision_economic_journal.v1.schema.json", "schemas/pricing_result.v2.schema.json", "schemas/risk_contribution.v2.schema.json", "schemas/accounting_nav_basis.schema.json", "schemas/expected_return.v1.schema.json", "schemas/decision_horizon.schema.json"]
-"share/toss-trading/docs/economics" = ["docs/portfolio_accounting.md", "docs/economic_semantics.md", "docs/economic_semantics_remediation.md"]
+"share/toss-trading/schemas/economics" = ["schemas/economic_value.schema.json", "schemas/economic_migration.schema.json", "schemas/cash_constraint_evidence.schema.json", "schemas/portfolio_accounting_result.v2.schema.json", "schemas/portfolio_accounting_result.schema.json", "schemas/decision_economic_journal.v1.schema.json", "schemas/pricing_result.v2.schema.json", "schemas/risk_contribution.v2.schema.json", "schemas/accounting_nav_basis.schema.json", "schemas/expected_return.v1.schema.json", "schemas/decision_horizon.schema.json"]
+"share/toss-trading/docs/economics" = ["docs/toss_accounting_evidence.md", "docs/portfolio_accounting.md", "docs/economic_semantics.md", "docs/economic_semantics_remediation.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
