@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, localcontext
 from typing import Iterable
@@ -10,6 +11,41 @@ from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityStatus
 
 from .models import HORIZONS, RiskFreePoint
+
+
+@dataclass(frozen=True)
+class RiskFreeReturn:
+    """A validated curve point aligned to a pricing decision horizon."""
+
+    currency: str
+    forecast_horizon: int
+    annualized_rate: Decimal
+    holding_period_risk_free_return: Decimal
+    day_count: str
+    compounding: str
+    as_of: datetime
+    available_at: datetime
+    formula_version: str
+    source: str
+    dataset_manifest_id: str
+    quality: QualityStatus
+    uncertainty: Decimal
+
+    def __post_init__(self) -> None:
+        if (not self.currency.strip() or self.forecast_horizon not in HORIZONS or
+                self.day_count != "BUS/252" or self.compounding != "EFFECTIVE_ANNUAL" or
+                not self.formula_version.strip() or not self.source.strip() or
+                not self.dataset_manifest_id.strip() or self.as_of.tzinfo is None or
+                self.as_of.utcoffset() is None or self.available_at.tzinfo is None or
+                self.available_at.utcoffset() is None or self.available_at < self.as_of or
+                any(not item.is_finite() for item in (self.annualized_rate,
+                                                       self.holding_period_risk_free_return,
+                                                       self.uncertainty)) or
+                self.annualized_rate <= Decimal(-1) or self.uncertainty < 0 or
+                self.quality is not QualityStatus.VALID or
+                self.holding_period_risk_free_return != annual_to_horizon(
+                    self.annualized_rate, self.forecast_horizon)):
+            raise DataQualityError("RISK_FREE_RETURN_INVALID")
 
 
 def annual_to_horizon(annual_return: Decimal, horizon_days: int) -> Decimal:
@@ -32,6 +68,10 @@ class RiskFreeCurve:
             raise DataQualityError("RISK_FREE_CURVE_AS_OF_CONFLICT")
         if len({item.dataset_manifest_id for item in values}) != 1:
             raise DataQualityError("RISK_FREE_CURVE_MANIFEST_CONFLICT")
+        if len({item.currency for item in values}) != 1:
+            raise DataQualityError("RISK_FREE_CURVE_CURRENCY_CONFLICT")
+        if len({(item.day_count, item.compounding, item.formula_version) for item in values}) != 1:
+            raise DataQualityError("RISK_FREE_CURVE_CONVENTION_CONFLICT")
         self.points = {item.horizon: item for item in values}
 
     def rate(self, *, horizon: int, information_cutoff: datetime) -> Decimal:
@@ -46,3 +86,34 @@ class RiskFreeCurve:
                 point.quality is not QualityStatus.VALID):
             raise DataQualityError("RISK_FREE_POINT_NOT_ELIGIBLE")
         return point.annualized_rate
+
+    def return_for(self, *, currency: str, horizon: int,
+                   information_cutoff: datetime) -> RiskFreeReturn:
+        if not currency.strip():
+            raise DataQualityError("RISK_FREE_CURRENCY_INVALID")
+        try:
+            point = self.points[horizon]
+        except KeyError:
+            raise DataQualityError("RISK_FREE_HORIZON_MISSING") from None
+        if point.currency != currency:
+            raise DataQualityError("RISK_FREE_CURRENCY_MISMATCH")
+        self.rate(horizon=horizon, information_cutoff=information_cutoff)
+        return RiskFreeReturn(
+            point.currency, point.horizon, point.annualized_rate,
+            annual_to_horizon(point.annualized_rate, point.horizon), point.day_count,
+            point.compounding, point.as_of, point.available_at, point.formula_version,
+            point.source, point.dataset_manifest_id, point.quality, point.uncertainty,
+        )
+
+
+def require_risk_free_alignment(*, risk_free: RiskFreeReturn, currency: str,
+                                forecast_horizon: int, information_cutoff: datetime) -> None:
+    if information_cutoff.tzinfo is None or information_cutoff.utcoffset() is None:
+        raise DataQualityError("PRICING_CUTOFF_NOT_AWARE")
+    cutoff = information_cutoff.astimezone(timezone.utc)
+    if risk_free.currency != currency:
+        raise DataQualityError("RISK_FREE_CURRENCY_MISMATCH")
+    if risk_free.forecast_horizon != forecast_horizon:
+        raise DataQualityError("RISK_FREE_HORIZON_MISMATCH")
+    if risk_free.as_of > cutoff or risk_free.available_at > cutoff:
+        raise DataQualityError("RISK_FREE_POINT_NOT_ELIGIBLE")
