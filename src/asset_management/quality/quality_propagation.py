@@ -10,6 +10,13 @@ from .models import BLOCKING_QUALITY, QualityGate, QualityReport, QualityStatus,
 def propagate_quality(reports: Iterable[QualityReport], source_health: Iterable[SourceHealthSnapshot]) -> QualityGate:
     reports = tuple(reports)
     health = tuple(source_health)
+    if not reports or not health:
+        missing = []
+        if not reports:
+            missing.append("QUALITY_REPORT_EVIDENCE_MISSING")
+        if not health:
+            missing.append("SOURCE_HEALTH_EVIDENCE_MISSING")
+        return QualityGate("NO_TRADE", tuple(missing), QualityStatus.BLOCKED, QualityStatus.BLOCKED, "BLOCKED")
     reasons = [issue.code for report in reports for issue in report.issues]
     reasons.extend(f"SOURCE_{item.source}_{item.status}" for item in health
                    if item.status is not SourceHealthStatus.NORMAL)
