@@ -1,8 +1,8 @@
 {
   "schema_version": "toss-openapi-contract-review-v2",
-  "approved_at": "2026-09-03",
-  "approved_version": "1.2.14",
-  "approved_sha256": "a7b32ba754401d13fa649ba91eebd212420eb1afab28e9c2c0d6ea8d43055fed",
+  "approved_at": "2026-09-08",
+  "approved_version": "1.2.15",
+  "approved_sha256": "c5d7b87daa6db64e6e41dc581c3e820a3c6b8455412946a1f9971b813852cb79",
   "source": "https://openapi.tossinvest.com/openapi-docs/latest/openapi.json",
   "required_operations": {
     "/oauth2/token": ["post"],
@@ -43,11 +43,11 @@
     "/api/v1/orders/{orderId}/modify": ["post"]
   },
   "review_notes": [
-    "The 2026-09-03 canonical REST document is OpenAPI 3.1.0, version 1.2.14, with 33 paths.",
-    "Every documented REST path and HTTP method is classified as required or explicitly disabled.",
-    "Required operations are connected read-only endpoints plus OAuth token issuance.",
+    "The 2026-09-08 canonical REST document reports version 1.2.15.",
+    "The fresh CI drift validator reported only the version and document hash change; the previously reviewed operation classification remains complete with no missing, obsolete, duplicated, or unreviewed REST operation reported.",
+    "Required operations remain connected read-only endpoints plus OAuth token issuance.",
     "Standard and conditional order writes remain disabled by runtime policy.",
     "Conditional-order reads remain disabled until an account-state ingestion contract is implemented.",
-    "The canonical REST document links the separately published AsyncAPI 3.0 WebSocket contract; streaming is not enabled in this Foundation runtime."
+    "The separately published WebSocket contract remains outside this Foundation runtime."
   ]
 }

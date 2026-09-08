@@ -12,11 +12,16 @@ import os
 from pathlib import Path
 import re
 import tempfile
+from threading import RLock
 from typing import Callable, Mapping
 
 from asset_management.broker.redaction import SENSITIVE_KEYS
 from asset_management.data.layout import DataLakeLayout
 from asset_management.domain.errors import DataQualityError
+
+
+_SOURCE_INSPECTION_LOCK = RLock()
+_PUBLISH_LOCK = RLock()
 
 
 def canonical(value: object) -> bytes:
@@ -135,6 +140,12 @@ class ImmutableDatasetStore:
         self.credentials_classified = credentials_classified
 
     def _publish(self, path: Path, content: bytes) -> None:
+        # Coordinate directory creation and Windows hard-link publication inside
+        # this process. The hard link remains the cross-process no-replace guard.
+        with _PUBLISH_LOCK:
+            self._publish_unlocked(path, content)
+
+    def _publish_unlocked(self, path: Path, content: bytes) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(dir=path.parent)
         try:
@@ -144,8 +155,16 @@ class ImmutableDatasetStore:
                 os.fsync(stream.fileno())
             try:
                 os.link(temporary, path)
-            except FileExistsError:
-                if path.read_bytes() != content:
+            except OSError:
+                # Windows may report an existing hard-link destination as a
+                # generic OSError under concurrent publication. Accept only an
+                # already-published byte-identical object; every other error is
+                # still a hard failure.
+                try:
+                    existing = path.read_bytes()
+                except OSError:
+                    raise
+                if existing != content:
                     raise ValueError("IMMUTABLE_CONTENT_CONFLICT") from None
         finally:
             Path(temporary).unlink(missing_ok=True)
@@ -155,7 +174,9 @@ class ImmutableDatasetStore:
         _assert_no_secret(safe, self.secrets)
         content = canonical(safe)
         identifier = digest(content)
-        self._publish(self.layout.resolve("catalog", f"{kind}/{identifier}.json"), content)
+        with _PUBLISH_LOCK:
+            path = self.layout.resolve("catalog", f"{kind}/{identifier}.json")
+            self._publish_unlocked(path, content)
         return identifier
 
     def write(self, body: object, *, layer: str, source: str, dataset: str,
@@ -295,7 +316,11 @@ class ProviderDatasetAdapter:
             schema_hash = self.store.catalog("schemas", dict(schema))
             mapping_hash = self.store.catalog("instrument-mappings", dict(instrument_mapping))
             reason = "NORMALIZATION_FAILED"
-            normalizer_hash = digest(inspect.getsource(normalize).encode("utf-8"))
+            # inspect/linecache uses a process-global mutable cache. Serialize source
+            # reads so concurrent adapters derive the same revision or fail together.
+            with _SOURCE_INSPECTION_LOCK:
+                normalizer_source = inspect.getsource(normalize)
+            normalizer_hash = digest(normalizer_source.encode("utf-8"))
             rows = normalize(raw)
             reason = "SCHEMA_VALIDATION_FAILED"
             if not isinstance(rows, list) or (not rows and not allow_verified_empty):

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["input_hash", "planning_input", "current", "executable_target", "mode", "steps", "immediate_expected_utility", "staged_expected_utility", "reason_codes", "created_at", "reassess_at", "plan_hash"],
+  "properties": {
+    "input_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "planning_input": {"$ref": "#/$defs/planning_input"},
+    "current": {"$ref": "#/$defs/target"},
+    "executable_target": {"$ref": "#/$defs/target"},
+    "mode": {"enum": ["IMMEDIATE", "STAGED", "DEFER"]},
+    "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+    "immediate_expected_utility": {"type": "string"},
+    "staged_expected_utility": {"type": "string"},
+    "reason_codes": {"type": "array", "items": {"type": "string"}},
+    "created_at": {"type": "string", "format": "date-time"},
+    "reassess_at": {"type": "string", "format": "date-time"},
+    "plan_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "decimal_map": {
+      "type": "object", "additionalProperties": {"type": "string"}
+    },
+    "signal_validity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["forecast_horizon", "holding_horizon", "valid_until", "decay_profile", "half_life_seconds"],
+      "properties": {
+        "forecast_horizon": {"type": "integer"},
+        "holding_horizon": {"type": "integer"},
+        "valid_until": {"type": "string", "format": "date-time"},
+        "decay_profile": {"enum": ["STEP", "LINEAR", "EXPONENTIAL"]},
+        "half_life_seconds": {"type": ["integer", "null"]}
+      }
+    },
+    "planning_input": {
+      "type": "object", "additionalProperties": false,
+      "required": ["current", "executable_target", "cash_instrument", "forecast_values", "produced_at", "evaluated_at", "signal_validity", "next_rebalance_at", "liquidity_horizon_at", "stage_interval_seconds", "stage_count", "settlement_available_at", "upcoming_event_times", "open_order_exposure", "available_cash_weight", "linear_costs", "impact_costs", "tax_costs", "liquidity_capacities", "cost_curve_key", "tax_policy_key", "liquidity_policy_key"],
+      "properties": {
+        "current": {"$ref": "#/$defs/target"},
+        "executable_target": {"$ref": "#/$defs/target"},
+        "cash_instrument": {"type": "string"},
+        "forecast_values": {"$ref": "#/$defs/decimal_map"},
+        "produced_at": {"type": "string", "format": "date-time"},
+        "evaluated_at": {"type": "string", "format": "date-time"},
+        "signal_validity": {"$ref": "#/$defs/signal_validity"},
+        "next_rebalance_at": {"type": "string", "format": "date-time"},
+        "liquidity_horizon_at": {"type": "string", "format": "date-time"},
+        "stage_interval_seconds": {"type": "integer", "minimum": 1},
+        "stage_count": {"type": "integer", "minimum": 2, "maximum": 8},
+        "settlement_available_at": {"type": ["string", "null"], "format": "date-time"},
+        "upcoming_event_times": {"type": "array", "items": {"type": "string", "format": "date-time"}},
+        "open_order_exposure": {"$ref": "#/$defs/decimal_map"},
+        "available_cash_weight": {"type": "string"},
+        "linear_costs": {"$ref": "#/$defs/decimal_map"},
+        "impact_costs": {"$ref": "#/$defs/decimal_map"},
+        "tax_costs": {"$ref": "#/$defs/decimal_map"},
+        "liquidity_capacities": {"$ref": "#/$defs/decimal_map"},
+        "cost_curve_key": {"type": "string"},
+        "tax_policy_key": {"type": "string"},
+        "liquidity_policy_key": {"type": "string"}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["instruments", "weights", "stage", "reason_codes"],
+      "properties": {
+        "instruments": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "weights": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "stage": {"type": "string"},
+        "reason_codes": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "step": {
+      "type": "object", "additionalProperties": false,
+      "required": ["step_id", "sequence", "stage", "action", "instrument", "weight_delta", "depends_on_step_ids", "prerequisites", "not_before_at", "expires_at", "expected_benefit", "expected_cost", "requires_reassessment"],
+      "properties": {
+        "step_id": {"type": "string"},
+        "sequence": {"type": "integer", "minimum": 1},
+        "stage": {"type": "integer", "minimum": 1},
+        "action": {"enum": ["SELL", "BUY"]},
+        "instrument": {"type": "string"},
+        "weight_delta": {"type": "string"},
+        "depends_on_step_ids": {"type": "array", "items": {"type": "string"}},
+        "prerequisites": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "not_before_at": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "expected_benefit": {"type": "string"},
+        "expected_cost": {"type": "string"},
+        "requires_reassessment": {"type": "boolean"}
+      }
+    }
+  }
+}

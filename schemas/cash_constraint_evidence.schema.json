@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "account_id",
+    "currency",
+    "as_of_utc",
+    "policy_version",
+    "formula_version",
+    "source_response_id",
+    "response_hash",
+    "request_hash",
+    "provider_contract_version",
+    "requested_at",
+    "received_at",
+    "valid_until",
+    "settled_cash",
+    "unsettled_cash",
+    "reserved_cash",
+    "operational_liquidity_reserve",
+    "internal_free_cash",
+    "broker_buying_power",
+    "cash_constrained_buy_limit",
+    "unit",
+    "content_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "cash-constraint-evidence@1"
+    },
+    "account_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "currency": {
+      "enum": [
+        "USD",
+        "KRW"
+      ]
+    },
+    "as_of_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "formula_version": {
+      "const": "cash-constraint@1"
+    },
+    "source_response_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "response_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "request_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "provider_contract_version": {
+      "const": "1.2.14"
+    },
+    "requested_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "received_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "valid_until": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "settled_cash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "unsettled_cash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reserved_cash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "operational_liquidity_reserve": {
+      "type": "string",
+      "minLength": 1
+    },
+    "internal_free_cash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "broker_buying_power": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cash_constrained_buy_limit": {
+      "type": "string",
+      "minLength": 1
+    },
+    "unit": {
+      "const": "MONEY"
+    },
+    "content_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

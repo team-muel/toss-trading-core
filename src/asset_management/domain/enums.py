@@ -14,6 +14,8 @@ class DecisionAction(StrEnum):
     ALLOW = "ALLOW"
     REDUCE = "REDUCE"
     BLOCK = "BLOCK"
+    ABSTAIN = "ABSTAIN"
+    DEFER = "DEFER"
 
 
 class ExecutionMode(StrEnum):

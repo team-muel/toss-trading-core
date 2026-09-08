@@ -113,4 +113,4 @@ Toss 주문 상태는 REST polling으로 관리합니다.
 - error envelope의 `requestId`, `code`, `message`, `data` 기록
 - broker reconciliation이 반복적으로 허용 오차 이내
 
-하나라도 빠지면 `paper` 또는 `semi_auto` 모드를 유지합니다.
+하나라도 빠지면 read-only Foundation 이외의 사용을 허용하지 않습니다.

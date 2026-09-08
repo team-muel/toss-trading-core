@@ -5,7 +5,7 @@
 This runner makes Foundation v0/v1 reproducible on a GCP VM with a static external IP. It is still read-only:
 
 - no automatic orders
-- no strategy signals
+- no order writes
 - no external market-data feeds
 - no automatic orders; the optional systemd timer remains read-only
 
@@ -142,7 +142,7 @@ Cloud Logging/Monitoring expectations are defined in `docs/16_cloud_monitoring_r
 
 ## Go/No-Go
 
-Proceed to paper order planner only after:
+Proceed beyond the read-only Foundation only after:
 
 ```text
 foundation_audit=ok

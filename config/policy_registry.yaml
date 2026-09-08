@@ -13,7 +13,7 @@ policies:
     version: risk-v0-draft
     status: DRAFT
     document: docs/risk_policy.md
-    document_hash: 8b8f7d0aca9f64bbabcb723c73bf4492f81708fc90726c1b63d8bedd002f3111
+    document_hash: 4ffde7fb9c61228c433812cd6a2019870df44253c15c4daab74149d47c92f60f
     effective_from: null
     effective_to: null
     approved_by: null

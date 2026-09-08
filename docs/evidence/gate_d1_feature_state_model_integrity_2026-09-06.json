@@ -1,0 +1,28 @@
+{
+  "decision": "PASS",
+  "reason_codes": [],
+  "evidence_artifact_ids": [
+    "pytest:tests/test_phase10_data_quality.py::test_degraded_source_reduces_confidence_but_unknown_blocks",
+    "pytest:tests/test_phase10_data_quality.py::test_missing_conflict_and_quarantine_propagate_to_no_trade",
+    "pytest:tests/test_phase10_data_quality.py::test_stale_source_blocks_features_and_decision",
+    "pytest:tests/test_phase11_calculation_lineage.py::test_final_estimate_traces_to_verified_immutable_raw_manifest",
+    "pytest:tests/test_phase11_calculation_lineage.py::test_raw_manifest_must_exist_be_bronze_and_match_content",
+    "pytest:tests/test_phase11_feature_store.py::test_future_quarter_and_missing_history_fail_closed_without_gold",
+    "pytest:tests/test_phase11_feature_store.py::test_historical_standardization_excludes_current_and_future_information",
+    "pytest:tests/test_phase11_feature_store.py::test_same_inputs_and_parameters_produce_identical_feature_and_lineage",
+    "pytest:tests/test_phase11_feature_store.py::test_winsorization_uses_exact_historical_cross_section",
+    "pytest:tests/test_phase11_horizon_contract.py::test_horizon_alignment_rejects_forecast_and_holding_mismatch",
+    "pytest:tests/test_phase11_horizon_contract.py::test_step_linear_and_exponential_decay_are_deterministic",
+    "pytest:tests/test_phase11_horizon_contract.py::test_unknown_or_incomplete_contract_fails_closed",
+    "pytest:tests/test_phase11_model_registry.py::test_future_transition_never_activates_a_model_before_its_effective_time",
+    "pytest:tests/test_phase11_model_registry.py::test_scope_status_review_and_registry_changes_cannot_be_bypassed",
+    "pytest:tests/test_phase12_state_engines.py::test_four_state_engines_are_separate_and_preserve_all_components",
+    "pytest:tests/test_phase12_state_engines.py::test_state_quality_and_freshness_reduce_or_block_risk",
+    "pytest:tests/test_phase12_state_engines.py::test_state_snapshot_is_deterministic_and_immutable",
+    "pytest:tests/test_phase13_asset_pricing.py::test_capm_cannot_run_without_matching_registry_authorization",
+    "pytest:tests/test_phase13_asset_pricing.py::test_pricing_output_hash_is_deterministic_and_bound_to_model_version"
+  ],
+  "evaluated_at": "2026-09-06T00:00:00+00:00",
+  "code_revision": "a80176c",
+  "content_hash": "b4f098987205d07a634c47d8825209ac0d5d8aaa2f8a655b58f9fbb54fb18b27"
+}

@@ -5,7 +5,7 @@ enabled_data_sources: [TOSS]
 data_sources:
   TOSS:
     kind: broker
-    schema_version: 1.2.14
+    schema_version: 1.2.15
 parameter_set:
   id: read-only-foundation-v1
   status: APPROVED

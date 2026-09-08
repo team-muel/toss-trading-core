@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "formula_version", "opening", "closing", "accounting", "content_hash"],
+  "properties": {
+    "schema_version": {"const": "portfolio-accounting@2"},
+    "formula_version": {"const": "period-accounting@2"},
+    "opening": {"$ref": "#/$defs/nav_snapshot"},
+    "closing": {"$ref": "#/$defs/nav_snapshot"},
+    "accounting": {"$ref": "portfolio_accounting_result.schema.json"},
+    "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "$defs": {
+    "nav_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["account_id", "snapshot_id", "as_of", "provider_contract_version", "reported_nav", "nav_basis", "content_hash"],
+      "properties": {
+        "account_id": {"type": "string", "minLength": 1},
+        "snapshot_id": {"type": "string", "minLength": 1},
+        "as_of": {"type": "string", "format": "date-time"},
+        "provider_contract_version": {"type": "string", "minLength": 1},
+        "reported_nav": {
+          "type": "object", "additionalProperties": false,
+          "required": ["amount_native", "native_currency", "reporting_currency", "fx_to_reporting"],
+          "properties": {
+            "amount_native": {"type": "string"},
+            "native_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+            "reporting_currency": {"type": "string", "pattern": "^[A-Z]{3}$"},
+            "fx_to_reporting": {"type": "string"}
+          }
+        },
+        "nav_basis": {"$ref": "accounting_nav_basis.schema.json"},
+        "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

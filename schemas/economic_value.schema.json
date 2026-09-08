@@ -1,0 +1,361 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Versioned economic value",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "semantic_type",
+    "value",
+    "status",
+    "currency",
+    "currency_basis",
+    "forecast_horizon",
+    "unit",
+    "formula_version",
+    "reference_version"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "economic-value@1"
+    },
+    "semantic_type": {
+      "enum": [
+        "PRICING_BASELINE_RETURN",
+        "FORECAST_TOTAL_RETURN_GROSS",
+        "FORECAST_TOTAL_RETURN_NET",
+        "MODEL_RELATIVE_ALPHA",
+        "EXPECTED_BENCHMARK_ACTIVE_RETURN",
+        "REALIZED_ACTIVE_RETURN",
+        "REGRESSION_ALPHA",
+        "VARIANCE",
+        "VOLATILITY",
+        "ACCOUNTING_NAV",
+        "INTERNAL_FREE_CASH",
+        "BROKER_BUYING_POWER",
+        "EXECUTABLE_BUY_LIMIT",
+        "INVESTABLE_CAPITAL",
+        "RISK_CAPITAL"
+      ]
+    },
+    "value": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$"
+    },
+    "status": {
+      "enum": [
+        "AVAILABLE",
+        "NOT_APPLICABLE",
+        "NOT_MATURED"
+      ]
+    },
+    "currency": {
+      "enum": [
+        "USD",
+        "KRW"
+      ]
+    },
+    "currency_basis": {
+      "enum": [
+        "LOCAL",
+        "BASE",
+        "HEDGED"
+      ]
+    },
+    "forecast_horizon": {
+      "enum": [
+        21,
+        63,
+        126,
+        252
+      ]
+    },
+    "unit": {
+      "enum": [
+        "TOTAL_RETURN",
+        "EXCESS_RETURN",
+        "ACTIVE_RETURN",
+        "REGRESSION_INTERCEPT",
+        "RETURN_SQUARED",
+        "RETURN",
+        "MONEY"
+      ]
+    },
+    "formula_version": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "reference_version": {
+      "type": "string",
+      "pattern": "\\S"
+    }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "PRICING_BASELINE_RETURN"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "TOTAL_RETURN"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "FORECAST_TOTAL_RETURN_GROSS"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "TOTAL_RETURN"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "FORECAST_TOTAL_RETURN_NET"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "TOTAL_RETURN"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "MODEL_RELATIVE_ALPHA"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "EXCESS_RETURN"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "EXPECTED_BENCHMARK_ACTIVE_RETURN"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "ACTIVE_RETURN"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "REALIZED_ACTIVE_RETURN"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "ACTIVE_RETURN"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "REGRESSION_ALPHA"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "REGRESSION_INTERCEPT"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "VARIANCE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "RETURN_SQUARED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "VOLATILITY"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "RETURN"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "ACCOUNTING_NAV"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "MONEY"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "INTERNAL_FREE_CASH"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "MONEY"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "BROKER_BUYING_POWER"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "MONEY"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "EXECUTABLE_BUY_LIMIT"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "MONEY"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "INVESTABLE_CAPITAL"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "MONEY"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "semantic_type": {
+            "const": "RISK_CAPITAL"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "unit": {
+            "const": "MONEY"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "AVAILABLE"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "value": {
+            "type": "string"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "value": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}
