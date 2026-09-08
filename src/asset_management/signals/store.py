@@ -11,6 +11,7 @@ from asset_management.domain.errors import DataQualityError, InvariantViolation
 from asset_management.features.models import FeatureSnapshot
 from asset_management.quality.models import QualityGate, QualityStatus
 
+from . import transforms as signal_transforms
 from .models import SignalContext, SignalFeatureInput, SignalSnapshot
 from .registry import SignalRegistry
 
@@ -24,6 +25,11 @@ class SignalRunResult:
     reason_code: str
     snapshot: SignalSnapshot | None
     catalog_id: str | None
+
+
+def _approved_transform(transform_rule: str) -> SignalTransform | None:
+    candidate = getattr(signal_transforms, transform_rule, None)
+    return candidate if callable(candidate) else None
 
 
 class SignalStore:
@@ -47,13 +53,16 @@ class SignalStore:
         if quality_gate.action != "ALLOW":
             return self._abstain(quality_gate.reason_codes[0] if quality_gate.reason_codes
                                  else "SIGNAL_QUALITY_BLOCKED")
-        if transform.__name__ != definition.transform_rule:
+        approved_transform = _approved_transform(definition.transform_rule)
+        if approved_transform is None:
+            return self._abstain("SIGNAL_TRANSFORM_NOT_APPROVED")
+        if transform is not approved_transform:
             return self._abstain("SIGNAL_TRANSFORMATION_MISMATCH")
         coverage = Decimal(len(eligible)) / Decimal(len(context.historical_universe))
         if coverage < definition.minimum_coverage:
             return self._abstain("SIGNAL_COVERAGE_INSUFFICIENT")
         try:
-            transformed = dict(transform(eligible))
+            transformed = dict(approved_transform(eligible))
         except (ArithmeticError, KeyError, TypeError, ValueError) as exc:
             return self._abstain(str(exc) or "SIGNAL_TRANSFORM_FAILED")
         if set(transformed) != set(eligible):
@@ -72,6 +81,8 @@ class SignalStore:
             "history_feature_manifest_ids": list(context.history_feature_manifest_ids),
             "source_feature_manifest_ids": list(source_manifest_ids), "values": values,
             "output_hash": output_hash, "code_revision": context.code_revision,
+            "transform_module": approved_transform.__module__,
+            "transform_qualname": approved_transform.__qualname__,
         }
         run_id = digest(canonical(identity))
         quality = QualityStatus.VALID if coverage == Decimal(1) else QualityStatus.ESTIMATED
