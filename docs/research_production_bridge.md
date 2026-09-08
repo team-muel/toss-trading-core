@@ -8,6 +8,8 @@ This contract keeps research expression semantics separate from production econo
 
 The only supported bridge introduced by AMA-133 consumes the latest point-in-time **raw expression score** and emits a candidate with semantic type `SIGNAL_VALUE`. Simulated research weights are not promoted to production weights.
 
+The executable bridge lives at `asset_management.orchestration.research_bridge`. This placement is intentional: `alpha_management` is a sibling research package, and the binding architecture forbids core `asset_management` modules such as `signals`, `features`, `portfolio`, `decisions`, or `execution` from importing it. The orchestration layer is the explicit outer integration boundary that may compose both sides.
+
 ## Required economic context
 
 Every bridge contract states:
