@@ -17,20 +17,31 @@ def passing_input(**changes):
         code_revision="codex/ama-15-account-truth-acceptance",
         checks={name: CheckEvidence(True, (f"pytest:{name}",)) for name in REQUIRED_CHECKS},
         reconciliation_evidence_ids=("pytest:test_phase5_account_reconciliation.py",),
-        unresolved_reconciliation_blockers=("TOSS_CASH_SOURCE_UNVERIFIABLE",),
-        accepted_reconciliation_blockers=("TOSS_CASH_SOURCE_UNVERIFIABLE",),
+        unresolved_reconciliation_blockers=(),
+        accepted_reconciliation_blockers=(),
         live_trading_enabled=False,
     )
     return replace(base, **changes)
 
 
-def test_all_checks_with_explicitly_accepted_reconciliation_blocker_pass():
+def test_all_checks_without_reconciliation_blockers_pass():
     result = evaluate_account_truth_gate(passing_input())
     assert result.decision is AcceptanceDecision.PASS
     assert result.reason_codes == ()
     assert result.blocker_ids == ()
-    assert result.accepted_blocker_ids == ("TOSS_CASH_SOURCE_UNVERIFIABLE",)
+    assert result.accepted_blocker_ids == ()
     assert len(result.evidence_artifact_ids) == len(REQUIRED_CHECKS) + 1
+
+
+def test_accepted_blocker_is_audit_metadata_not_a_waiver():
+    result = evaluate_account_truth_gate(passing_input(
+        unresolved_reconciliation_blockers=("TOSS_CASH_SOURCE_UNVERIFIABLE",),
+        accepted_reconciliation_blockers=("TOSS_CASH_SOURCE_UNVERIFIABLE",),
+    ))
+    assert result.decision is AcceptanceDecision.FAIL
+    assert result.reason_codes == ("ACCOUNT_RECONCILIATION_BLOCKERS_PRESENT",)
+    assert result.blocker_ids == ("TOSS_CASH_SOURCE_UNVERIFIABLE",)
+    assert result.accepted_blocker_ids == ("TOSS_CASH_SOURCE_UNVERIFIABLE",)
 
 
 @pytest.mark.parametrize("failed_check", REQUIRED_CHECKS)
@@ -43,14 +54,13 @@ def test_every_required_check_fails_closed(failed_check):
     assert result.reason_codes == (f"CHECK_FAILED:{failed_check}",)
 
 
-def test_unaccepted_reconciliation_blocker_and_live_write_fail():
+def test_reconciliation_blocker_and_live_write_fail():
     result = evaluate_account_truth_gate(passing_input(
         unresolved_reconciliation_blockers=("UNKNOWN_ORDER",),
-        accepted_reconciliation_blockers=(),
         live_trading_enabled=True,
     ))
     assert result.decision is AcceptanceDecision.FAIL
-    assert result.reason_codes == ("RECONCILIATION_BLOCKER_NOT_ACCEPTED", "LIVE_TRADING_ENABLED")
+    assert result.reason_codes == ("ACCOUNT_RECONCILIATION_BLOCKERS_PRESENT", "LIVE_TRADING_ENABLED")
     assert result.blocker_ids == ("UNKNOWN_ORDER",)
 
 
@@ -64,7 +74,7 @@ def test_missing_unknown_or_conflicting_evidence_is_rejected():
     with pytest.raises(InvariantViolation, match="LIVE_STATE_UNKNOWN"):
         passing_input(live_trading_enabled=None)
     with pytest.raises(InvariantViolation, match="ACCEPTED_BLOCKER_NOT_PRESENT"):
-        passing_input(unresolved_reconciliation_blockers=())
+        passing_input(accepted_reconciliation_blockers=("UNKNOWN_ORDER",))
 
 
 def test_same_meaning_has_deterministic_result_and_schema_fields():
@@ -79,9 +89,10 @@ def test_same_meaning_has_deterministic_result_and_schema_fields():
     assert set(schema["required"]) == set(asdict(first))
 
 
-def test_recorded_gate_a_evidence_is_exact_reproducible_pass():
+def test_recorded_gate_a_pass_is_preserved_as_historical_but_not_reusable_as_current_waiver():
     root = __import__("pathlib").Path(__file__).parents[1]
     recorded = json.loads((root / "docs/evidence/gate_a_account_truth_2026-09-06.json").read_text())
+    assert recorded["decision"] == "PASS"
     evidence = {
         "CASH_REPLAY_DETERMINISTIC": "pytest:tests/test_phase4_cash_position_settlement.py::test_cash_and_reservation_idempotency_conflicts_fail_closed",
         "POSITION_TAX_LOT_REPLAY_DETERMINISTIC": "pytest:tests/test_phase4_cash_position_settlement.py::test_position_settlement_sell_reservation_tax_lot_and_replay",
@@ -103,4 +114,7 @@ def test_recorded_gate_a_evidence_is_exact_reproducible_pass():
     actual["decision"] = actual["decision"].value
     for key in ("reason_codes", "blocker_ids", "accepted_blocker_ids", "evidence_artifact_ids"):
         actual[key] = list(actual[key])
-    assert actual == recorded
+    assert actual["decision"] == "FAIL"
+    assert actual["reason_codes"] == ["ACCOUNT_RECONCILIATION_BLOCKERS_PRESENT"]
+    assert actual["blocker_ids"] == ["TOSS_CASH_SOURCE_UNVERIFIABLE"]
+    assert actual["content_hash"] != recorded["content_hash"]
