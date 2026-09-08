@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -102,3 +103,8 @@ def test_bridge_requires_complete_pit_lineage_and_finite_raw_scores():
     )
     with pytest.raises(InvariantViolation, match="RESEARCH_SIGNAL_BRIDGE_LINEAGE_INVALID"):
         bridge_history_result(missing_lineage, contract())
+
+
+def test_signal_core_does_not_import_alpha_research_package():
+    for path in Path("src/asset_management/signals").rglob("*.py"):
+        assert "alpha_management" not in path.read_text(encoding="utf-8"), path
