@@ -91,6 +91,12 @@ def test_risk_scaling_changes_total_exposure_not_all_to_cash():
     result=risk_scale(target(),cash_instrument="CASH",current_volatility=D(".20"),target_volatility=D(".10"),drawdown_multiplier=D(".8"),confidence_multiplier=D(".9"))
     assert result.weights==(D(".25"),D(".75"))
 
+def test_risk_scaling_cannot_apply_forecast_confidence_twice():
+    with pytest.raises(DataQualityError, match="CONFIDENCE_DOUBLE_COUNTING"):
+        risk_scale(target(),cash_instrument="CASH",current_volatility=D(".20"),target_volatility=D(".10"),drawdown_multiplier=D(".8"),confidence_multiplier=D(".9"),confidence_already_applied=True)
+    result=risk_scale(target(),cash_instrument="CASH",current_volatility=D(".20"),target_volatility=D(".10"),drawdown_multiplier=D(".8"),confidence_multiplier=D(1),confidence_already_applied=True)
+    assert result.stage=="RISK_CONSTRAINED_TARGET"
+
 def test_all_constraints_and_infeasible_are_explicit():
     exposures={"equity":(D(1),D(0))}; factors={"beta":(D(1),D(0))}; currencies={"USD":(D(1),D(1))}; liquidity={"illiquid":(D(1),D(0))}
     reasons=constraint_violations(target((D(".9"),D(".1"))),policy(),current_weights=(D(".5"),D(".5")),nav=D(10000),volatility=D(".3"),cvar=D(".2"),stress_loss=D(".3"),groups=exposures,factors=factors,currencies=currencies,liquidity=liquidity)
