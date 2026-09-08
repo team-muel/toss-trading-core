@@ -17,14 +17,24 @@ def ewma_covariance(panel: ReturnPanel, decay: Decimal=Decimal("0.94")) -> Covar
     raw=[(1-decay)*decay**(len(rows)-1-t) for t in range(len(rows))]; total=sum(raw)
     weights=[x/total for x in raw]
     means=tuple(sum(weights[t]*rows[t][j] for t in range(len(rows))) for j in range(k))
-    matrix=tuple(tuple(sum(weights[t]*(rows[t][i]-means[i])*(rows[t][j]-means[j]) for t in range(len(rows)))*panel.periods_per_year
-                       for j in range(k)) for i in range(k))
+    # Compute one triangle and mirror it exactly. Decimal accumulation order can
+    # otherwise differ by a few ulps between (i,j) and (j,i), even though a
+    # covariance estimator is mathematically symmetric.
+    work=[[Decimal(0)]*k for _ in range(k)]
+    for i in range(k):
+        for j in range(i,k):
+            value=sum(weights[t]*(rows[t][i]-means[i])*(rows[t][j]-means[j])
+                      for t in range(len(rows)))*panel.periods_per_year
+            work[i][j]=value; work[j][i]=value
+    matrix=tuple(tuple(row) for row in work)
     return _estimate(matrix,"EWMA",len(rows),annualization=panel.periods_per_year)
 
 def shrink_covariance(sample: CovarianceEstimate, target: tuple[tuple[Decimal,...],...], alpha: Decimal) -> CovarianceEstimate:
     if not Decimal(0)<=alpha<=Decimal(1): raise DataQualityError("SHRINKAGE_ALPHA_INVALID")
     n=len(sample.matrix)
-    if len(target)!=n or any(len(row)!=n for row in target): raise DataQualityError("COVARIANCE_DIMENSION_INVALID")
+    if (len(target)!=n or any(len(row)!=n for row in target) or
+            any(target[i][j]!=target[j][i] for i in range(n) for j in range(i+1,n))):
+        raise DataQualityError("COVARIANCE_DIMENSION_INVALID")
     matrix=tuple(tuple(alpha*target[i][j]+(1-alpha)*sample.matrix[i][j] for j in range(n)) for i in range(n))
     return _estimate(matrix,"SHRINKAGE",sample.observation_count,annualization=sample.annualization_factor)
 
