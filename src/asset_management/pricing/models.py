@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+import re
 from typing import Mapping
 
 from asset_management.data.immutable import canonical, digest
@@ -15,21 +16,33 @@ from asset_management.domain.errors import DataQualityError
 
 
 HORIZONS = DECISION_HORIZONS
+_HASH = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
 class RiskFreePoint:
     as_of: datetime
+    available_at: datetime
     horizon: int
     annualized_rate: Decimal
     source: str
+    dataset_manifest_id: str
     quality: QualityStatus
 
     def __post_init__(self) -> None:
-        if self.as_of.tzinfo is None or self.as_of.utcoffset() is None:
-            raise ValueError("RISK_FREE_AS_OF_NOT_AWARE")
-        if self.horizon not in HORIZONS or not self.annualized_rate.is_finite() or not self.source.strip():
+        for value in (self.as_of, self.available_at):
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("RISK_FREE_TIME_NOT_AWARE")
+        as_of = self.as_of.astimezone(timezone.utc)
+        available = self.available_at.astimezone(timezone.utc)
+        if available < as_of:
+            raise ValueError("RISK_FREE_AVAILABILITY_INVALID")
+        if (self.horizon not in HORIZONS or not self.annualized_rate.is_finite() or
+                not self.source.strip() or not isinstance(self.dataset_manifest_id, str) or
+                _HASH.fullmatch(self.dataset_manifest_id) is None):
             raise ValueError("RISK_FREE_POINT_INVALID")
+        object.__setattr__(self, "as_of", as_of)
+        object.__setattr__(self, "available_at", available)
 
 
 @dataclass(frozen=True)
