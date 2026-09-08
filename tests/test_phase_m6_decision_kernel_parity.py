@@ -82,7 +82,7 @@ def test_runtime_specific_semantic_change_and_evidence_overwrite_fail_closed():
     inputs = frozen_input()
     ledger = DecisionParityLedger()
     standard = DecisionKernel("decision-kernel@1", lambda _: decision())
-    first = ledger.record(DecisionRuntimeAdapter(standard, adapter(DecisionRuntime.HISTORICAL_REPLAY)).decide(inputs))
+    ledger.record(DecisionRuntimeAdapter(standard, adapter(DecisionRuntime.HISTORICAL_REPLAY)).decide(inputs))
     divergent = DecisionKernel("decision-kernel@1", lambda _: decision(risk_outputs={"volatility": Decimal(".20")}))
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PARITY_MISMATCH"):
         ledger.record(DecisionRuntimeAdapter(divergent, adapter(DecisionRuntime.PAPER)).decide(inputs))
@@ -103,25 +103,18 @@ def test_missing_frozen_inputs_invalid_target_and_runtime_order_economics_fail_c
         decision(risk_state=DecisionState.BLOCK)
 
 
-def test_pricing_non_applicability_must_be_explicit_and_cannot_hide_fake_output():
-    non_applicable = decision(
-        pricing_outputs={},
-        pricing_applicable=False,
-        pricing_non_applicability_reason="asset-class-has-no-approved-pricing-model",
-        pricing_applicability_evidence_id=NON_APPLICABLE_EVIDENCE.evidence_id,
-    )
-    assert non_applicable.pricing_outputs == {}
-    assert non_applicable.payload()["pricing_non_applicability_reason"] == (
-        "asset-class-has-no-approved-pricing-model"
-    )
-
+def test_pricing_non_applicability_cannot_authorize_a_target():
+    with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_REQUIRED_FOR_AUTHORIZED_TARGET"):
+        decision(
+            pricing_outputs={},
+            pricing_applicable=False,
+            pricing_non_applicability_reason="asset-class-has-no-approved-pricing-model",
+            pricing_applicability_evidence_id=NON_APPLICABLE_EVIDENCE.evidence_id,
+        )
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
         decision(pricing_outputs={}, pricing_applicable=False)
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
-        decision(
-            pricing_applicable=False,
-            pricing_non_applicability_reason="not-applicable",
-        )
+        decision(pricing_applicable=False, pricing_non_applicability_reason="not-applicable")
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_OUTPUT_INVALID"):
         decision(pricing_outputs={})
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
