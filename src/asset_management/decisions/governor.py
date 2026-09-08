@@ -36,6 +36,7 @@ HARD_BLOCKS: tuple[tuple[str, ReasonCode], ...] = (
     ("duplicate_order_intent", ReasonCode.DUPLICATE_ORDER_INTENT),
     ("kill_switch_active", ReasonCode.KILL_SWITCH_ACTIVE),
     ("runtime_mode_unauthorized", ReasonCode.RUNTIME_MODE_UNAUTHORIZED),
+    ("event_risk_blocked", ReasonCode.EVENT_RISK_HIGH),
 )
 
 SOFT_REDUCTIONS: tuple[tuple[str, ReasonCode], ...] = (
@@ -90,6 +91,7 @@ class RiskInputs:
     duplicate_order_intent: bool = False
     kill_switch_active: bool = False
     runtime_mode_unauthorized: bool = False
+    event_risk_blocked: bool = False
     volatility_high: bool = False
     low_confidence: bool = False
     event_risk_high: bool = False

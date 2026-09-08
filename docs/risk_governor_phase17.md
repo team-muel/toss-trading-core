@@ -25,6 +25,10 @@ Risk Governor는 target portfolio 뒤, order intent 앞에 있는 최종 위험 
 
 계좌 대사 실패, 주문상태 미확인, 초기현금 미확인, 같은 run 계좌 snapshot 누락, clock risk, stale execution price, data conflict, risk model 실패, optimizer infeasible, policy mismatch, 중복 order intent, kill switch, 미승인 runtime mode를 독립된 안정 reason code로 기록한다. 하나라도 참이면 다른 soft 조건보다 먼저 `BLOCK`, multiplier `0`을 반환한다.
 
+AMA-49 event-risk control의 `BLOCK`도 `event_risk_blocked` hard input으로 같은 경로를
+사용한다. `REDUCE`/`DEFER`와 구분해 event risk가 명시적으로 차단을 요구할 때만 hard
+block이 된다.
+
 ## Soft reduction
 
 변동성 상승, 낮은 confidence, event risk, sector·factor 집중, 높은 spread·turnover, regime·risk estimate 불확실성은 versioned policy의 multiplier를 적용한다. 여러 조건이 동시에 생기면 multiplier를 곱해 암묵적으로 과도 축소하지 않고 가장 보수적인 cap인 최솟값을 사용한다. 활성 조건은 모두 reason code로 남는다. 정책은 아홉 조건의 multiplier를 빠짐없이 명시해야 하며 각 값은 `0 < multiplier < 1`이어야 한다.
