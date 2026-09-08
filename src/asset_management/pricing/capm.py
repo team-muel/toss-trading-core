@@ -1,9 +1,11 @@
-"""CAPM required return with estimated and shrinkable beta."""
+"""CAPM required return with point-in-time beta estimation."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal, localcontext
+import re
 from typing import Sequence
 
 from asset_management.domain.errors import DataQualityError
@@ -15,30 +17,60 @@ from .models import BetaEstimate, PricingResult
 from .risk_free import annual_to_horizon
 
 
-def estimate_beta(asset_returns: Sequence[Decimal], market_returns: Sequence[Decimal], *,
+_HASH = re.compile(r"[0-9a-f]{64}")
+
+
+@dataclass(frozen=True, slots=True)
+class ReturnObservation:
+    value: Decimal
+    event_time: datetime
+    available_at: datetime
+    manifest_id: str
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.value, Decimal) or not self.value.is_finite() or
+                not isinstance(self.event_time, datetime) or self.event_time.tzinfo is None or
+                self.event_time.utcoffset() is None or not isinstance(self.available_at, datetime) or
+                self.available_at.tzinfo is None or self.available_at.utcoffset() is None or
+                not isinstance(self.manifest_id, str) or _HASH.fullmatch(self.manifest_id) is None):
+            raise DataQualityError("BETA_OBSERVATION_INVALID")
+        event = self.event_time.astimezone(timezone.utc)
+        available = self.available_at.astimezone(timezone.utc)
+        if available < event:
+            raise DataQualityError("BETA_OBSERVATION_AVAILABILITY_INVALID")
+        object.__setattr__(self, "event_time", event)
+        object.__setattr__(self, "available_at", available)
+
+
+def estimate_beta(asset_returns: Sequence[ReturnObservation], market_returns: Sequence[ReturnObservation], *,
                   as_of: datetime, minimum_observations: int = 60,
                   instability_standard_error: Decimal = Decimal("0.25"),
                   prior_beta: Decimal = Decimal(1)) -> BetaEstimate:
     if as_of.tzinfo is None or as_of.utcoffset() is None:
         raise DataQualityError("BETA_AS_OF_NOT_AWARE")
+    instant = as_of.astimezone(timezone.utc)
     if len(asset_returns) != len(market_returns) or len(asset_returns) < minimum_observations:
         raise DataQualityError("BETA_HISTORY_MISSING")
     if minimum_observations < 3 or instability_standard_error <= 0:
         raise ValueError("BETA_POLICY_INVALID")
-    n = len(asset_returns)
-    if any(not value.is_finite() for value in (*asset_returns, *market_returns)):
-        raise DataQualityError("BETA_INPUT_INVALID")
-    x_mean = sum(market_returns) / Decimal(n)
-    y_mean = sum(asset_returns) / Decimal(n)
-    sxx = sum((x - x_mean) ** 2 for x in market_returns)
+    if (any(not isinstance(item, ReturnObservation) for item in (*asset_returns, *market_returns)) or
+            any(item.event_time > instant or item.available_at > instant for item in (*asset_returns, *market_returns)) or
+            any(asset.event_time != market.event_time for asset, market in zip(asset_returns, market_returns))):
+        raise DataQualityError("BETA_PIT_EVIDENCE_INVALID")
+    asset_values = tuple(item.value for item in asset_returns)
+    market_values = tuple(item.value for item in market_returns)
+    n = len(asset_values)
+    x_mean = sum(market_values) / Decimal(n)
+    y_mean = sum(asset_values) / Decimal(n)
+    sxx = sum((x - x_mean) ** 2 for x in market_values)
     if sxx == 0:
         raise DataQualityError("BETA_MARKET_VARIANCE_ZERO")
-    sxy = sum((x - x_mean) * (y - y_mean) for x, y in zip(market_returns, asset_returns))
+    sxy = sum((x - x_mean) * (y - y_mean) for x, y in zip(market_values, asset_values))
     raw = sxy / sxx
     alpha = y_mean - raw * x_mean
-    residuals = tuple(y - alpha - raw * x for x, y in zip(market_returns, asset_returns))
+    residuals = tuple(y - alpha - raw * x for x, y in zip(market_values, asset_values))
     sse = sum(value * value for value in residuals)
-    syy = sum((y - y_mean) ** 2 for y in asset_returns)
+    syy = sum((y - y_mean) ** 2 for y in asset_values)
     r_squared = Decimal(1) - sse / syy if syy else Decimal(0)
     with localcontext() as context:
         context.prec = 34
@@ -46,7 +78,7 @@ def estimate_beta(asset_returns: Sequence[Decimal], market_returns: Sequence[Dec
     reliability = Decimal(1) / (Decimal(1) + (standard_error / instability_standard_error) ** 2)
     beta = reliability * raw + (Decimal(1) - reliability) * prior_beta
     quality = QualityStatus.ESTIMATED if reliability < Decimal("0.8") else QualityStatus.VALID
-    return BetaEstimate(beta, raw, standard_error, n, n, r_squared, as_of, quality, reliability)
+    return BetaEstimate(beta, raw, standard_error, n, n, r_squared, instant, quality, reliability)
 
 
 def capm_required_return(*, instrument_id: str, risk_free_rate: Decimal,
