@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Mapping, Sequence
@@ -108,7 +108,8 @@ class CalibrationSample:
         available = _aware(self.outcome_available_at, "FORECAST_CALIBRATION_TIME_NOT_AWARE")
         signal_as_of = _aware(datetime.fromisoformat(self.snapshot.as_of),
                               "FORECAST_CALIBRATION_TIME_NOT_AWARE")
-        if available <= signal_as_of or available < self.snapshot.validity.valid_until:
+        maturity = signal_as_of + timedelta(days=self.snapshot.validity.forecast_horizon)
+        if available < maturity:
             raise InvariantViolation("FORECAST_CALIBRATION_OUTCOME_PREMATURE")
         values = dict(self.snapshot.values)
         if set(self.forward_returns) != set(values) or set(self.bucket_labels) != set(values):
