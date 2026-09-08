@@ -90,6 +90,30 @@ def test_missing_frozen_inputs_invalid_target_and_runtime_order_economics_fail_c
         decision(risk_state=DecisionState.BLOCK)
 
 
+def test_pricing_non_applicability_must_be_explicit_and_cannot_hide_fake_output():
+    non_applicable = decision(
+        pricing_outputs={},
+        pricing_applicable=False,
+        pricing_non_applicability_reason="asset-class-has-no-approved-pricing-model",
+    )
+    assert non_applicable.pricing_outputs == {}
+    assert non_applicable.payload()["pricing_non_applicability_reason"] == (
+        "asset-class-has-no-approved-pricing-model"
+    )
+
+    with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
+        decision(pricing_outputs={}, pricing_applicable=False)
+    with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
+        decision(
+            pricing_applicable=False,
+            pricing_non_applicability_reason="not-applicable",
+        )
+    with pytest.raises(InvariantViolation, match="DECISION_KERNEL_OUTPUT_INVALID"):
+        decision(pricing_outputs={})
+    with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
+        decision(pricing_non_applicability_reason="not-applicable")
+
+
 def test_schema_covers_published_parity_evidence():
     inputs = frozen_input()
     ledger = DecisionParityLedger()
