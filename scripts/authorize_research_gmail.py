@@ -24,10 +24,13 @@ from typing import Any
 GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send"
 AUTHORIZATION_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+SECRET_CLIENT_ID_NAME = "toss-research-gmail-oauth-client-id"
+SECRET_CLIENT_SECRET_NAME = "toss-research-gmail-oauth-client-secret"
+SECRET_REFRESH_TOKEN_NAME = "toss-research-gmail-oauth-refresh-token"
 SECRET_NAMES = {
-    "client_id": "toss-research-gmail-oauth-client-id",
-    "client_secret": "toss-research-gmail-oauth-client-secret",
-    "refresh_token": "toss-research-gmail-oauth-refresh-token",
+    "client_id": SECRET_CLIENT_ID_NAME,
+    "client_secret": SECRET_CLIENT_SECRET_NAME,
+    "refresh_token": SECRET_REFRESH_TOKEN_NAME,
 }
 
 
