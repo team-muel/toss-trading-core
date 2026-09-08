@@ -7,6 +7,7 @@ import pytest
 
 from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.domain.errors import InvariantViolation
+from asset_management.domain.horizon import DecayProfile, SignalValidity
 from asset_management.signals import (
     ForecastCombinationParameters, ForecastCombinationRegistry, ForecastCombinationRequest,
     ForecastCombiner, ForecastSource,
@@ -15,17 +16,17 @@ from asset_management.signals import (
 
 NOW = datetime(2026, 9, 6, tzinfo=timezone.utc)
 UNIVERSE = {"AAA": Decimal("0.03"), "BBB": Decimal("0.02")}
+VALIDITY = SignalValidity(21, 21, NOW + timedelta(days=1), DecayProfile.LINEAR)
 
 
-def source(number, signal, estimates, *, evidence=None):
+def source(number, signal, estimates, *, evidence=None, validity=VALIDITY):
     as_of = NOW - timedelta(days=1)
     return ForecastSource(
         forecast_calibration_id=f"{number:064x}", signal_run_id=f"{10 + number:064x}",
         neutralization_id=f"{20 + number:064x}", signal_id=signal, as_of=as_of,
         information_cutoff=as_of, oos_evidence_available_at=evidence or as_of - timedelta(hours=1),
-        universe_manifest_id="a" * 64, currency="USD", unit="DECIMAL_RETURN", horizon=21,
-        valid_until=NOW + timedelta(days=1), point_estimates=estimates,
-        uncertainty=Decimal("0.02"), confidence=Decimal("0.8"),
+        universe_manifest_id="a" * 64, currency="USD", unit="DECIMAL_RETURN", validity=validity,
+        point_estimates=estimates, uncertainty=Decimal("0.02"), confidence=Decimal("0.8"),
         incremental_ic=Decimal("0.1") * number, stability=Decimal("0.9"),
         coverage=Decimal("0.95"), regime_sensitivity=Decimal("0.1"),
         turnover=Decimal("0.2"), implementation_cost=Decimal("0.001") * number,
@@ -59,6 +60,7 @@ def test_combiner_uses_neutralization_oos_cost_and_correlation(tmp_path):
     assert Decimal(report["expected_implementation_cost"]) > 0
     assert sum(Decimal(item["weight"]) for item in report["contributions"].values()) == Decimal(1)
     assert report["components"]["AAA"]["semantic_type"] == "combined_signal_forecast_component"
+    assert report["signal_validity"] == VALIDITY.payload()
 
 
 def test_future_oos_evidence_and_parameter_conflicts_fail_closed(tmp_path):
@@ -66,6 +68,14 @@ def test_future_oos_evidence_and_parameter_conflicts_fail_closed(tmp_path):
         ForecastCombinationRequest(
             (source(1, "value", UNIVERSE, evidence=NOW + timedelta(days=1)),
              source(2, "quality", {"AAA": Decimal("0.01"), "BBB": Decimal("0.04")})),
+            ((Decimal("0.0004"), Decimal("0.0001")), (Decimal("0.0001"), Decimal("0.0004"))),
+            ((Decimal(1), Decimal("0.25")), (Decimal("0.25"), Decimal(1))), NOW,
+        )
+    mismatched = SignalValidity(21, 63, VALIDITY.valid_until, DecayProfile.LINEAR)
+    with pytest.raises(InvariantViolation, match="FORECAST_COMBINATION_LINEAGE_OR_TIME_INVALID"):
+        ForecastCombinationRequest(
+            (source(1, "value", UNIVERSE),
+             source(2, "quality", {"AAA": Decimal("0.01"), "BBB": Decimal("0.04")}, validity=mismatched)),
             ((Decimal("0.0004"), Decimal("0.0001")), (Decimal("0.0001"), Decimal("0.0004"))),
             ((Decimal(1), Decimal("0.25")), (Decimal("0.25"), Decimal(1))), NOW,
         )
