@@ -189,7 +189,6 @@ class ApprovedRiskDecision:
 
     def bind_target(self, weights: Mapping[str, Decimal], *, cash_instrument_id: str
                     ) -> tuple["ApprovedRiskDecision", dict[str, Decimal]]:
-        """Bind this approval to its authorized portfolio target and risk-reduced result."""
         normalized = {key: exact_decimal(value) for key, value in weights.items()}
         if target_weight_hash(normalized) != self.portfolio_target_hash:
             raise InvariantViolation("portfolio target weights do not match risk-approved target hash")
@@ -230,24 +229,13 @@ class RiskDecision:
         return self.state in (DecisionState.ALLOW, DecisionState.REDUCE)
 
     def authorize(self) -> ApprovedRiskDecision:
-        if not self.approved:
-            reasons = ",".join(code.value for code in self.reason_codes)
-            raise NoTrade(f"risk decision {self.state.value} cannot authorize an order: {reasons}")
-        return ApprovedRiskDecision._issue(
-            self.risk_decision_id, self.state, self.exposure_multiplier,
-            self.runtime_run_id, self.portfolio_target_id, self.portfolio_target_hash,
-            self.policy_version, self.content_hash,
-        )
+        raise InvariantViolation("risk decision authorization requires the issuing risk governor")
 
-    def authorize_target(self, weights: Mapping[str, Decimal], *, cash_instrument_id: str
-                         ) -> tuple[ApprovedRiskDecision, dict[str, Decimal]]:
-        return self.authorize().bind_target(weights, cash_instrument_id=cash_instrument_id)
+    def authorize_target(self, weights: Mapping[str, Decimal], *, cash_instrument_id: str):
+        raise InvariantViolation("risk decision authorization requires the issuing risk governor")
 
-    def apply_to_target(self, weights: Mapping[str, Decimal], *,
-                        cash_instrument_id: str) -> dict[str, Decimal]:
-        """Apply the approved exposure cap to risky weights and move residual to cash."""
-        _, result = self.authorize_target(weights, cash_instrument_id=cash_instrument_id)
-        return result
+    def apply_to_target(self, weights: Mapping[str, Decimal], *, cash_instrument_id: str):
+        raise InvariantViolation("risk decision authorization requires the issuing risk governor")
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,6 +247,7 @@ class GovernanceDecision:
 class RiskGovernor:
     def __init__(self, policy: RiskGovernorPolicy | None = None) -> None:
         self.policy = policy
+        self._issued_decisions: dict[str, RiskDecision] = {}
 
     def decide(self, inputs: RiskInputs) -> RiskDecision:
         if self.policy is None:
@@ -290,8 +279,7 @@ class RiskGovernor:
             return self._build(inputs, DecisionState.REDUCE, multiplier, soft)
         return self._build(inputs, DecisionState.ALLOW, Decimal("1"), ())
 
-    @staticmethod
-    def _build(inputs: RiskInputs, state: DecisionState, multiplier: Decimal,
+    def _build(self, inputs: RiskInputs, state: DecisionState, multiplier: Decimal,
                reasons: tuple[ReasonCode, ...]) -> RiskDecision:
         payload = inputs.canonical() | {
             "state": state.value, "exposure_multiplier": str(multiplier),
@@ -299,11 +287,42 @@ class RiskGovernor:
         }
         encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest_value = sha256(encoded.encode("utf-8")).hexdigest()
-        return RiskDecision(
+        decision = RiskDecision(
             f"risk-{digest_value}", state, multiplier, reasons, inputs.runtime_run_id,
             inputs.portfolio_target_id, inputs.portfolio_target_hash, inputs.policy_version,
             inputs.as_of_utc, tuple(sorted(inputs.evidence_ids)), digest_value,
         )
+        previous = self._issued_decisions.get(digest_value)
+        if previous is not None and previous != decision:
+            raise InvariantViolation("risk governor decision hash collision")
+        self._issued_decisions[digest_value] = decision
+        return decision
+
+    def authorize(self, decision: RiskDecision) -> ApprovedRiskDecision:
+        if not isinstance(decision, RiskDecision):
+            raise InvariantViolation("risk governor authorization requires a RiskDecision")
+        issued = self._issued_decisions.get(decision.content_hash)
+        if issued != decision:
+            raise InvariantViolation("risk decision was not issued by this risk governor")
+        if self.policy is None or decision.policy_version != self.policy.policy_version:
+            raise InvariantViolation("risk decision policy is not current for this governor")
+        if not decision.approved:
+            reasons = ",".join(code.value for code in decision.reason_codes)
+            raise NoTrade(f"risk decision {decision.state.value} cannot authorize an order: {reasons}")
+        return ApprovedRiskDecision._issue(
+            decision.risk_decision_id, decision.state, decision.exposure_multiplier,
+            decision.runtime_run_id, decision.portfolio_target_id, decision.portfolio_target_hash,
+            decision.policy_version, decision.content_hash,
+        )
+
+    def authorize_target(self, decision: RiskDecision, weights: Mapping[str, Decimal], *,
+                         cash_instrument_id: str) -> tuple[ApprovedRiskDecision, dict[str, Decimal]]:
+        return self.authorize(decision).bind_target(weights, cash_instrument_id=cash_instrument_id)
+
+    def apply_to_target(self, decision: RiskDecision, weights: Mapping[str, Decimal], *,
+                        cash_instrument_id: str) -> dict[str, Decimal]:
+        _, result = self.authorize_target(decision, weights, cash_instrument_id=cash_instrument_id)
+        return result
 
     def evaluate(self, *, statuses: tuple[DataStatus, ...], reconciled: bool,
                  limit_breached: bool) -> GovernanceDecision:
