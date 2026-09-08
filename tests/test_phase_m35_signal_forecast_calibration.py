@@ -34,8 +34,9 @@ def snapshot(number, *, days_ago, multiplier=Decimal("1")):
 def sample(number, days_ago, multiplier):
     value = snapshot(number, days_ago=days_ago, multiplier=multiplier)
     returns = {item: Decimal(value.values[item]) / Decimal(100) for item in UNIVERSE}
+    signal_as_of = datetime.fromisoformat(value.as_of)
     return CalibrationSample(
-        value, returns, NOW - timedelta(days=days_ago - 1),
+        value, returns, signal_as_of + timedelta(days=value.validity.forecast_horizon),
         "risk_on" if number % 2 else "risk_off",
         {item: "large" if index < 4 else "small" for index, item in enumerate(UNIVERSE, 1)},
     )
@@ -43,8 +44,8 @@ def sample(number, days_ago, multiplier):
 
 def request():
     return ForecastCalibrationRequest(
-        training=(sample(1, 12, Decimal("1")), sample(2, 10, Decimal("1.1"))),
-        validation=(sample(3, 8, Decimal("0.9")), sample(4, 6, Decimal("1.2"))),
+        training=(sample(1, 80, Decimal("1")), sample(2, 70, Decimal("1.1"))),
+        validation=(sample(3, 40, Decimal("0.9")), sample(4, 30, Decimal("1.2"))),
         target_snapshot=snapshot(5, days_ago=1), target_universe=UNIVERSE, evaluated_at=NOW,
     )
 
@@ -74,12 +75,12 @@ def test_minimum_history_and_future_outcome_fail_closed(tmp_path):
         "ABSTAIN", "FORECAST_CALIBRATION_TRAINING_HISTORY_INSUFFICIENT", None, None,
     )
     bad_validation = CalibrationSample(
-        snapshot(9, days_ago=6), {item: Decimal("0.01") for item in UNIVERSE},
+        snapshot(9, days_ago=30), {item: Decimal("0.01") for item in UNIVERSE},
         NOW + timedelta(days=1), "risk_on", {item: "large" for item in UNIVERSE},
     )
     with pytest.raises(InvariantViolation, match="FORECAST_CALIBRATION_SAMPLE_LINEAGE_INVALID"):
         ForecastCalibrationRequest(
-            training=(sample(1, 12, Decimal("1")), sample(2, 10, Decimal("1.1"))),
+            training=(sample(1, 80, Decimal("1")), sample(2, 70, Decimal("1.1"))),
             validation=(bad_validation,), target_snapshot=snapshot(5, days_ago=1),
             target_universe=UNIVERSE, evaluated_at=NOW,
         )
