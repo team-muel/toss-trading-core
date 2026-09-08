@@ -56,20 +56,20 @@ def _project_simplex_cap(values, cap, cash_index, min_cash):
     raise DataQualityError("PORTFOLIO_PROJECTION_DID_NOT_CONVERGE")
 
 
-def optimize_weights(*, instruments, return_input: OptimizationReturnInput, covariance, current, cash_instrument,
+def optimize_weights(*, instruments, return_input: OptimizationReturnInput, covariance,
+                     covariance_instruments, current, cash_instrument,
                      max_single_weight, min_cash_weight, risk_aversion, linear_cost, impact_cost,
                      mandate_registry: InvestorMandateRegistry,
                      mandate_authorization: OptimizerMandateAuthorization, authorized_at: datetime,
                      active_risk_aversion=Decimal(0), turnover_penalty=Decimal(0),
                      concentration_penalty=Decimal(0), transaction_cost_includes_turnover=True,
                      iterations=500, step=Decimal("0.05")):
-    """Construct weights using a mandate-bound economic return term.
-
-    ``ABSOLUTE`` and ``STRATEGIC`` modes use total return. Benchmark modes use
-    active exposure; direct model alpha requires independently declared baseline and neutrality.
-    """
+    """Construct weights using instrument-bound return and covariance vectors."""
+    instruments = tuple(instruments)
+    covariance_instruments = tuple(covariance_instruments)
     n = len(instruments)
-    if (not isinstance(return_input, OptimizationReturnInput) or
+    if (not instruments or len(set(instruments)) != n or any(not isinstance(item, str) or not item.strip() for item in instruments) or
+            return_input.instruments != instruments or covariance_instruments != instruments or
             not all(len(values) == n for values in (current, linear_cost, impact_cost)) or
             len(return_input.forecast_total_return) != n or len(covariance) != n or
             any(len(row) != n for row in covariance) or cash_instrument not in instruments or
@@ -114,7 +114,7 @@ def optimize_weights(*, instruments, return_input: OptimizationReturnInput, cova
         rate = step / Decimal(iteration).sqrt()
         weights = _project_simplex_cap(tuple(weights[index] + rate * gradient[index] for index in range(n)),
                                        max_single_weight, cash_index, min_cash_weight)
-    return PortfolioTarget(tuple(instruments), weights, "RAW_TARGET")
+    return PortfolioTarget(instruments, weights, "RAW_TARGET")
 
 
 def risk_scale(target: PortfolioTarget, *, cash_instrument, current_volatility, target_volatility,
