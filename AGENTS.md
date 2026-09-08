@@ -66,3 +66,14 @@ Material review findings must be fixed or explicitly dispositioned. Do not merge
 ## Merge protocol
 
 `master` is protected by a repository ruleset (2026-09-07): pull requests only, `test (3.11)` and `test (3.12)` are required status checks, review threads must be resolved, and merges go through the GitHub Merge Queue. Queue a PR with `gh pr merge <number> --merge` (or the "Merge when ready" button); the queue rebuilds it on top of `master`, runs CI on the `merge_group` event, and merges only when the required checks pass. Do not push to `master` directly. Emergency hotfixes follow the organization review-completion rule (Linear MUE-63): use the admin bypass only for a documented incident, and open the follow-up review immediately.
+
+## Maintenance change routing
+
+Follow `docs/maintenance_workflow.md` and the PR template. Run
+`python scripts/check_maintenance_registry.py` for registry integrity and classify
+actual changed paths against the PR target before review. The no-path invocation
+is not a PR classification. Add semantic impacts beyond path-based suggestions.
+Reference AMA-135 through AMA-147 as evergreen umbrellas, never with closing
+keywords. Only finite changes are completed after their scoped acceptance.
+Keep Linear responsibility/evidence and the repository mapping synchronized.
+This routing never authorizes live trading or replaces the review protocol.
