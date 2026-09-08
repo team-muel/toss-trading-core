@@ -325,6 +325,8 @@ class BacktestRunRegistry:
         event = BacktestRunEvent(run_key, spec.spec_hash, status, at, evidence_ids, output_hash, reason_code)
         if event.status is BacktestRunStatus.STARTED or event.recorded_at < events[-1].recorded_at:
             raise InvariantViolation("BACKTEST_RUN_OUTCOME_INVALID")
+        if event.recorded_at < spec.test_period.end:
+            raise InvariantViolation("BACKTEST_RUN_OUTCOME_PREMATURE")
         self._events.append(event)
         return event
 
