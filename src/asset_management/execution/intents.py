@@ -3,7 +3,9 @@ from decimal import Decimal
 
 from asset_management.domain.errors import InvariantViolation
 from asset_management.domain.decimal import exact_decimal
-from asset_management.decisions.governor import ApprovedRiskDecision, DecisionState
+from asset_management.decisions.governor import (
+    ApprovedRiskDecision, DecisionState, target_weight_hash,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,3 +49,7 @@ class OrderIntent:
         if (not self.target_weights or any(not isinstance(item, TargetWeight) for item in self.target_weights) or
                 len({item.instrument_id for item in self.target_weights}) != len(self.target_weights)):
             raise InvariantViolation("order intent requires target weights")
+        target_map = {item.instrument_id: item.target for item in self.target_weights}
+        if (authorization.approved_target_hash is None or
+                target_weight_hash(target_map) != authorization.approved_target_hash):
+            raise InvariantViolation("order intent target weights are not risk-authorized")
