@@ -258,6 +258,8 @@ class StrategyRegistry:
                   live_trading_enabled: bool = False) -> StrategyAuthorization:
         if not isinstance(at, datetime) or at.tzinfo is None or at.utcoffset() is None:
             raise InvariantViolation("STRATEGY_AUTHORIZATION_TIME_NOT_AWARE")
+        if type(live_trading_enabled) is not bool:
+            raise InvariantViolation("STRATEGY_LIVE_FLAG_INVALID")
         try:
             strategy = self._strategies[strategy_key]
         except KeyError:
@@ -288,6 +290,8 @@ class StrategyRegistry:
             raise InvariantViolation("STRATEGY_AUTHORIZATION_MISSING")
         if not isinstance(at, datetime) or at.tzinfo is None or at.utcoffset() is None:
             raise InvariantViolation("STRATEGY_AUTHORIZATION_TIME_NOT_AWARE")
+        if type(live_trading_enabled) is not bool:
+            raise InvariantViolation("STRATEGY_LIVE_FLAG_INVALID")
         try:
             authorized_at = datetime.fromisoformat(authorization.authorized_at)
         except (TypeError, ValueError):
