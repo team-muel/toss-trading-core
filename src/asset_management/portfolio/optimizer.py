@@ -118,11 +118,15 @@ def optimize_weights(*, instruments, return_input: OptimizationReturnInput, cova
 
 
 def risk_scale(target: PortfolioTarget, *, cash_instrument, current_volatility, target_volatility,
-               drawdown_multiplier, confidence_multiplier):
+               drawdown_multiplier, confidence_multiplier,
+               confidence_already_applied: bool = False):
     values = (current_volatility, target_volatility, drawdown_multiplier, confidence_multiplier)
     if (cash_instrument not in target.instruments or any(not value.is_finite() or value < 0 for value in values)
-            or drawdown_multiplier > 1 or confidence_multiplier > 1):
+            or drawdown_multiplier > 1 or confidence_multiplier > 1 or
+            type(confidence_already_applied) is not bool):
         raise DataQualityError("RISK_SCALING_INPUT_INVALID")
+    if confidence_already_applied and confidence_multiplier != Decimal(1):
+        raise DataQualityError("RISK_SCALING_CONFIDENCE_DOUBLE_COUNTING")
     volatility_scale = min(Decimal(1), target_volatility / current_volatility) if current_volatility > 0 else Decimal(1)
     scale = min(volatility_scale, drawdown_multiplier, confidence_multiplier)
     cash_index = target.instruments.index(cash_instrument)
