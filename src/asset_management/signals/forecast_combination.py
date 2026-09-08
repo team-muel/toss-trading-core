@@ -34,6 +34,27 @@ def _sqrt(value: Decimal) -> Decimal:
     return value.sqrt()
 
 
+def _is_psd(matrix: Sequence[Sequence[Decimal]]) -> bool:
+    """Exact Decimal Cholesky-style positive-semidefinite check."""
+    size = len(matrix)
+    lower = [[Decimal(0) for _ in range(size)] for _ in range(size)]
+    for row in range(size):
+        for column in range(row + 1):
+            remainder = matrix[row][column] - sum(
+                (lower[row][k] * lower[column][k] for k in range(column)), Decimal(0)
+            )
+            if row == column:
+                if remainder < 0:
+                    return False
+                lower[row][column] = remainder.sqrt() if remainder else Decimal(0)
+            elif lower[column][column] == 0:
+                if remainder != 0:
+                    return False
+            else:
+                lower[row][column] = remainder / lower[column][column]
+    return True
+
+
 @dataclass(frozen=True, slots=True)
 class ForecastCombinationParameters:
     combination_id: str
@@ -189,6 +210,8 @@ class ForecastCombinationRequest:
                                            (row != column and not Decimal(-1) <= value <= Decimal(1)))) or
                             (not diagonal and row == column and value < 0)):
                         raise InvariantViolation("FORECAST_COMBINATION_MATRIX_INVALID")
+        if not _is_psd(self.covariance):
+            raise InvariantViolation("FORECAST_COMBINATION_COVARIANCE_NOT_PSD")
         object.__setattr__(self, "evaluated_at", evaluated)
 
 
@@ -282,18 +305,36 @@ class ForecastCombiner:
         total = sum(raw, Decimal(0))
         if total <= 0:
             raise DataQualityError("FORECAST_COMBINATION_INFORMATION_INSUFFICIENT")
-        weights = [value / total for value in raw]
-        if any(value > parameters.max_forecast_weight for value in weights):
-            capped = [min(value, parameters.max_forecast_weight) for value in weights]
-            remainder = Decimal(1) - sum(capped, Decimal(0))
-            eligible = [index for index, value in enumerate(weights) if value < parameters.max_forecast_weight]
-            if remainder > 0 and not eligible:
-                raise DataQualityError("FORECAST_COMBINATION_WEIGHT_CAP_INFEASIBLE")
-            base = sum((weights[index] for index in eligible), Decimal(0))
-            for index in eligible:
-                capped[index] += remainder * weights[index] / base
-            weights = capped
-        if any(value > parameters.max_forecast_weight for value in weights):
+        cap = parameters.max_forecast_weight
+        if cap * Decimal(len(raw)) < Decimal(1):
             raise DataQualityError("FORECAST_COMBINATION_WEIGHT_CAP_INFEASIBLE")
-        weights[-1] = Decimal(1) - sum(weights[:-1], Decimal(0))
+        weights = [Decimal(0) for _ in raw]
+        remaining = Decimal(1)
+        eligible = set(range(len(raw)))
+        while eligible:
+            base = sum((raw[index] for index in eligible), Decimal(0))
+            proposed = {
+                index: (remaining / Decimal(len(eligible)) if base == 0
+                        else remaining * raw[index] / base)
+                for index in eligible
+            }
+            violating = {index for index, value in proposed.items() if value > cap}
+            if not violating:
+                for index, value in proposed.items():
+                    weights[index] = value
+                break
+            for index in sorted(violating):
+                weights[index] = cap
+                remaining -= cap
+                eligible.remove(index)
+            if remaining < 0:
+                raise DataQualityError("FORECAST_COMBINATION_WEIGHT_CAP_INFEASIBLE")
+        residual = Decimal(1) - sum(weights, Decimal(0))
+        if residual:
+            candidates = [index for index, value in enumerate(weights) if value + residual <= cap]
+            if not candidates:
+                raise DataQualityError("FORECAST_COMBINATION_WEIGHT_CAP_INFEASIBLE")
+            weights[candidates[-1]] += residual
+        if any(value < 0 or value > cap for value in weights) or sum(weights, Decimal(0)) != Decimal(1):
+            raise DataQualityError("FORECAST_COMBINATION_WEIGHT_CAP_INFEASIBLE")
         return tuple(weights)
