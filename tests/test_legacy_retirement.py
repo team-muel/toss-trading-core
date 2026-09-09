@@ -120,14 +120,16 @@ def test_unknown_unit_is_not_glob_deleted(tmp_path):
     assert (tmp_path/'toss-research-unreviewed.service').exists()
 
 
-def test_unit_changed_after_plan_is_not_unlinked(tmp_path):
+def test_unit_changed_after_plan_has_zero_effects(tmp_path):
     p=tmp_path/'toss-foundation.timer';p.write_text('old')
     runner=unit_runner(tmp_path,[p.name])
     plan=systemd_plan(run=runner,root=tmp_path)
+    runner.reset_mock()
     p.write_text('changed')
-    with pytest.raises(ValueError,match='unit changed'):
+    with pytest.raises(ValueError,match='unit changed before retirement'):
         apply_plan(plan,identity(plan),run=runner)
     assert p.read_text()=='changed'
+    runner.assert_not_called()
 
 
 def test_cli_dry_run_never_executes_deletes(monkeypatch,capsys):
