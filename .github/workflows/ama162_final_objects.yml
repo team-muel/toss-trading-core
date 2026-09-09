@@ -1,0 +1,36 @@
+name: ama162-final-objects
+on:
+  push:
+    branches: [audit/ama161-object-publication]
+    paths: [.github/workflows/ama162_final_objects.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          path: transport
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 79d893f01e0b0eb82538996e9fe24506f3e0c00c
+          path: source
+      - name: Apply data-only delta and verify complete source identity
+        working-directory: source
+        run: |
+          set -eu
+          patch="${GITHUB_WORKSPACE}/transport/audit/final-p1.patch"
+          git apply --recount --unidiff-zero --check "$patch"
+          git apply --recount --unidiff-zero --index "$patch"
+          git diff --cached --check
+          actual="$(git write-tree)"
+          echo "ACTUAL_TREE=$actual"
+          git diff --cached --raw
+          test "$actual" = bba36025d58e686eeb8b30bf3d68b389495172fed
+          git config user.name "Source object staging"
+          git config user.email "object-staging@users.noreply.github.com"
+          git commit -m "Stage verified P1 review source"
+          git push origin "HEAD:refs/heads/audit/objects-bba36025d58e686eeb8b30bf3d68b389495172fed"
