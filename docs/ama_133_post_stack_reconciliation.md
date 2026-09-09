@@ -34,6 +34,16 @@ stack because it is based on `7b9468951feef0ae398be03e3244f4d81b197085`.
 
 ## Verification scope
 
-Focused happy- and failure-path tests cover each transplanted contract.  The
-full CI matrix, including Gate D2/E on the final reconciliation SHA, remains
-required before review or merge.
+Local CI-equivalent verification completed on the reconciliation branch:
+
+- all 1,359 tests passed using the repository development lockfile;
+- secret, maintenance-registry, governance, OpenAPI 1.2.15, and research
+  instrument validation passed;
+- shell syntax and ShellCheck passed for every CI-targeted script;
+- the wheel built successfully and, from a clean external environment, loaded
+  the packaged Gate D2, risk-free, and liquidity-risk resources and booted the
+  runtime migration set.
+
+GitHub still must run the protected 3.11/3.12 test matrix and merge-queue
+checks on the final PR SHA. Gate D2/E evidence is therefore review input, not
+an authorization to merge or enable live trading.
