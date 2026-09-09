@@ -3,7 +3,7 @@
   "$id": "risk_free_return.schema.json",
   "type": "object",
   "additionalProperties": false,
-  "required": ["currency", "forecast_horizon", "annualized_rate", "holding_period_risk_free_return", "day_count", "compounding", "as_of", "formula_version", "source", "quality", "uncertainty"],
+  "required": ["currency", "forecast_horizon", "annualized_rate", "holding_period_risk_free_return", "day_count", "compounding", "as_of", "available_at", "formula_version", "source", "dataset_manifest_id", "quality", "uncertainty"],
   "properties": {
     "currency": {"type": "string", "minLength": 1},
     "forecast_horizon": {"enum": [21, 63, 126, 252]},
@@ -12,8 +12,10 @@
     "day_count": {"const": "BUS/252"},
     "compounding": {"const": "EFFECTIVE_ANNUAL"},
     "as_of": {"type": "string", "format": "date-time"},
+    "available_at": {"type": "string", "format": "date-time"},
     "formula_version": {"type": "string", "minLength": 1},
     "source": {"type": "string", "minLength": 1},
+    "dataset_manifest_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "quality": {"const": "VALID"},
     "uncertainty": {"type": "string"}
   }

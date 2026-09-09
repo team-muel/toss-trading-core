@@ -55,7 +55,7 @@ def test_risk_free_curve_is_complete_point_in_time_and_availability_bound():
 
 
 def test_risk_free_curve_preserves_context_and_rejects_mixed_currency_or_horizon():
-    points = [RiskFreePoint(NOW, h, D("0.04"), "treasury", QualityStatus.VALID,
+    points = [RiskFreePoint(NOW, NOW, h, D("0.04"), "treasury", "a" * 64, QualityStatus.VALID,
                             currency="USD", uncertainty=D("0.001")) for h in HORIZONS]
     output = RiskFreeCurve(points).return_for(currency="USD", horizon=63, information_cutoff=NOW)
     assert output.holding_period_risk_free_return == annual_to_horizon(D("0.04"), 63)
@@ -74,12 +74,12 @@ def test_risk_free_curve_preserves_context_and_rejects_mixed_currency_or_horizon
 
 
 def test_risk_free_curve_rejects_mixed_currency_or_convention():
-    points = [RiskFreePoint(NOW, h, D("0.04"), "treasury", QualityStatus.VALID,
+    points = [RiskFreePoint(NOW, NOW, h, D("0.04"), "treasury", "a" * 64, QualityStatus.VALID,
                             currency="USD") for h in HORIZONS]
     with pytest.raises(DataQualityError, match="RISK_FREE_CURVE_CURRENCY_CONFLICT"):
         RiskFreeCurve((*points[:-1], replace(points[-1], currency="KRW")))
     with pytest.raises(ValueError, match="RISK_FREE_POINT_INVALID"):
-        RiskFreePoint(NOW, 21, D("0.04"), "treasury", QualityStatus.VALID,
+        RiskFreePoint(NOW, NOW, 21, D("0.04"), "treasury", "a" * 64, QualityStatus.VALID,
                       day_count="ACT/365F")
 
 def test_manual_capm_and_output_is_not_an_order():

@@ -47,6 +47,23 @@ class RiskFreeReturn:
                     self.annualized_rate, self.forecast_horizon)):
             raise DataQualityError("RISK_FREE_RETURN_INVALID")
 
+    def payload(self) -> dict[str, object]:
+        return {
+            "currency": self.currency,
+            "forecast_horizon": self.forecast_horizon,
+            "annualized_rate": str(self.annualized_rate),
+            "holding_period_risk_free_return": str(self.holding_period_risk_free_return),
+            "day_count": self.day_count,
+            "compounding": self.compounding,
+            "as_of": self.as_of.astimezone(timezone.utc).isoformat(),
+            "available_at": self.available_at.astimezone(timezone.utc).isoformat(),
+            "formula_version": self.formula_version,
+            "source": self.source,
+            "dataset_manifest_id": self.dataset_manifest_id,
+            "quality": self.quality.value,
+            "uncertainty": str(self.uncertainty),
+        }
+
 
 def annual_to_horizon(annual_return: Decimal, horizon_days: int) -> Decimal:
     if horizon_days not in HORIZONS or not annual_return.is_finite() or annual_return <= Decimal(-1):
