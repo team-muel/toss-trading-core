@@ -9,17 +9,18 @@ from pathlib import Path
 
 from asset_management.orchestration.runtime import ApplicationRuntime
 from asset_management.time.clock import FrozenClock
+from asset_management.config.resources import resource_root
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Validate the canonical READ_ONLY asset-management runtime."
     )
-    parser.add_argument("--config", type=Path, default=Path("config/application.yaml"))
+    parser.add_argument("--config", type=Path, default=resource_root() / "config/application.yaml")
     parser.add_argument(
-        "--policy-registry", type=Path, default=Path("config/policy_registry.yaml")
+        "--policy-registry", type=Path, default=resource_root() / "config/policy_registry.yaml"
     )
-    parser.add_argument("--schema-root", type=Path, default=Path("schemas"))
+    parser.add_argument("--schema-root", type=Path, default=resource_root() / "schemas")
     parser.add_argument(
         "--as-of",
         default="2026-09-04T00:00:00+00:00",

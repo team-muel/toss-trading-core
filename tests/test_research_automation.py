@@ -178,34 +178,19 @@ class ResearchAutomationTest(unittest.TestCase):
                     expected,
                     relative_path,
                 )
+            # Offline interpretation remains testable without retaining the
+            # old Vertex/Gmail application driver as a runnable command.
+            from research_platform.interpretation import build_research_evidence, deterministic_interpretation, save_interpretation
             interpretation_path = root / "runtime-interpretation.json"
-            output = io.StringIO()
-            with patch.dict(
-                "os.environ",
-                {"RESEARCH_INTERPRETATION_ENABLED": "0"},
-            ), redirect_stdout(output):
-                exit_code = reporting_main(
-                    [
-                        "interpret",
-                        "--summary",
-                        str(summary_path),
-                        "--output",
-                        str(interpretation_path),
-                    ]
-                )
-            self.assertEqual(exit_code, 0)
-            self.assertEqual(
-                json.loads(output.getvalue())["source"],
-                "deterministic_fallback",
-            )
-            saved_interpretation = json.loads(
-                interpretation_path.read_text(encoding="utf-8")
-            )
-            self.assertEqual(
-                saved_interpretation["current_run_id"],
-                root.name,
-            )
-            self.assertTrue(saved_interpretation["evidence_digest"])
+            evidence = build_research_evidence(summary)
+            interpretation = deterministic_interpretation(summary, evidence=evidence,
+                                                         failure_reason="StandaloneRuntimeRetired")
+            save_interpretation(interpretation, interpretation_path)
+            saved = json.loads(interpretation_path.read_text())
+            self.assertEqual(saved["current_run_id"], root.name)
+            self.assertTrue(saved["evidence_digest"])
+            with self.assertRaisesRegex(SystemExit, "retired"):
+                reporting_main(["interpret", "--summary", str(summary_path), "--output", str(interpretation_path)])
             original_summary = summary_path.read_text(encoding="utf-8")
             summary_path.write_text(
                 original_summary.replace('"ready_for_upload":true', '"ready_for_upload":false'),
@@ -257,199 +242,25 @@ class ResearchAutomationTest(unittest.TestCase):
                     provider_states={"toss": "collected"},
                 )
 
-    def test_checked_in_gcp_automation_contract(self):
-        required = [
-            "cloudbuild.yaml",
-            "scripts/run_research_automation_gcp.sh",
-            "scripts/provision_research_automation_gcp.sh",
-            "scripts/install_research_automation_vm.sh",
-            "deploy/systemd/toss-research-automation@.service",
-            "deploy/systemd/toss-research-daily.timer",
-            "deploy/systemd/toss-research-weekly.timer",
-            "deploy/systemd/toss-research-prune.service",
-            "deploy/systemd/toss-research-prune.timer",
-            "scripts/prune_research_runtime.sh",
-            "deploy/storage/research-lifecycle.json",
-            "deploy/monitoring-research/log-metrics.yaml",
-            "deploy/monitoring-research/research-reporting-upload-failed.yaml",
-            "deploy/monitoring-research/research-interpretation-failed.yaml",
-            "deploy/monitoring-dashboard/research-visual-report.json",
-            "deploy/bigquery/research_run_summary_schema.json",
-            "deploy/bigquery/latest_run_summaries.sql",
-        ]
-        for value in required:
-            self.assertTrue(Path(value).is_file(), value)
-
-        runner = Path("scripts/run_research_automation_gcp.sh").read_text(
-            encoding="utf-8"
-        )
-        self.assertIn("flock -n 9", runner)
-        self.assertIn("flock -n 8", runner)
-        self.assertIn("flock -u 8", runner)
-        self.assertIn("TOSS_API_LOCK_PATH", runner)
-        self.assertIn("research_validate_bars", runner)
-        self.assertIn("--require-adjustment total_return", runner)
-        self.assertIn("research_backtest", runner)
-        self.assertIn("--align-common-history", runner)
-        self.assertIn("--validation-protocol", runner)
-        self.assertIn("research_plan_hypotheses", runner)
-        self.assertIn("autonomous_research_policy.json", runner)
-        self.assertIn("research_hypothesis_planning_ok", runner)
-        self.assertIn("research_hypothesis_planning_failed", runner)
-        self.assertIn("--hypothesis-plan", runner)
-        self.assertIn("research_evaluate_hypotheses", runner)
-        self.assertIn("research_hypothesis_evaluation_ok", runner)
-        self.assertIn("research_hypothesis_evaluation_failed", runner)
-        self.assertIn("--hypothesis-evaluation", runner)
-        self.assertIn("--prospective-cutoff", runner)
-        self.assertIn("--as-of-date", runner)
-        self.assertIn("RESEARCH_HYPOTHESIS_MAX_NEW_OVERRIDE", runner)
-        self.assertIn("research_strategy_artifact_ok", runner)
-        self.assertIn("research_strategy_promotion_pending", runner)
-        self.assertIn("research_strategy_promotion_blocked", runner)
-        self.assertIn(
-            'STRATEGY_METHODOLOGY_STATE}" == "collecting"',
-            runner,
-        )
-        self.assertIn("research_weekly_automation_ok", runner)
-        self.assertIn("research_weekly_stale", runner)
-        self.assertIn("strategy-backtest.json", runner)
-        self.assertIn("research_automation verify", runner)
-        self.assertIn(
-            '> "${RUNTIME_ROOT}/last-verification.json"',
-            runner,
-        )
-        self.assertNotIn(
-            '> "${REPORT_DIR}/verification.json"',
-            runner,
-        )
-        self.assertIn("research_reporting event", runner)
-        self.assertIn("upload-bigquery", runner)
-        self.assertIn("research_upload_gcs", runner)
-        self.assertIn(
-            '--destination-uri "${GCS_URI%/}/runs/${RUN_ID}"',
-            runner,
-        )
-        self.assertIn("last-gcs-upload.json", runner)
-        self.assertNotIn("--recursive", runner)
-        self.assertNotIn("gcloud storage rsync", runner)
-        self.assertNotIn(
-            '"${GCS_URI%/}/status/latest-${RUN_MODE}.json"',
-            runner,
-        )
-        self.assertNotIn(
-            '"${GCS_URI%/}/reports/latest-${RUN_MODE}.json"',
-            runner,
-        )
-        self.assertNotIn("TOSS_ACCOUNT_SEQ_SECRET", runner)
-        self.assertIn("RESEARCH_TIINGO_LICENSE_ACCEPTED", runner)
-        self.assertIn("RESEARCH_FRED_SERIES_RIGHTS_APPROVED", runner)
-        self.assertIn(
-            '--cache-dir "${RUNTIME_ROOT}/fred-vintage-cache"', runner
-        )
-        self.assertIn("RESEARCH_SEC_CONTACT_APPROVED", runner)
-        self.assertIn(
-            "optional_secret_rejected env=${env_name} "
-            "reason=invalid_control_character",
-            runner,
-        )
-        self.assertIn("research_reporting \\", runner)
-        self.assertIn("research_email_ok", runner)
-        self.assertIn("research_email_failed", runner)
-        self.assertIn("research_interpretation_ok", runner)
-        self.assertIn("research_interpretation_failed", runner)
-        self.assertIn("research_reporting \\\n    interpret", runner)
-        self.assertIn("RESEARCH_INTERPRETATION_MODEL", runner)
-        self.assertIn("PREVIOUS_SUMMARY_ARGS", runner)
-        self.assertIn("GMAIL_OAUTH_REFRESH_TOKEN", runner)
-        self.assertIn("RESEARCH_EMAIL_RECIPIENT", runner)
-        self.assertIn("last-email-delivery.json", runner)
-        self.assertIn('readlink -f "${ROOT_DIR}"', runner)
-        self.assertIn('^[0-9a-f]{7,40}$', runner)
-        self.assertIn('CODE_REVISION="${RELEASE_REVISION}"', runner)
-
-        provisioner = Path(
-            "scripts/provision_research_automation_gcp.sh"
-        ).read_text(encoding="utf-8")
-        self.assertIn("aiplatform.googleapis.com", provisioner)
-        self.assertIn("roles/aiplatform.user", provisioner)
-
-        installer = Path(
-            "scripts/install_research_automation_vm.sh"
-        ).read_text(encoding="utf-8")
-        self.assertNotIn("toss-foundation.service", installer)
-        self.assertNotIn("toss-foundation.timer", installer)
-        self.assertNotIn("toss-paper-operation.service", installer)
-        self.assertNotIn("toss-paper-operation.timer", installer)
-
-        research_service = Path(
-            "deploy/systemd/toss-research-automation@.service"
-        ).read_text(encoding="utf-8")
-        self.assertIn(
-            "Environment=PATH=/home/seoje/toss-trading/current/.venv/bin:"
-            "/snap/google-cloud-cli/current/bin:",
-            research_service,
-        )
-        self.assertNotIn(":/snap/bin:", research_service)
-        self.assertNotIn("TOSS_ACCOUNT_SEQ_SECRET", research_service)
-        self.assertNotIn("TOSS_BROKER_BASE_URL_SECRET", research_service)
-
-        provisioner = Path(
-            "scripts/provision_research_automation_gcp.sh"
-        ).read_text(encoding="utf-8")
-        self.assertIn("roles/storage.objectCreator", provisioner)
-        self.assertIn("remove-iam-policy-binding", provisioner)
-        self.assertIn("gmail.googleapis.com", provisioner)
-        self.assertIn(
-            "toss-research-gmail-oauth-refresh-token",
-            provisioner,
-        )
-
-        cloudbuild = Path("cloudbuild.yaml").read_text(encoding="utf-8")
-        self.assertIn(
-            "test -f src/asset_management/toss/runtime/rate_limit.py",
-            cloudbuild,
-        )
-        self.assertIn("apt-get install", cloudbuild)
-        self.assertIn("shellcheck", cloudbuild)
-        self.assertIn("id: upload-wheel", cloudbuild)
-        self.assertIn("gcloud auth print-access-token", cloudbuild)
-        self.assertIn("storage.googleapis.com/upload", cloudbuild)
-        self.assertIn(
-            "name=builds%2F${BUILD_ID}%2F${wheel_name}",
-            cloudbuild,
-        )
-        self.assertIn(
-            "serviceAccount: "
-            "projects/toss-trading-core-lab/serviceAccounts/"
-            "toss-research-build@toss-trading-core-lab."
-            "iam.gserviceaccount.com",
-            cloudbuild,
-        )
-
-        provisioner = Path(
-            "scripts/provision_research_automation_gcp.sh"
-        ).read_text(encoding="utf-8")
-        self.assertIn("BUILD_SERVICE_ACCOUNT_NAME", provisioner)
-        self.assertIn("roles/logging.logWriter", provisioner)
-        self.assertIn("CLOUD_BUILD_SOURCE_BUCKET", provisioner)
-        self.assertIn("roles/storage.objectViewer", provisioner)
-        self.assertIn("BuildArtifactsPrefix", provisioner)
-        self.assertIn(
-            "objects/builds/",
-            provisioner,
-        )
-        self.assertIn("bigquery.googleapis.com", provisioner)
-        self.assertIn("roles/bigquery.dataEditor", provisioner)
-        self.assertIn("render_research_dashboard.py", provisioner)
-        self.assertIn("monitoring dashboards", provisioner)
-        self.assertIn("monitoring policies update", provisioner)
-
-        history_runner = Path(
-            "scripts/run_toss_history_collection_gcp.sh"
-        ).read_text(encoding="utf-8")
-        self.assertIn("TOSS_API_LOCK_PATH", history_runner)
-        self.assertIn("flock -n 8", history_runner)
+    def test_standalone_gcp_runtime_is_retired_not_reprovisioned(self):
+        import subprocess
+        import tomllib
+        for name in ("install_research_automation_vm.sh", "provision_research_automation_gcp.sh",
+                     "run_research_automation_gcp.sh", "run_stock_recommendations_gcp.sh",
+                     "bootstrap_research_vm.sh", "prune_research_runtime.sh",
+                     "run_toss_history_collection_gcp.sh", "audit_active_research_release.sh",
+                     "check_research_identity_gcp.sh"):
+            result = subprocess.run(["bash", str(Path("scripts")/name)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 78, name)
+            self.assertIn("retired", result.stderr)
+        units = list(Path("deploy/systemd").glob("*.service")) + list(Path("deploy/systemd").glob("*.timer"))
+        self.assertFalse(units)
+        entrypoints = tomllib.loads(Path("pyproject.toml").read_text())["project"]["scripts"]
+        for name in ("toss-research-automation", "toss-research-reporting",
+                     "toss-research-plan-hypotheses", "toss-research-recommend-stocks"):
+            self.assertNotIn(name, entrypoints)
+        self.assertIn("toss-runtime-validate", entrypoints)
+        self.assertTrue(Path("cloudbuild.yaml").is_file())
 
 
 if __name__ == "__main__":

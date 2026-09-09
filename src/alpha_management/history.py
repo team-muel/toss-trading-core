@@ -163,6 +163,7 @@ def simulate_history(
     settings: AlphaSimulationSettings,
     *,
     forward_returns: Mapping[str, Mapping[datetime, float | None]] | None = None,
+    evaluated_scores: Sequence[Mapping[str, float | None]] | None = None,
 ) -> HistorySimulationResult:
     """Evaluate delay and decay over explicitly ordered trading sessions.
 
@@ -173,6 +174,18 @@ def simulate_history(
 
     if not sessions:
         raise ValueError("sessions cannot be empty")
+    # The canonical research runner evaluates one full PIT prefix at a time.
+    # Retain only its last raw cross-section and reuse this exact simulation
+    # kernel; a supplied score is research input, never an approval or forecast.
+    if evaluated_scores is not None:
+        if len(evaluated_scores) != len(sessions):
+            raise ValueError("evaluated score/session count mismatch")
+        for session, scores in zip(sessions, evaluated_scores):
+            if set(scores) != set(session.instrument_ids):
+                raise ValueError("evaluated score universe mismatch")
+            if any(isinstance(value, bool) or (value is not None and not isfinite(float(value)))
+                   for value in scores.values()):
+                raise ValueError("evaluated scores must be finite numeric values or unavailable")
     effective_times = [session.effective_time_utc for session in sessions]
     if effective_times != sorted(effective_times) or len(set(effective_times)) != len(effective_times):
         raise ValueError("sessions must be strictly increasing by effective time")
@@ -188,7 +201,12 @@ def simulate_history(
             source = None
         else:
             source = sessions[source_index]
-            raw = _last_cross_section(expression, source, source.instrument_ids)
+            raw = (_last_cross_section(expression, source, source.instrument_ids)
+                   if evaluated_scores is None else {
+                       instrument: (None if evaluated_scores[source_index][instrument] is None
+                                    else float(evaluated_scores[source_index][instrument]))
+                       for instrument in source.instrument_ids
+                   })
             available_raw = {
                 instrument_id: float(value)
                 for instrument_id, value in raw.items()

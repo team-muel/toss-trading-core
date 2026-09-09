@@ -200,16 +200,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
-    result = upload_tree(
-        source_dir=args.source_dir,
-        destination_uri=args.destination_uri,
-        aliases=args.alias,
-        workers=args.workers,
-    )
-    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return 0
+def main(argv: list[str] | None = None) -> int:
+    """The old standalone application entry point is intentionally retired."""
+    raise SystemExit("Standalone research execution/delivery retired by AMA-156; use canonical orchestration.")
 
 
 if __name__ == "__main__":

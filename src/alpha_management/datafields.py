@@ -133,6 +133,26 @@ class PointInTimeDataSource:
             )
         ]
 
+    def observation_evidence(self, field: str, *, instrument_id: str,
+                             context: AsOfContext, dataset_manifest_id: str):
+        """Read typed observations before the numeric/group projection drops metadata."""
+        context = require_as_of_context(context)
+        manifest_id = self._pinned_manifest_id(dataset_manifest_id, context)
+        manifest, _ = self.datasets.read(manifest_id)
+        if instrument_id not in self.universes.versions("INSTRUMENT", context):
+            raise DataQualityError("ALPHA_INSTRUMENT_HISTORY_MISSING")
+        observations = self.observations.series(entity_id=instrument_id, field=field,
+            context=context, dataset_manifest_id=manifest_id)
+        for observation in observations:
+            if observation.schema_version != manifest.schema_version:
+                raise DataQualityError("ALPHA_OBSERVATION_SCHEMA_MISMATCH")
+            if observation.dataset_manifest_id != manifest_id:
+                raise DataQualityError("ALPHA_OBSERVATION_MANIFEST_MISMATCH")
+            context.require_known_at(observation.available_at, label="alpha observation")
+            if observation.event_time > context.as_of_utc:
+                raise DataQualityError("ALPHA_OBSERVATION_EVENT_AFTER_ASOF")
+        return observations
+
     def time_series_observations(
         self,
         field: str,
@@ -166,6 +186,8 @@ class PointInTimeDataSource:
 
 
 def _number(value: NumericInput) -> float:
+    if isinstance(value, bool):
+        raise ValueError("boolean values are not numeric datafields")
     number = float(value)
     if not isfinite(number):
         raise ValueError("alpha datafield values must be finite")

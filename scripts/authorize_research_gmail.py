@@ -235,49 +235,7 @@ def _receive_authorization_code(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Authorize Gmail send-only access and store credentials in GCP"
-    )
-    parser.add_argument("--client-json", type=Path, required=True)
-    parser.add_argument("--project-id", required=True)
-    parser.add_argument("--email", required=True)
-    parser.add_argument(
-        "--no-browser",
-        action="store_true",
-        help="Print the authorization URL instead of opening the default browser",
-    )
-    args = parser.parse_args()
-
-    client = _load_oauth_client(args.client_json)
-    state = secrets.token_urlsafe(32)
-    code_verifier, code_challenge = _pkce_pair()
-    code, redirect_uri = _receive_authorization_code(
-        client_id=client.client_id,
-        state=state,
-        code_challenge=code_challenge,
-        email=args.email,
-        open_browser=not args.no_browser,
-    )
-    refresh_token = _exchange_code(
-        client=client,
-        code=code,
-        code_verifier=code_verifier,
-        redirect_uri=redirect_uri,
-    )
-
-    values = {
-        "client_id": client.client_id,
-        "client_secret": client.client_secret,
-        "refresh_token": refresh_token,
-    }
-    for key, secret_name in SECRET_NAMES.items():
-        _store_secret(args.project_id, secret_name, values[key])
-
-    print(
-        "Gmail send-only authorization is stored in Secret Manager; "
-        "no credential values were printed."
-    )
-    return 0
+    raise SystemExit("Standalone research Gmail bootstrap retired; no credential changes performed.")
 
 
 if __name__ == "__main__":
