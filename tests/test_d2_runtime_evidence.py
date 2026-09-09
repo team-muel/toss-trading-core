@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.pricing import RiskFreeCurve, RiskFreePoint
 from asset_management.quality.models import QualityStatus
 from asset_management.domain.economics import CurrencyBasis
@@ -14,12 +15,20 @@ from asset_management.validation import (
 
 
 NOW = datetime(2026, 9, 9, tzinfo=timezone.utc)
-MANIFEST = "a" * 64
+LICENSE = "purpose=research;redistribution=forbidden;retention=project"
 
 
-def curve() -> RiskFreeCurve:
+def manifest(store: ImmutableDatasetStore, *, source: str, dataset: str) -> str:
+    return store.write(
+        {"evidence": dataset}, layer="bronze", source=source, dataset=dataset,
+        schema_version="d2-evidence@1", retrieved_at=NOW, available_at=NOW,
+        provider_timestamp=NOW, license_tag=LICENSE, code_revision="d2-evidence@1",
+        request_hash="a" * 64, quality_status="RAW").manifest_id
+
+
+def curve(manifest_id: str) -> RiskFreeCurve:
     return RiskFreeCurve(tuple(
-        RiskFreePoint(NOW, NOW, horizon, Decimal(".04"), "fred-alfred", MANIFEST,
+        RiskFreePoint(NOW, NOW, horizon, Decimal(".04"), "fred-alfred", manifest_id,
                       QualityStatus.VALID, "USD", "BUS/252", "EFFECTIVE_ANNUAL",
                       "risk-free-curve@2", Decimal(".001"))
         for horizon in (21, 63, 126, 252)
@@ -32,33 +41,37 @@ def test_runtime_evidence_requires_artifacts_and_does_not_promote_missing_checks
     assert all(not check.passed for check in result.checks.values())
 
 
-def test_risk_free_runtime_evidence_accepts_the_approved_usd_curve_only():
+def test_risk_free_runtime_evidence_accepts_the_approved_usd_curve_only(tmp_path):
+    store = ImmutableDatasetStore(tmp_path)
+    evidence_id = manifest(store, source="fred-alfred", dataset="risk-free-curve")
     result = assemble_d2_runtime_evidence(
-        risk_free=RiskFreeRuntimeEvidence(curve(), "USD", NOW), factor_risk=None, model_lineage=None)
+        risk_free=RiskFreeRuntimeEvidence(curve(evidence_id), "USD", NOW, store), factor_risk=None, model_lineage=None)
     check = result.checks["RISK_FREE_CURRENCY_HORIZON_COMPOUNDING_VERIFIED"]
     assert check.passed
-    assert check.artifact_ids == (f"dataset-manifest:{MANIFEST}",)
+    assert check.artifact_ids == (f"dataset-manifest:{evidence_id}",)
     denied = assemble_d2_runtime_evidence(
-        risk_free=RiskFreeRuntimeEvidence(curve(), "KRW", NOW), factor_risk=None, model_lineage=None)
+        risk_free=RiskFreeRuntimeEvidence(curve(evidence_id), "KRW", NOW, store), factor_risk=None, model_lineage=None)
     assert not denied.checks["RISK_FREE_CURRENCY_HORIZON_COMPOUNDING_VERIFIED"].passed
     assert denied.failure_reasons["RISK_FREE_CURRENCY_HORIZON_COMPOUNDING_VERIFIED"] == "RISK_FREE_CURRENCY_NOT_APPROVED"
 
 
-def test_factor_evidence_requires_psd_covariance_and_the_specific_risk_floor():
+def test_factor_evidence_requires_psd_covariance_and_the_specific_risk_floor(tmp_path):
+    store = ImmutableDatasetStore(tmp_path)
+    evidence_id = manifest(store, source="tiingo-eod", dataset="daily-prices")
     policy = SpecificRiskPolicy(20, Decimal(".01"), Decimal(".25"), Decimal(".10"), "specific-risk@1")
     valid = FactorRiskAssessment(("A",), (Decimal(".04"),), (Decimal(".01"),),
                                  (Decimal(".05"),), ((Decimal(".05"),),), CurrencyBasis.BASE,
                                  NOW, "specific-risk@1", Decimal(0), Decimal(0))
     result = assemble_d2_runtime_evidence(
         risk_free=None,
-        factor_risk=FactorRiskRuntimeEvidence(valid, policy, NOW, NOW, (MANIFEST,)), model_lineage=None)
+        factor_risk=FactorRiskRuntimeEvidence(valid, policy, NOW, NOW, (evidence_id,), store), model_lineage=None)
     assert result.checks["FACTOR_SPECIFIC_RISK_DECOMPOSITION_AND_FLOOR_VERIFIED"].passed
     below_floor = FactorRiskAssessment(("A",), (Decimal(".04"),), (Decimal(".001"),),
                                        (Decimal(".041"),), ((Decimal(".041"),),), CurrencyBasis.BASE,
                                        NOW, "specific-risk@1", Decimal(0), Decimal(0))
     denied = assemble_d2_runtime_evidence(
         risk_free=None,
-        factor_risk=FactorRiskRuntimeEvidence(below_floor, policy, NOW, NOW, (MANIFEST,)), model_lineage=None)
+        factor_risk=FactorRiskRuntimeEvidence(below_floor, policy, NOW, NOW, (evidence_id,), store), model_lineage=None)
     assert denied.failure_reasons["FACTOR_SPECIFIC_RISK_DECOMPOSITION_AND_FLOOR_VERIFIED"] == "FACTOR_RISK_DECOMPOSITION_INVALID"
 
 

@@ -3,12 +3,13 @@
 The three checks initially blocked at Gate D2 are derived from artifacts, not
 caller-provided booleans:
 
-- USD risk-free evidence requires one immutable FRED/ALFRED curve manifest for
-  all 21, 63, 126, and 252 business-day horizons. Each point must be available
-  at the requested information cutoff and use the approved currency,
+- USD risk-free evidence requires one immutable FRED/ALFRED bronze
+  `risk-free-curve` manifest for all 21, 63, 126, and 252 business-day
+  horizons. The manifest and each point must be available at the requested
+  information cutoff and use the approved currency,
   `BUS/252`, and `EFFECTIVE_ANNUAL` conventions.
 - Factor/specific-risk evidence requires a USD-base assessment with a complete
-  factor source manifest set, a known availability time, PSD covariance, and
+  immutable Tiingo EOD source-manifest set, a known availability time, PSD covariance, and
   the validated specific-risk floor/decomposition already enforced by the
   assessment contract.
 - Model-lineage evidence requires an active registry authorization, a matching

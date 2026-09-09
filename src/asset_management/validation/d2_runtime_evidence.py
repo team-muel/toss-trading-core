@@ -40,6 +40,7 @@ class RiskFreeRuntimeEvidence:
     curve: RiskFreeCurve
     currency: str
     information_cutoff: datetime
+    store: ImmutableDatasetStore
 
     def check(self) -> CheckEvidence:
         cutoff = _aware(self.information_cutoff, "RISK_FREE_CUTOFF_INVALID")
@@ -50,8 +51,15 @@ class RiskFreeRuntimeEvidence:
                         for horizon in (21, 63, 126, 252))
         if any(item.source != "fred-alfred" for item in returns):
             raise ValueError("RISK_FREE_SOURCE_NOT_APPROVED")
-        return CheckEvidence(True, _manifest_evidence(
-            tuple(sorted({item.dataset_manifest_id for item in returns})), reason="RISK_FREE_MANIFEST_INVALID"))
+        manifests = _manifest_evidence(
+            tuple(sorted({item.dataset_manifest_id for item in returns})), reason="RISK_FREE_MANIFEST_INVALID")
+        manifest_id = returns[0].dataset_manifest_id
+        manifest, _ = self.store.read(manifest_id)
+        available_at = _aware(datetime.fromisoformat(manifest.available_at), "RISK_FREE_MANIFEST_TIME_INVALID")
+        if (manifest.layer != "bronze" or manifest.source != "fred-alfred" or
+                manifest.dataset != "risk-free-curve" or available_at > cutoff):
+            raise ValueError("RISK_FREE_MANIFEST_CONTEXT_INVALID")
+        return CheckEvidence(True, manifests)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +69,7 @@ class FactorRiskRuntimeEvidence:
     information_cutoff: datetime
     available_at: datetime
     source_manifest_ids: tuple[str, ...]
+    store: ImmutableDatasetStore
 
     def check(self) -> CheckEvidence:
         cutoff = _aware(self.information_cutoff, "FACTOR_RISK_CUTOFF_INVALID")
@@ -72,8 +81,14 @@ class FactorRiskRuntimeEvidence:
                 any(value < self.specific_risk_policy.residual_variance_floor
                     for value in self.assessment.specific_variance)):
             raise ValueError("FACTOR_RISK_DECOMPOSITION_INVALID")
-        return CheckEvidence(True, _manifest_evidence(
-            self.source_manifest_ids, reason="FACTOR_RISK_MANIFEST_INVALID"))
+        manifests = _manifest_evidence(self.source_manifest_ids, reason="FACTOR_RISK_MANIFEST_INVALID")
+        for manifest_id in self.source_manifest_ids:
+            manifest, _ = self.store.read(manifest_id)
+            manifest_available_at = _aware(
+                datetime.fromisoformat(manifest.available_at), "FACTOR_RISK_MANIFEST_TIME_INVALID")
+            if manifest.source != "tiingo-eod" or manifest_available_at > cutoff:
+                raise ValueError("FACTOR_RISK_MANIFEST_CONTEXT_INVALID")
+        return CheckEvidence(True, manifests)
 
 
 @dataclass(frozen=True, slots=True)
