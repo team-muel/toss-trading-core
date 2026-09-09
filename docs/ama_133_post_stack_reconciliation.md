@@ -47,3 +47,9 @@ Local CI-equivalent verification completed on the reconciliation branch:
 GitHub still must run the protected 3.11/3.12 test matrix and merge-queue
 checks on the final PR SHA. Gate D2/E evidence is therefore review input, not
 an authorization to merge or enable live trading.
+
+The recorded Gate D2 acceptance artifact intentionally evaluates to `FAIL`:
+three required checks have no verified evidence and must continue to block M5
+execution. Gate E's recorded contract remains covered by its passing and
+failure-path tests, but its historical evidence artifact is not a
+branch-SHA-specific production approval.
