@@ -59,7 +59,9 @@ class RiskFreeRuntimeEvidence:
         manifest, _ = self.store.read(manifest_id)
         available_at = _aware(datetime.fromisoformat(manifest.available_at), "RISK_FREE_MANIFEST_TIME_INVALID")
         if (manifest.layer != "bronze" or manifest.source != "fred-alfred" or
-                manifest.dataset != "risk-free-curve" or available_at > cutoff):
+                manifest.dataset != "risk-free-curve" or
+                manifest.schema_version != "fred-risk-free-curve@1" or
+                manifest.quality_status != "RAW" or available_at > cutoff):
             raise ValueError("RISK_FREE_MANIFEST_CONTEXT_INVALID")
         rebuilt = materialize_usd_fred_risk_free_curve(
             store=self.store, manifest_id=manifest_id, information_cutoff=cutoff)
@@ -102,7 +104,6 @@ class FactorRiskRuntimeEvidence:
         # yet. Old v1 receipts and new mechanism-only v2 receipts both stay
         # blocked rather than allowing an arbitrary Tiingo artifact to pass D2.
         raise ValueError("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
-
 
 
 @dataclass(frozen=True, slots=True)
