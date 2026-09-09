@@ -36,7 +36,7 @@ stack because it is based on `7b9468951feef0ae398be03e3244f4d81b197085`.
 
 Local CI-equivalent verification completed on the reconciliation branch:
 
-- all 1,359 tests passed using the repository development lockfile;
+- all 1,361 tests passed using the repository development lockfile;
 - secret, maintenance-registry, governance, OpenAPI 1.2.15, and research
   instrument validation passed;
 - shell syntax and ShellCheck passed for every CI-targeted script;
@@ -47,6 +47,10 @@ Local CI-equivalent verification completed on the reconciliation branch:
 GitHub still must run the protected 3.11/3.12 test matrix and merge-queue
 checks on the final PR SHA. Gate D2/E evidence is therefore review input, not
 an authorization to merge or enable live trading.
+
+Final-head review also corrected capital-flow supersession handling: an active
+correction now replaces, rather than double-counts, the prior planned flow;
+missing or ambiguous supersession evidence fails closed.
 
 The recorded Gate D2 acceptance artifact intentionally evaluates to `FAIL`:
 three required checks have no verified evidence and must continue to block M5
