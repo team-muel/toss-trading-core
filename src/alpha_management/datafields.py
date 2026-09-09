@@ -166,6 +166,8 @@ class PointInTimeDataSource:
 
 
 def _number(value: NumericInput) -> float:
+    if isinstance(value, bool):
+        raise ValueError("boolean values are not numeric datafields")
     number = float(value)
     if not isfinite(number):
         raise ValueError("alpha datafield values must be finite")
