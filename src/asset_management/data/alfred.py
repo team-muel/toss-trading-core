@@ -18,6 +18,7 @@ SOURCE = "fred-alfred"
 DATASET = "series-observation-revisions"
 SCHEMA_VERSION = "alfred-vintages-v1"
 SERIES = frozenset({"DGS2", "DGS10", "CPIAUCSL", "UNRATE", "FEDFUNDS"})
+RAW_SCHEMA = {"observations": "array"}
 ROW_SCHEMA = {
     "provider_entity_id": "string", "observation_date": "string", "value": "string",
     "realtime_start": "string", "realtime_end": "string", "value_status": "string",
@@ -119,7 +120,7 @@ def ingest_alfred(batch: ProviderBatch, store: ImmutableDatasetStore) -> Ingesti
         retrieved_at=batch.received_at, available_at=batch.available_at,
         provider_timestamp=batch.provider_timestamp, license_tag=batch.license_tag,
         code_revision=batch.code_revision, schema_version=SCHEMA_VERSION,
-        raw_schema={"observations": "array"}, schema=ROW_SCHEMA,
+        raw_schema=RAW_SCHEMA, schema=ROW_SCHEMA,
         instrument_mapping={series_id: series_id}, normalize=normalize,
         status_code=batch.status_code, provider_entity_field="provider_entity_id",
         canonical_entity_field="series_id",

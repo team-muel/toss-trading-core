@@ -22,7 +22,7 @@ from .dsl import (
     RepositoryPanelResolver, _reference_period_key, compile_expression,
 )
 from .expression import AlphaSimulationSettings
-from .history import HistoricalSession, HistorySimulationResult, simulate_history, _last_cross_section
+from .history import HistoricalSession, HistoryPoint, HistorySimulationResult, simulate_history, _last_cross_section
 from .input_journal import InputJournal, iter_snapshots
 from asset_management.domain.errors import DataQualityError
 
@@ -366,17 +366,46 @@ class ResearchRun:
     evidence_json: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.result, HistorySimulationResult) or not isinstance(self.evidence_json, str):
+        if type(self.result) is not HistorySimulationResult or not isinstance(self.evidence_json, str):
             raise ValueError("research result and evidence types are invalid")
+        if self.result.metrics is not None:
+            raise ValueError("mechanism-only research receipts cannot carry performance metrics")
+        # A frozen dataclass can still contain caller-owned lists. Copy both
+        # sequence axes and rebuild each point's immutable mapping snapshots.
+        points = tuple(self.result.points)
+        if not points or any(type(point) is not HistoryPoint for point in points):
+            raise ValueError("canonical research history points required")
+        for point in points:
+            for panel in (point.raw, point.base_weights, point.weights):
+                if any(value is not None and (type(value) not in (int, float) or not isfinite(value))
+                       for value in panel.values()):
+                    raise ValueError("research scores must be finite numeric values or unavailable")
+        result = replace(self.result, points=tuple(
+            replace(point, dataset_manifest_ids=tuple(point.dataset_manifest_ids)) for point in points))
+        object.__setattr__(self, "result", result)
         try:
             payload = json.loads(self.evidence_json)
         except (TypeError, json.JSONDecodeError) as exc:
             raise ValueError("research evidence is not valid JSON") from exc
         if not isinstance(payload, dict) or payload.get("schema_version") != "expression-research-run-v2":
             raise ValueError("unsupported research receipt version")
-        history = _history_payload(self.result)
-        if payload.get("result") != history or payload.get("result_hash") != _hash(history):
+        if payload.get("validation_scope") != "MECHANISM_ONLY":
+            raise ValueError("research receipt scope must remain MECHANISM_ONLY")
+        history = _history_payload(result)
+        # JSON identity, unlike Python equality, distinguishes True from 1.0.
+        if _json(payload.get("result")) != _json(history) or payload.get("result_hash") != _hash(history):
             raise ValueError("research result/evidence mismatch")
+        spec = payload.get("spec")
+        if (not isinstance(spec, dict) or payload.get("spec_hash") != _hash(spec) or
+                spec.get("expression") != history["expression"] or
+                spec.get("expression_hash") != history["expression_hash"] or
+                spec.get("settings") != history["settings"] or
+                spec.get("output_semantic_type") != "SIGNAL_VALUE" or
+                spec.get("return_basis") != "NOT_A_RETURN"):
+            raise ValueError("research spec/evidence mismatch")
+        status = "COMPUTED" if any(value is not None for point in points for value in point.raw.values()) else "NO_OBSERVATIONS"
+        if payload.get("result_status") != status:
+            raise ValueError("research result status mismatch")
 
     @property
     def evidence_hash(self) -> str:

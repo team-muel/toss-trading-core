@@ -71,19 +71,36 @@ def systemd_plan(*, run: Callable = command, root: Path = Path("/etc/systemd/sys
     unknown = sorted(set(candidates) - UNITS)
     if unknown:
         raise ValueError(f"unrecognized retired units require manual review: {unknown}")
-    retained_files = {}
+    retained_files, fragment_paths = {}, {}
     for name in candidates:
         path = root/name
         if path.exists() or path.is_symlink():
             retained_files[name] = _file_identity(path)
         fragment = run(["systemctl", "show", name, "--property=FragmentPath", "--value"]).strip()
-        if fragment and fragment != str(path):
+        allowed_fragments = {str(path)}
+        if "@" in name and not name.endswith("@.service"):
+            template = name.split("@", 1)[0] + "@.service"
+            if template in UNITS:
+                allowed_fragments.add(str(root/template))
+        if fragment and fragment not in allowed_fragments:
             raise ValueError(f"unit outside reviewed systemd root: {name}")
+        if fragment:
+            # Instantiated services normally load the template, not an
+            # instance-specific file. Hash that actual fragment for review.
+            fragment_path = Path(fragment)
+            retained_files[fragment_path.name] = _file_identity(fragment_path)
+        elif name not in retained_files:
+            raise ValueError(f"unit has no reviewed file identity: {name}")
+        # A main fragment hash does not cover drop-in overrides. They require
+        # manual review rather than an incomplete automatic retirement plan.
+        if run(["systemctl", "show", name, "--property=DropInPaths", "--value"]).strip():
+            raise ValueError(f"unit drop-ins require manual review: {name}")
+        fragment_paths[name] = fragment
     # Stop timers before services. Templates are unlinked after their known
     # instances are stopped; never ask systemctl to stop an abstract template.
     stop = sorted((n for n in candidates if "@.service" not in n), key=lambda n: (not n.endswith(".timer"), n))
     return {"schema": "legacy-retirement-plan-v1", "kind": "systemd", "host": host or socket.gethostname(),
-            "root": str(root), "units": stop, "unit_files": retained_files,
+            "root": str(root), "units": stop, "unit_files": retained_files, "fragment_paths": fragment_paths,
             "commands": [["systemctl", "disable", "--now", n] for n in stop],
             "excluded": ["account databases", "artifacts", "environment files", "canonical units"]}
 
@@ -180,6 +197,15 @@ def apply_plan(plan: dict, expected_hash: str, *, run: Callable = command) -> No
             path = root/name
             if (not path.exists() and not path.is_symlink()) or _file_identity(path) != recorded:
                 raise ValueError("unit changed before retirement")
+        if not isinstance(plan.get("fragment_paths"), dict):
+            raise ValueError("fresh retirement plan with runtime identities required")
+        # Check effective manager identities too, before the first destructive
+        # operation. Configuration writers must remain quiescent during apply.
+        for name, fragment in plan["fragment_paths"].items():
+            current = run(["systemctl", "show", name, "--property=FragmentPath", "--value"]).strip()
+            dropins = run(["systemctl", "show", name, "--property=DropInPaths", "--value"]).strip()
+            if current != fragment or dropins:
+                raise ValueError("unit runtime identity changed before retirement")
     for argv in plan["commands"]:
         run(argv)
     if plan["kind"] == "systemd":

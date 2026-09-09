@@ -12,7 +12,7 @@ import json
 from typing import Mapping
 from zoneinfo import ZoneInfo
 
-from asset_management.data.alfred import DATASET, ROW_SCHEMA, SCHEMA_VERSION, SERIES, SOURCE, normalize_vintages
+from asset_management.data.alfred import DATASET, RAW_SCHEMA, ROW_SCHEMA, SCHEMA_VERSION, SERIES, SOURCE, normalize_vintages
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.domain.errors import DataQualityError
 from asset_management.time.asof import AsOfContext, require_as_of_context
@@ -66,7 +66,9 @@ def _read_rows(store: ImmutableDatasetStore, manifest_id: str, series_id: str,
     if not isinstance(rows, list) or not rows or len(manifest.parent_manifest_ids) != 1:
         raise DataQualityError("MACRO_MANIFEST_CONTENT_INVALID")
     parent, raw = store.read(manifest.parent_manifest_ids[0])
-    if (parent.source, parent.dataset, parent.layer) != (SOURCE, DATASET, "bronze"):
+    expected_raw_schema = f"{SCHEMA_VERSION}:raw:{digest(canonical(RAW_SCHEMA))}"
+    if (parent.source, parent.dataset, parent.layer, parent.schema_version, parent.quality_status) != (
+            SOURCE, DATASET, "bronze", expected_raw_schema, "RAW"):
         raise DataQualityError("MACRO_RAW_LINEAGE_INVALID")
     context.require_known_at(datetime.fromisoformat(parent.available_at), label="macro raw dataset")
     output_type = rows[0].get("output_type") if isinstance(rows[0], dict) else None
