@@ -132,6 +132,24 @@ def test_unit_changed_after_plan_has_zero_effects(tmp_path):
     runner.assert_not_called()
 
 
+def test_symlink_target_changed_after_plan_has_zero_effects(tmp_path):
+    target=tmp_path/'retired-unit-target.service';target.write_text('old target bytes')
+    link=tmp_path/'toss-foundation.timer';link.symlink_to(target.name)
+    runner=unit_runner(tmp_path,[link.name])
+    plan=systemd_plan(run=runner,root=tmp_path)
+    recorded=plan['unit_files'][link.name]
+    assert recorded['symlink']==target.name
+    assert recorded['target']==str(target.resolve())
+    assert 'target_sha256' in recorded
+    runner.reset_mock()
+    target.write_text('changed target bytes')
+    with pytest.raises(ValueError,match='unit changed before retirement'):
+        apply_plan(plan,identity(plan),run=runner)
+    assert link.is_symlink()
+    assert target.read_text()=='changed target bytes'
+    runner.assert_not_called()
+
+
 def test_cli_dry_run_never_executes_deletes(monkeypatch,capsys):
     from asset_management.cli import legacy_retirement as module
     def command(argv):
