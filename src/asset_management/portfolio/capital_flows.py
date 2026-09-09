@@ -41,6 +41,9 @@ class CapitalFlow:
                 not isinstance(self.currency, Currency) or not self.amount.is_finite() or self.amount < 0 or
                 not isinstance(self.recognition_status, RecognitionStatus) or not self.evidence_id.strip() or
                 self.priority < 0 or any(value is not None and (value.tzinfo is None or value.utcoffset() is None) for value in times) or
+                (self.supersedes_flow_id is not None and (not isinstance(self.supersedes_flow_id, str) or
+                                                          not self.supersedes_flow_id.strip() or
+                                                          self.supersedes_flow_id == self.flow_id)) or
                 (self.expires_at is not None and self.expires_at <= self.effective_at)):
             raise DataQualityError("CAPITAL_FLOW_INVALID")
         for name in ("due_at", "effective_at", "expires_at"):
@@ -71,10 +74,23 @@ class CapitalReserveAssessment:
 def assess_capital_reserve(*, nav: Decimal, currency: Currency, flows: tuple[CapitalFlow, ...],
                            as_of: datetime) -> CapitalReserveAssessment:
     if (not isinstance(nav, Decimal) or not nav.is_finite() or nav < 0 or not isinstance(currency, Currency) or
-            as_of.tzinfo is None or as_of.utcoffset() is None or len({flow.flow_id for flow in flows}) != len(flows)):
+            as_of.tzinfo is None or as_of.utcoffset() is None or
+            any(not isinstance(flow, CapitalFlow) for flow in flows) or
+            len({flow.flow_id for flow in flows}) != len(flows)):
         raise DataQualityError("CAPITAL_RESERVE_INPUT_INVALID")
+    by_id = {flow.flow_id: flow for flow in flows}
     active = [flow for flow in flows if flow.currency is currency and flow.effective_at <= as_of and
               (flow.expires_at is None or as_of < flow.expires_at)]
+    superseded_ids: set[str] = set()
+    for flow in active:
+        if flow.supersedes_flow_id is None:
+            continue
+        previous = by_id.get(flow.supersedes_flow_id)
+        if (previous is None or previous.currency is not flow.currency or
+                flow.effective_at < previous.effective_at or previous.flow_id in superseded_ids):
+            raise DataQualityError("CAPITAL_FLOW_SUPERSESSION_INVALID")
+        superseded_ids.add(previous.flow_id)
+    active = [flow for flow in active if flow.flow_id not in superseded_ids]
     if any(flow.recognition_status is RecognitionStatus.UNKNOWN for flow in active):
         raise DataQualityError("CAPITAL_FLOW_RECOGNITION_UNKNOWN")
     reserve = sum((flow.amount for flow in active if flow.kind is CapitalFlowKind.MINIMUM_LIQUIDITY and
