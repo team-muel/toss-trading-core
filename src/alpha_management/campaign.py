@@ -203,6 +203,13 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
         raise ValueError("session universe differs from effective panel membership")
     if set(resolver.fields.source.universes.members(spec.settings.universe, session.context)) != set(session.instrument_ids):
         raise ValueError("session universe differs from canonical reference truth")
+    membership_identity = ";".join(
+        f"{period}:{','.join(sorted(resolver.universe_membership[period]))}"
+        for period in periods
+    )
+    canonical_universe_version = f"sha256:{sha256(membership_identity.encode('utf-8')).hexdigest()}"
+    if session.universe_version != canonical_universe_version:
+        raise DataQualityError("UNIVERSE_VERSION_PROVENANCE_MISMATCH")
     if spec.settings.neutralization == "group" and (
             set(session.neutralization_groups) != set(session.instrument_ids) or
             any(not isinstance(value, str) or not value.strip()
@@ -330,7 +337,6 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
     return replace(session, resolver=snapshot), _hash(payload), payload
 
 
-
 def _history_payload(result: HistorySimulationResult) -> dict:
     return {
         "expression": result.expression, "expression_hash": result.expression_hash,
@@ -355,6 +361,19 @@ class ResearchRun:
 
     result: HistorySimulationResult
     evidence_json: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.result, HistorySimulationResult) or not isinstance(self.evidence_json, str):
+            raise ValueError("research result and evidence types are invalid")
+        try:
+            payload = json.loads(self.evidence_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("research evidence is not valid JSON") from exc
+        if not isinstance(payload, dict) or payload.get("schema_version") != "expression-research-run-v2":
+            raise ValueError("unsupported research receipt version")
+        history = _history_payload(self.result)
+        if payload.get("result") != history or payload.get("result_hash") != _hash(history):
+            raise ValueError("research result/evidence mismatch")
 
     @property
     def evidence_hash(self) -> str:
