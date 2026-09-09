@@ -2,7 +2,7 @@ name: ama161-publish-objects
 on:
   push:
     branches: [audit/ama161-object-publication]
-    paths: [audit/change.patch]
+    paths: [audit/final-p1.patch, .github/workflows/ama161_publish_objects.yml]
 permissions:
   contents: write
 jobs:
@@ -18,19 +18,18 @@ jobs:
         with:
           ref: 79d893f01e0b0eb82538996e9fe24506f3e0c00c
           path: source
-      - name: Verify patch and stage exact tested tree on audit ref only
+      - name: Verify complete tested tree and stage on audit ref only
         working-directory: source
         env:
-          PATCH_SHA256: c19361df5ab2f47ca0b9a211032737c66ba5cfca4be22a3bdf2b1e9b7eaf7ca2
-          EXPECTED_TREE: c1f6bb46e9d13a178f1890b1b23ea6df71860b11
+          EXPECTED_TREE: bba36025d58e686eeb8b30ff5cbaafdd98f7ff5b4
         run: |
           set -eu
-          patch="${GITHUB_WORKSPACE}/transport/audit/change.patch"
-          echo "${PATCH_SHA256}  ${patch}" | sha256sum -c -
-          git apply --check "$patch"
-          git apply --index "$patch"
+          patch="${GITHUB_WORKSPACE}/transport/audit/final-p1.patch"
+          git apply --unidiff-zero --check "$patch"
+          git apply --unidiff-zero --index "$patch"
           git diff --cached --check
           actual="$(git write-tree)"
+          echo "ACTUAL_TREE=$actual"
           test "$actual" = "$EXPECTED_TREE"
           git config user.name "Source object staging"
           git config user.email "object-staging@users.noreply.github.com"
