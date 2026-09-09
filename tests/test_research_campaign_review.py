@@ -103,3 +103,71 @@ def test_expression_group_validation_does_not_require_nonmembers(tmp_path):
     }})) for session in sessions]
     run = run_expression_research(research_spec, prepared)
     assert run.payload()["result_status"] == "COMPUTED"
+
+
+def replay_from_receipt(run):
+    """Replay consumed snapshots, not mutable latest-vintage repository queries."""
+    from types import MappingProxyType
+    from alpha_management.campaign import _SnapshotResolver, _hash
+    payload = run.payload()
+    sessions = []
+    for index, coordinates in enumerate(payload['session_inputs']):
+        assert _hash(coordinates) == payload['session_input_hashes'][index]
+        axis = coordinates['resolver_instrument_ids']
+        resolver = _SnapshotResolver(
+            {name: {instrument: tuple(panel[instrument]) for instrument in axis}
+             for name, panel in coordinates['fields'].items()},
+            {name: {instrument: tuple(panel[instrument]) for instrument in axis}
+             for name, panel in coordinates['groups'].items()},
+            tuple(frozenset(members) for members in coordinates['membership']),
+        )
+        context_data = dict(coordinates['context'])
+        for field in ('as_of_utc', 'information_cutoff_utc'):
+            context_data[field] = datetime.fromisoformat(context_data[field])
+        context = AsOfContext(**context_data)
+        sessions.append(HistoricalSession(
+            datetime.fromisoformat(coordinates['effective_time_utc']), context, resolver,
+            tuple(coordinates['instrument_ids']),
+            dataset_manifest_ids=tuple(coordinates['dataset_manifest_ids']),
+            universe_version=coordinates['universe_version'],
+            neutralization_groups=coordinates['neutralization_groups'],
+        ))
+    return sessions
+
+
+def test_receipt_keeps_separate_session_order_and_effective_time(tmp_path):
+    research_spec = spec()
+    _, sessions = repository_sessions(tmp_path, research_spec)
+    # The session order need not be the same as the resolver order.
+    sessions = [replace(session, instrument_ids=IDS[::-1])
+                for session in sessions]
+    run = run_expression_research(research_spec, sessions)
+    assert run.payload()['session_inputs'][-1]['instrument_ids'] == list(IDS[::-1])
+    assert run.payload()['session_inputs'][-1]['resolver_instrument_ids'] == list(IDS)
+    restored = replay_from_receipt(run)
+    assert simulate_history(research_spec.compiled, restored, research_spec.settings) == run.result
+
+
+def test_receipt_replays_values_after_valid_backdated_repository_append(tmp_path):
+    from asset_management.data.repositories import SQLiteTemporalObservationStore
+    research_spec = spec()
+    source, sessions = repository_sessions(tmp_path, research_spec)
+    original = run_expression_research(research_spec, sessions)
+    context = sessions[-1].context
+    manifest_id = sessions[-1].dataset_manifest_ids[0]
+    old = source.observations.series(entity_id=IDS[0], field='total_return_index',
+                                    context=context, dataset_manifest_id=manifest_id)[-1]
+    # This canonical append is accepted, despite occurring after the old run.
+    # Its declared timestamps fall inside that run's historical cutoff.
+    revised = old.available_at + timedelta(seconds=1)
+    writer = SQLiteTemporalObservationStore(source.observations._conn)
+    writer.append(observation_id='late-import-vintage', entity_id=old.entity_id,
+        field=old.field, value='1000', reference_period=old.reference_period,
+        event_time=old.event_time, scheduled_release_at=None, official_release_at=None,
+        source_timestamp=revised, received_at=revised, available_at=revised,
+        ingested_at=revised, revised_at=revised, supersedes_observation_id=old.observation_id,
+        source_timezone='UTC', schema_version=old.schema_version, dataset_manifest_id=manifest_id)
+    current = run_expression_research(research_spec, sessions)
+    assert current.payload()['session_input_hashes'][-1] != original.payload()['session_input_hashes'][-1]
+    restored = replay_from_receipt(original)
+    assert simulate_history(research_spec.compiled, restored, research_spec.settings) == original.result
