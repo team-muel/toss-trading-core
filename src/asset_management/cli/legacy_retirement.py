@@ -46,7 +46,17 @@ def identity(plan: dict) -> str:
 
 def _file_identity(path: Path) -> dict:
     if path.is_symlink():
-        return {"symlink": str(path.readlink())}
+        try:
+            target = path.resolve(strict=True)
+        except (FileNotFoundError, RuntimeError, OSError) as exc:
+            raise ValueError("retired unit symlink target must be a readable file") from exc
+        if not target.is_file():
+            raise ValueError("retired unit symlink target must be a readable file")
+        return {
+            "symlink": str(path.readlink()),
+            "target": str(target),
+            "target_sha256": sha256(target.read_bytes()).hexdigest(),
+        }
     if path.is_file():
         return {"sha256": sha256(path.read_bytes()).hexdigest()}
     raise ValueError("retired unit must be a file or symlink")
