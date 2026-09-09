@@ -235,6 +235,17 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
         name: MappingProxyType({key: tuple(values) for key, values in resolver.group(name).items()})
         for name in spec.group_fields
     }
+    # Expression grouping has its own historical panel. Validating only the
+    # simulation's current neutralization_groups would leave missing expression
+    # classifications to the operators' permissive __ungrouped__ fallback.
+    for name, panel in groups.items():
+        for index, period_members in enumerate(members):
+            for instrument_id in period_members:
+                series = panel.get(instrument_id, ())
+                if len(series) != len(periods) or not isinstance(series[index], str) or not series[index].strip():
+                    raise ValueError(
+                        f"incomplete expression group {name} for {instrument_id} at {periods[index]}"
+                    )
     snapshot = _SnapshotResolver(MappingProxyType(fields), MappingProxyType(groups), members)
     payload = {
         "context": {
@@ -246,6 +257,10 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
             "code_revision": session.context.code_revision,
         },
         "instrument_ids": sorted(session.instrument_ids),
+        # A canonical resolver may include known instruments outside the
+        # historical membership union. Their masked panels are still hashed;
+        # preserve the full read axis so replay can recover those exact hashes.
+        "resolver_instrument_ids": list(resolver.instrument_ids),
         "dataset_manifest_ids": list(ids), "universe_version": session.universe_version,
         "reference_periods": list(periods), "membership": [sorted(value) for value in members],
         "fields": {name: {key: list(values) for key, values in panel.items()}
