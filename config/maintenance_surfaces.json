@@ -128,7 +128,10 @@
         "scripts/*gcp*.sh",
         "scripts/*vm*.sh",
         "src/asset_management/cli/**",
-        "scripts/render_*.py"
+        "scripts/render_*.py",
+        "scripts/audit_active_research_release.sh",
+        "scripts/authorize_research_gmail.py",
+        "scripts/prune_research_runtime.sh"
       ],
       "evidence": [
         "Restart/recovery, locks, health and deployment scope; no implicit mode promotion"
@@ -154,7 +157,8 @@
         "src/research_platform/cli/**",
         "src/alpha_management/fast_expression.lark",
         ".gitattributes",
-        "src/asset_management/cli/**"
+        "src/asset_management/cli/**",
+        "src/asset_management/config/resources.py"
       ],
       "evidence": [
         "Built wheel install and resource smoke outside checkout; dependency parity"

@@ -29,8 +29,11 @@ python -m research_platform.cli.research_validate_instruments
 
 `toss-runtime-validate` validates the canonical runtime against an in-memory
 database at an explicit UTC instant. It neither contacts Toss nor uses broker
-credentials. Research automation is separately scheduled through the
-`toss-research-*` services and remains outside the runtime authority boundary.
+credentials. Research is an internal/offline capability, not a second cloud
+application. Legacy standalone installers, timers, recommendation orchestration,
+and Gmail/report delivery entry points fail closed. Removing files does not stop
+already deployed units: use the reviewed retirement plan in
+[PR #79 convergence](docs/pr79_convergence.md) before operational acceptance.
 
 ## Operational rules
 

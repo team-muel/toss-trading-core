@@ -10,7 +10,7 @@ from asset_management.calculations import (MODEL_LINEAGE_EVIDENCE_DATASET, Calcu
 from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.governance import ModelAuthorization, ModelRegistry
-from asset_management.pricing import RiskFreeCurve
+from asset_management.pricing import RiskFreeCurve, materialize_usd_fred_risk_free_curve
 from asset_management.risk import (FACTOR_RISK_EVIDENCE_DATASET, FactorRiskAssessment,
                                    SpecificRiskPolicy, specific_risk_policy_payload)
 from asset_management.risk.covariance import is_psd
@@ -59,8 +59,16 @@ class RiskFreeRuntimeEvidence:
         manifest, _ = self.store.read(manifest_id)
         available_at = _aware(datetime.fromisoformat(manifest.available_at), "RISK_FREE_MANIFEST_TIME_INVALID")
         if (manifest.layer != "bronze" or manifest.source != "fred-alfred" or
-                manifest.dataset != "risk-free-curve" or available_at > cutoff):
+                manifest.dataset != "risk-free-curve" or
+                manifest.schema_version != "fred-risk-free-curve@1" or
+                manifest.quality_status != "RAW" or available_at > cutoff):
             raise ValueError("RISK_FREE_MANIFEST_CONTEXT_INVALID")
+        rebuilt = materialize_usd_fred_risk_free_curve(
+            store=self.store, manifest_id=manifest_id, information_cutoff=cutoff)
+        for horizon, supplied in zip((21, 63, 126, 252), returns):
+            actual = rebuilt.return_for(currency=self.currency, horizon=horizon, information_cutoff=cutoff)
+            if supplied != actual:
+                raise ValueError("RISK_FREE_VALUES_NOT_BOUND_TO_ARTIFACT")
         return CheckEvidence(True, manifests)
 
 
@@ -85,21 +93,17 @@ class FactorRiskRuntimeEvidence:
         evidence_manifest, body = self.store.read(self.evidence_manifest_id)
         evidence_available_at = _aware(
             datetime.fromisoformat(evidence_manifest.available_at), "FACTOR_RISK_MANIFEST_TIME_INVALID")
+        if self.assessment.estimation_version != self.specific_risk_policy.estimation_version:
+            raise ValueError("FACTOR_RISK_POLICY_VERSION_MISMATCH")
         if (evidence_manifest.layer != "gold" or evidence_manifest.source != "tiingo-eod" or
-                evidence_manifest.dataset != FACTOR_RISK_EVIDENCE_DATASET or evidence_available_at > cutoff or
-                not isinstance(body, dict) or body != {
-                    "assessment": self.assessment.payload(),
-                    "specific_risk_policy": specific_risk_policy_payload(self.specific_risk_policy),
-                } or not evidence_manifest.parent_manifest_ids):
+                evidence_manifest.dataset != FACTOR_RISK_EVIDENCE_DATASET or evidence_available_at > cutoff):
             raise ValueError("FACTOR_RISK_EVIDENCE_BINDING_INVALID")
-        for manifest_id in evidence_manifest.parent_manifest_ids:
-            manifest, _ = self.store.read(manifest_id)
-            manifest_available_at = _aware(
-                datetime.fromisoformat(manifest.available_at), "FACTOR_RISK_MANIFEST_TIME_INVALID")
-            if manifest.source != "tiingo-eod" or manifest_available_at > cutoff:
-                raise ValueError("FACTOR_RISK_MANIFEST_CONTEXT_INVALID")
-        return CheckEvidence(True, manifests + _manifest_evidence(
-            evidence_manifest.parent_manifest_ids, reason="FACTOR_RISK_MANIFEST_INVALID"))
+        # Metadata or a stored copy of a caller's assessment does not prove the
+        # covariance/residual estimates came from the declared return inputs.
+        # No canonical raw-return estimator/replay contract is connected here
+        # yet. Old v1 receipts and new mechanism-only v2 receipts both stay
+        # blocked rather than allowing an arbitrary Tiingo artifact to pass D2.
+        raise ValueError("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,10 +167,13 @@ def assemble_d2_runtime_evidence(*, risk_free: RiskFreeRuntimeEvidence | None,
     }
     checks: dict[str, CheckEvidence] = {}
     failures: dict[str, str] = {}
+    expected_types = dict(zip(sources, (RiskFreeRuntimeEvidence, FactorRiskRuntimeEvidence, ModelLineageRuntimeEvidence)))
     for name, source in sources.items():
         try:
             if source is None:
                 raise ValueError("EVIDENCE_MISSING")
+            if type(source) is not expected_types[name]:
+                raise ValueError("EVIDENCE_TYPE_INVALID")
             checks[name] = source.check()
         except Exception as exc:
             reason = str(exc) if re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", str(exc)) else "EVIDENCE_INVALID"
@@ -177,10 +184,18 @@ def assemble_d2_runtime_evidence(*, risk_free: RiskFreeRuntimeEvidence | None,
 
 def build_d2_gate_input(*, evaluated_at: datetime, code_revision: str,
                         static_checks: dict[str, CheckEvidence],
-                        runtime_evidence: D2RuntimeEvidenceResult) -> PricingExpectationRiskIntegrityGateInput:
-    """Bind runtime-derived checks into the exact D2 set without caller override."""
+                        risk_free: RiskFreeRuntimeEvidence | None = None,
+                        factor_risk: FactorRiskRuntimeEvidence | None = None,
+                        model_lineage: ModelLineageRuntimeEvidence | None = None) -> PricingExpectationRiskIntegrityGateInput:
+    """Recompute runtime checks from their artifacts; never accept a result token."""
     expected_static = set(REQUIRED_PRICING_EXPECTATION_RISK_CHECKS) - RUNTIME_D2_CHECKS
-    if set(static_checks) != expected_static or set(runtime_evidence.checks) != RUNTIME_D2_CHECKS:
+    if set(static_checks) != expected_static:
         raise ValueError("D2_RUNTIME_CHECK_SET_INVALID")
+    evaluated_at = _aware(evaluated_at, "D2_EVALUATION_TIME_INVALID")
+    for source in (risk_free, factor_risk, model_lineage):
+        if source is not None and source.information_cutoff != evaluated_at:
+            raise ValueError("D2_EVIDENCE_EVALUATION_TIME_MISMATCH")
+    runtime = assemble_d2_runtime_evidence(risk_free=risk_free, factor_risk=factor_risk,
+                                           model_lineage=model_lineage)
     return PricingExpectationRiskIntegrityGateInput(
-        evaluated_at, code_revision, {**static_checks, **runtime_evidence.checks})
+        evaluated_at, code_revision, {**static_checks, **runtime.checks})

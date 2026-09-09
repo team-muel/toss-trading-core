@@ -1,3 +1,4 @@
+"""Test-only producer of historical fixtures; never packaged or scheduled."""
 from __future__ import annotations
 
 from dataclasses import dataclass

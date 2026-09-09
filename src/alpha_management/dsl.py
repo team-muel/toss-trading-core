@@ -23,7 +23,8 @@ from lark import Lark, Transformer
 from asset_management.time.asof import AsOfContext, require_as_of_context
 
 from . import operators as ops
-from .datafields import RepositoryDataFields
+from .arithmetic import BINARY_OPERATORS, binary_panel
+from .datafields import RepositoryDataFields, _number
 
 Panel: TypeAlias = Mapping[str, Sequence[float | None]]
 PanelValue: TypeAlias = dict[str, list[float | None]]
@@ -43,6 +44,7 @@ class ValueType(str, Enum):
 
 class Axis(str, Enum):
     ELEMENT = "ELEMENT"
+    BINARY = "BINARY"
     TIME = "TIME"
     CROSS_SECTION = "CROSS_SECTION"
 
@@ -113,11 +115,13 @@ OPERATOR_REGISTRY = {
     for name in ("rank", "zscore", "scale", "winsorize")
 }
 OPERATOR_REGISTRY["sign"] = _spec("sign", (ValueType.PANEL,), Axis.ELEMENT)
+OPERATOR_REGISTRY["negate"] = _spec("negate", (ValueType.PANEL,), Axis.ELEMENT)
+OPERATOR_REGISTRY.update({name: _spec(name, (ValueType.PANEL, ValueType.PANEL), Axis.BINARY) for name in BINARY_OPERATORS})
 OPERATOR_REGISTRY.update({
     name: _spec(name, (ValueType.PANEL, ValueType.INTEGER), Axis.TIME)
     for name in (
         "ts_delay", "ts_delta", "ts_sum", "ts_mean", "ts_stddev",
-        "ts_zscore", "ts_rank", "ts_decay_linear", "ts_max", "ts_min",
+        "ts_zscore", "ts_rank", "ts_decay_linear", "ts_max", "ts_min", "ts_return",
     )
 })
 OPERATOR_REGISTRY.update({
@@ -166,7 +170,11 @@ def validate_expression(
         validate_expression(item, data_fields=data_fields, group_fields=group_fields)
         for item in node.arguments
     )
-    if actual != spec.arguments:
+    if spec.axis is Axis.BINARY:
+        numeric = {ValueType.PANEL, ValueType.SCALAR, ValueType.INTEGER}
+        if ValueType.PANEL not in actual or any(value not in numeric for value in actual):
+            raise ExpressionError("arithmetic requires a Panel and a Panel or numeric scalar")
+    elif actual != spec.arguments:
         raise ExpressionError(
             f"{node.operator} expects {[item.value for item in spec.arguments]}, "
             f"got {[item.value for item in actual]}"
@@ -298,6 +306,19 @@ class RepositoryPanelResolver:
             )
             for instrument_id in self.instrument_ids
         }
+        return self._align_observations(observations)
+
+    def field_with_evidence(self, name: str):
+        if len(self.dataset_manifest_ids) != 1:
+            raise ExpressionError("typed observation evidence requires one pinned manifest")
+        records = {instrument: self.fields.source.observation_evidence(
+            name, instrument_id=instrument, context=self.context,
+            dataset_manifest_id=self.dataset_manifest_ids[0]) for instrument in self.instrument_ids}
+        observations = {instrument: [(record.reference_period, _number(record.value)) for record in rows]
+                        for instrument, rows in records.items()}
+        return self._align_observations(observations), records
+
+    def _align_observations(self, observations) -> PanelValue:
         indexed = {}
         for instrument_id, values in observations.items():
             normalized = {}
@@ -335,6 +356,8 @@ class RepositoryPanelResolver:
 
 
 def _copy_panel(value: Panel) -> PanelValue:
+    if any(isinstance(item, bool) for series in value.values() for item in series):
+        raise ExpressionError("boolean values are not numeric datafields")
     lengths = {len(series) for series in value.values()}
     if len(lengths) > 1:
         raise ExpressionError("panel series must have equal length")
@@ -391,6 +414,10 @@ def evaluate_expression(node: ExpressionNode, resolver: PanelResolver):
     if spec is None:
         raise ExpressionError(f"unknown operator: {node.operator}")
     arguments = [evaluate_expression(item, resolver) for item in node.arguments]
+    if spec.axis is Axis.BINARY:
+        return _require_finite_panel(binary_panel(node.operator, *arguments), node.operator)
+    if node.operator == "negate":
+        return _require_finite_panel(binary_panel("subtract", 0, arguments[0]), node.operator)
     function = getattr(ops, node.operator)
     if spec.axis is Axis.TIME:
         panel, window = arguments
