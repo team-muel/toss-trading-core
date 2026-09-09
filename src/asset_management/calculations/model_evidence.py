@@ -9,7 +9,7 @@ from asset_management.domain.errors import InvariantViolation
 from asset_management.governance import ModelAuthorization, ModelRegistry
 
 from .lineage import CalculationLineageGraph
-from .model_binding import ModelCalculationBinding
+from .model_binding import ModelCalculationBinding, bind_authorized_model_calculation
 
 
 MODEL_LINEAGE_EVIDENCE_DATASET = "model-lineage-evidence"
@@ -39,6 +39,13 @@ def publish_model_lineage_evidence(*, store: ImmutableDatasetStore, registry: Mo
     if (binding.authorization_hash != authorization.authorization_hash or
             binding.lineage_graph_hash != lineage.graph_hash or
             binding.final_node_id != lineage.final_node_id or binding.bound_at > available_at):
+        raise InvariantViolation("MODEL_LINEAGE_EVIDENCE_BINDING_INVALID")
+    # A self-consistent hash is not proof that the binding was issued by the
+    # canonical scope validator. Re-run it at the claimed binding instant.
+    rebuilt = bind_authorized_model_calculation(
+        model_registry=registry, authorization=authorization, model_key=binding.model_key,
+        scope=binding.scope, lineage=lineage, bound_at=binding.bound_at)
+    if rebuilt != binding:
         raise InvariantViolation("MODEL_LINEAGE_EVIDENCE_BINDING_INVALID")
     lineage.verify_raw_manifests(store)
     parents = tuple(sorted(node.raw_manifest_id for node in lineage.trace() if node.raw_manifest_id is not None))

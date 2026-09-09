@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 import re
 
 from asset_management.calculations import (MODEL_LINEAGE_EVIDENCE_DATASET, CalculationLineageGraph,
-                                           ModelCalculationBinding, model_authorization_payload)
+                                           ModelCalculationBinding, bind_authorized_model_calculation,
+                                           model_authorization_payload)
 from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.governance import ModelAuthorization, ModelRegistry
@@ -125,6 +126,14 @@ class ModelLineageRuntimeEvidence:
                 self.binding.final_node_id != self.lineage.final_node_id or
                 self.binding.bound_at > cutoff):
             raise ValueError("MODEL_LINEAGE_BINDING_INVALID")
+        # Verify persisted/reconstructed bindings through their owner as well
+        # as their hashes. Publication alone is not an admission authority.
+        rebuilt = bind_authorized_model_calculation(
+            model_registry=self.registry, authorization=self.authorization,
+            model_key=self.binding.model_key, scope=self.binding.scope,
+            lineage=self.lineage, bound_at=self.binding.bound_at)
+        if rebuilt != self.binding:
+            raise ValueError("MODEL_LINEAGE_BINDING_INVALID")
         self.lineage.verify_raw_manifests(self.store)
         raw_manifests = tuple(node.raw_manifest_id for node in self.lineage.trace()
                               if node.raw_manifest_id is not None)
@@ -132,7 +141,9 @@ class ModelLineageRuntimeEvidence:
         evidence_available_at = _aware(datetime.fromisoformat(evidence.available_at),
                                         "MODEL_LINEAGE_MANIFEST_TIME_INVALID")
         if (evidence.layer != "gold" or evidence.source != "model-lineage" or
-                evidence.dataset != MODEL_LINEAGE_EVIDENCE_DATASET or evidence_available_at > cutoff or
+                evidence.dataset != MODEL_LINEAGE_EVIDENCE_DATASET or
+                evidence.schema_version != "model-lineage-evidence@1" or
+                evidence.quality_status != "VALID" or evidence_available_at > cutoff or
                 evidence.parent_manifest_ids != tuple(sorted(raw_manifests)) or not isinstance(body, dict) or
                 body != {"registry": self.registry.payload(),
                          "model_authorization": model_authorization_payload(self.authorization),
