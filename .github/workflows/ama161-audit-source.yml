@@ -4,25 +4,59 @@ on:
     branches: [audit/ama-161-review-20260910]
     paths: [.github/workflows/ama161-audit-source.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  source:
+  prepare-tested-objects:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: 9b4a4a685a8c00957aa2add70008ada6513adfea
-          persist-credentials: false
-      - name: Archive only tracked source at the reviewed commit
+      - name: Reconstruct and verify only the six locally tested files
+        shell: bash
         run: |
-          mkdir -p /tmp/ama161-audit
-          git archive --format=tar.gz --output=/tmp/ama161-audit/source.tar.gz HEAD
-          git rev-parse HEAD HEAD^{tree} > /tmp/ama161-audit/identity.txt
-          sha256sum /tmp/ama161-audit/source.tar.gz > /tmp/ama161-audit/checksum.txt
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: ama161-source-9b4a4a6
-          path: /tmp/ama161-audit/
-          retention-days: 1
-          if-no-files-found: error
+          set -euo pipefail
+          git fetch --depth=1 origin 3b46da542230c7bf718519af41f195ca58fa9451
+          git show FETCH_HEAD:.github/ama161-final-recipe.json > /tmp/ama161-recipe.json
+          python - <<'PY'
+          import json, hashlib, pathlib, subprocess
+          recipe = json.loads(pathlib.Path('/tmp/ama161-recipe.json').read_text())
+          allowed = {'docs/pr81_final_review.md', 'src/alpha_management/campaign.py',
+                     'src/asset_management/cli/legacy_retirement.py', 'src/asset_management/data/alfred.py',
+                     'src/asset_management/features/macro_state.py', 'tests/test_pr81_final_review.py'}
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          def blob(data):
+              return hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
+          assert recipe['base'] == git('rev-parse', 'HEAD') == '9b4a4a685a8c00957aa2add70008ada6513adfea'
+          assert recipe['tree'] == '4705e58f1da049a02fcf4c62eb385b42085632b9'
+          assert len(recipe['files']) == 6 and {f['path'] for f in recipe['files']} == allowed
+          for entry in recipe['files']:
+              path = pathlib.Path(entry['path'])
+              assert not path.is_symlink()
+              if 'old_sha' in entry:
+                  old = path.read_bytes()
+                  assert blob(old) == entry['old_sha'], str(path)
+                  lines = old.decode('utf-8').splitlines(keepends=True)
+                  for start, end, replacement in reversed(entry['edits']):
+                      assert 0 <= start <= end <= len(lines)
+                      lines[start:end] = [replacement]
+                  data = ''.join(lines).encode('utf-8')
+              else:
+                  assert not path.exists()
+                  data = entry['content'].encode('utf-8')
+              assert blob(data) == entry['sha'], ('new blob mismatch', str(path), blob(data), entry['sha'])
+              path.write_bytes(data)
+          subprocess.run(['git', 'add', '--', *sorted(allowed)], check=True)
+          assert git('write-tree') == recipe['tree']
+          print('verified_tested_tree=' + recipe['tree'])
+          PY
+          git diff --cached --check
+          python scripts/check_secrets.py
+          python scripts/check_governance.py
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(AMA-161): close Codex and self-adversarial evidence gaps' -m 'ChatGPT-authored remediation; exact local tested tree 4705e58f1da049a02fcf4c62eb385b42085632b9. No transport helpers or workflow changes in product tree.'
+          git push origin HEAD:refs/heads/audit/ama161-tested-objects-20260910
+          git rev-parse HEAD HEAD^{tree}
