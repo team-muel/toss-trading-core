@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from toss_trading.runtime import TokenBucket
+from asset_management.toss.runtime import TokenBucket
 
 
 class TokenBucketTest(unittest.TestCase):
@@ -13,9 +13,9 @@ class TokenBucketTest(unittest.TestCase):
             updated_at=0,
         )
         with patch(
-            "toss_trading.runtime.rate_limit.time.monotonic",
+            "asset_management.toss.runtime.rate_limit.time.monotonic",
             side_effect=[0, 1],
-        ), patch("toss_trading.runtime.rate_limit.time.sleep") as sleep:
+        ), patch("asset_management.toss.runtime.rate_limit.time.sleep") as sleep:
             waited = bucket.acquire()
 
         self.assertEqual(waited, 1)

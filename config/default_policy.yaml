@@ -1,5 +1,5 @@
 runtime:
-  mode: foundation_read_only
+  mode: asset_management_read_only
   base_currency: USD
   tax_reporting_currency: KRW
   live_trading_enabled: false
@@ -10,7 +10,7 @@ runtime:
   toss_openapi_contract_review: config/toss_openapi_contract.json
   # OpenAPI 1.2.15 explicitly documents paginated CLOSED order history.
   # Poll it with a bounded overlap window so fills that disappear from OPEN
-  # between six-hour Foundation runs remain observable and replayable.
+  # between scheduled read-only observations remain observable and replayable.
   closed_order_listing_supported: true
   closed_order_lookback_days: 7
   broker_capabilities:
@@ -27,7 +27,7 @@ runtime:
     conditional_order_modify:
       documented: true
       enabled: false
-    disabled_reason: "The foundation adapter is read-only; write capabilities require paper and shadow lifecycle evidence plus separate operator approval."
+    disabled_reason: "The canonical Toss adapter is read-only; write capabilities require separately authorized lifecycle evidence."
   live_scope: us_listed_usd_long_only_etf_dedicated_account
 
 external_data:

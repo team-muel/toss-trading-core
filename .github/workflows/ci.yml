@@ -28,17 +28,17 @@ jobs:
       - run: python -m pytest -q
       - run: python scripts/check_governance.py
       - run: python scripts/check_toss_openapi.py
-      - run: python -m toss_trading.cli.research_validate_instruments
+      - run: python -m research_platform.cli.research_validate_instruments
       - run: python -m build --wheel
-      - run: python -c "import toss_trading.runtime; import asset_management.orchestration.runtime"
+      - run: python -c "import asset_management.toss.runtime; import asset_management.orchestration.runtime"
       - name: Verify wheel resources outside checkout
         shell: bash
         run: |
           python -m pip install --force-reinstall --no-deps dist/*.whl
           smoke_dir="$(mktemp -d)"
           cd "${smoke_dir}"
-          python -c "from toss_trading.account import AccountLedger; from toss_trading.data import load_universe; from toss_trading.policy import load_policy; ledger=AccountLedger(); ledger.init_schema(); assert load_universe('data/universe.csv'); assert load_policy('config/default_policy.yaml')[0]; ledger.close()"
+          python -c "from asset_management.compatibility.account_evidence import AccountLedger; from asset_management.compatibility.reference import load_universe; ledger=AccountLedger(); ledger.init_schema(); assert load_universe('data/universe.csv'); ledger.close()"
           python -c "from datetime import datetime, timezone; from pathlib import Path; import sqlite3, sys; from asset_management.orchestration.runtime import ApplicationRuntime; from asset_management.time.clock import FrozenClock; root=Path(sys.prefix)/'share/toss-trading'; runtime=ApplicationRuntime.boot(config_path=root/'config/application.yaml', policy_registry_path=root/'config/policy_registry.yaml', schema_root=root/'schemas', conn=sqlite3.connect(':memory:'), clock=FrozenClock(datetime(2026,9,4,1,tzinfo=timezone.utc))); assert runtime.migration_versions == tuple(range(1,14))"
           python -c "from importlib.resources import files; grammar=files('alpha_management').joinpath('fast_expression.lark'); assert grammar.is_file()"
-      - run: bash -n scripts/load_gcp_secrets.sh scripts/run_foundation_gcp.sh scripts/run_research_automation_gcp.sh scripts/provision_research_automation_gcp.sh scripts/install_research_automation_vm.sh
-      - run: shellcheck scripts/load_gcp_secrets.sh scripts/run_foundation_gcp.sh scripts/run_research_automation_gcp.sh scripts/provision_research_automation_gcp.sh scripts/install_research_automation_vm.sh
+      - run: bash -n scripts/load_gcp_secrets.sh scripts/run_research_automation_gcp.sh scripts/provision_research_automation_gcp.sh scripts/install_research_automation_vm.sh
+      - run: shellcheck scripts/load_gcp_secrets.sh scripts/run_research_automation_gcp.sh scripts/provision_research_automation_gcp.sh scripts/install_research_automation_vm.sh

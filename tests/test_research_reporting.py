@@ -9,8 +9,8 @@ from scripts.render_bigquery_reporting import render_sql
 from scripts.render_research_dashboard import render_dashboard
 from scripts.render_research_log_metrics import render_log_metrics
 from scripts.render_research_monitoring import render as render_monitoring_policies
-from toss_trading.cli.research_reporting import _read_optional_previous_summary
-from toss_trading.research.reporting import (
+from research_platform.cli.research_reporting import _read_optional_previous_summary
+from research_platform.reporting import (
     STRATEGY_METRIC_KEYS,
     autonomous_research_snapshot,
     build_monitoring_event,

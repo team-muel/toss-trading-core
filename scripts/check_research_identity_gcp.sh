@@ -5,7 +5,7 @@ PROJECT_ID="${GCP_PROJECT_ID:-toss-trading-core-lab}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 INSTANCE_NAME="${GCP_RESEARCH_INSTANCE_NAME:-personal-research-agent-vm}"
 EXPECTED="${RESEARCH_SERVICE_ACCOUNT:-toss-research-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
-FOUNDATION="toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com"
+RETIRED_EXECUTION="toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com"
 ADDRESS_NAME="${GCP_RESEARCH_ADDRESS_NAME:-toss-research-static-ip}"
 REGION="${ZONE%-*}"
 
@@ -17,8 +17,8 @@ if [[ "${ATTACHED}" != "${EXPECTED}" ]]; then
   echo "research_identity=invalid expected=${EXPECTED} actual=${ATTACHED:-missing}" >&2
   exit 1
 fi
-if [[ "${ATTACHED}" == "${FOUNDATION}" ]]; then
-  echo "research_identity=invalid reason=foundation_identity_reuse" >&2
+if [[ "${ATTACHED}" == "${RETIRED_EXECUTION}" ]]; then
+  echo "research_identity=invalid reason=retired_execution_identity_reuse" >&2
   exit 1
 fi
 
@@ -62,7 +62,7 @@ for secret_name in \
     --filter="bindings.members:serviceAccount:${EXPECTED}" \
     --format='value(bindings.members)' | wc -l)"
   if [[ "${count}" -ne 0 ]]; then
-    echo "research_identity=invalid reason=foundation_secret_access secret=${secret_name}" >&2
+    echo "research_identity=invalid reason=retired_execution_secret_access secret=${secret_name}" >&2
     exit 1
   fi
 done
@@ -73,7 +73,7 @@ if ! gcloud compute ssh "${INSTANCE_NAME}" \
   --tunnel-through-iap \
   --quiet \
   --command="if systemctl list-unit-files --no-legend 'toss-foundation*' | grep -q .; then exit 1; fi"; then
-  echo "research_identity=invalid reason=foundation_unit_present" >&2
+  echo "research_identity=invalid reason=retired_execution_unit_present" >&2
   exit 1
 fi
 

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from toss_trading.cli.research_upload_gcs import _parse_gs_uri, upload_tree
+from research_platform.cli.research_upload_gcs import _parse_gs_uri, upload_tree
 
 
 class _Response:
@@ -64,11 +64,11 @@ class ResearchUploadGcsTests(unittest.TestCase):
 
             with (
                 patch(
-                    "toss_trading.cli.research_upload_gcs.google.auth.default",
+                    "research_platform.cli.research_upload_gcs.google.auth.default",
                     return_value=(object(), None),
                 ),
                 patch(
-                    "toss_trading.cli.research_upload_gcs.AuthorizedSession",
+                    "research_platform.cli.research_upload_gcs.AuthorizedSession",
                     _Session,
                 ),
             ):
@@ -104,11 +104,11 @@ class ResearchUploadGcsTests(unittest.TestCase):
             try:
                 with (
                     patch(
-                        "toss_trading.cli.research_upload_gcs.google.auth.default",
+                        "research_platform.cli.research_upload_gcs.google.auth.default",
                         return_value=(object(), None),
                     ),
                     patch(
-                        "toss_trading.cli.research_upload_gcs.AuthorizedSession",
+                        "research_platform.cli.research_upload_gcs.AuthorizedSession",
                         _Session,
                     ),
                 ):

@@ -167,11 +167,11 @@ AI 보고서가 정상이라면 `research_interpretation_ok`,
 ## 구현 위치
 
 - 근거 추출·이전 실행 비교·Vertex AI 계약:
-  `src/toss_trading/research/interpretation.py`
+  `src/research_platform/interpretation.py`
 - 해석 보고서 메일·Gmail API·중복 방지:
-  `src/toss_trading/research/email_digest.py`
+  `src/research_platform/email_digest.py`
 - reporting CLI:
-  `src/toss_trading/cli/research_reporting.py`
+  `src/research_platform/cli/research_reporting.py`
 - GCP runner:
   `scripts/run_research_automation_gcp.sh`
 - Gmail OAuth/Secret Manager 도구:

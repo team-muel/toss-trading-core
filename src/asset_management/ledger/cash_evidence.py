@@ -2,7 +2,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from toss_trading.contracts.toss import TossContractError, require_buying_power
+from asset_management.toss.contracts.toss import TossContractError, require_buying_power
 from asset_management.broker.contracts import require_decimal_string
 from asset_management.data.immutable import canonical, digest
 from asset_management.data.raw_store import SQLiteRawResponseStore

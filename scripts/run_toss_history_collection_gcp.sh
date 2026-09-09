@@ -4,7 +4,7 @@ umask 077
 
 ROOT_DIR="${TOSS_HISTORY_ROOT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 OUTPUT_DIR="${TOSS_HISTORY_OUTPUT_DIR:-${ROOT_DIR}/output}"
-CURRENT_RELEASE="${FOUNDATION_CURRENT_RELEASE:-/home/seoje/toss-trading/current}"
+CURRENT_RELEASE="${RESEARCH_CURRENT_RELEASE:-/home/seoje/toss-trading/current}"
 SECRET_LOADER="${TOSS_SECRET_LOADER:-${CURRENT_RELEASE}/scripts/load_gcp_secrets.sh}"
 TOSS_API_LOCK_PATH="${TOSS_API_LOCK_PATH:-/home/seoje/toss-trading/runtime/toss_api.lock}"
 
@@ -52,13 +52,13 @@ fi
 source "${SECRET_LOADER}"
 
 printf 'toss_history_collector_stage=credentials_loaded root=%s\n' "${ROOT_DIR}" >&2
-if [[ ! -f "${ROOT_DIR}/src/toss_trading/__init__.py" ]]; then
+if [[ ! -f "${ROOT_DIR}/src/research_platform/__init__.py" ]]; then
   printf 'toss_history_collector_error=python_source_missing\n' >&2
   exit 3
 fi
 
 printf 'toss_history_collector_stage=raw_start\n' >&2
-PYTHONPATH="${ROOT_DIR}/src" python3 -m toss_trading.cli.research_collect_toss collect \
+PYTHONPATH="${ROOT_DIR}/src" python3 -m research_platform.cli.research_collect_toss collect \
   --universe "${ROOT_DIR}/data/universe.csv" \
   --start-date "${TOSS_HISTORY_START_DATE:-2004-01-01}" \
   --max-pages "${TOSS_HISTORY_MAX_PAGES:-100}" \
@@ -67,7 +67,7 @@ PYTHONPATH="${ROOT_DIR}/src" python3 -m toss_trading.cli.research_collect_toss c
   --output "${OUTPUT_DIR}/toss-candles-raw.json"
 
 printf 'toss_history_collector_stage=adjusted_start\n' >&2
-PYTHONPATH="${ROOT_DIR}/src" python3 -m toss_trading.cli.research_collect_toss collect \
+PYTHONPATH="${ROOT_DIR}/src" python3 -m research_platform.cli.research_collect_toss collect \
   --universe "${ROOT_DIR}/data/universe.csv" \
   --start-date "${TOSS_HISTORY_START_DATE:-2004-01-01}" \
   --max-pages "${TOSS_HISTORY_MAX_PAGES:-100}" \

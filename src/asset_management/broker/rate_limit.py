@@ -1,6 +1,6 @@
-"""Broker-specific rate-limit policies; implementation is adapted from toss_trading.runtime."""
+"""Broker-specific rate-limit policies; implementation is adapted from asset_management.toss.runtime."""
 
-from toss_trading.runtime.rate_limit import PriorityTokenBucket, TokenBucket
+from asset_management.toss.runtime.rate_limit import PriorityTokenBucket, TokenBucket
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Iterable

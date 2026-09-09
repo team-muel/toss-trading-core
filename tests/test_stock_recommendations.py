@@ -2,7 +2,7 @@ import copy
 import unittest
 from datetime import date, timedelta
 
-from toss_trading.research.stock_recommendations import (
+from research_platform.stock_recommendations import (
     generate_stock_recommendations,
     load_recommendation_policy,
 )
@@ -13,7 +13,7 @@ from tests.focused_research_fixtures import (
     positioning_payload,
     positioning_sources,
 )
-from toss_trading.research.variant_perception import (
+from research_platform.variant_perception import (
     build_focused_research_dossier,
     load_focused_research_policy,
 )

@@ -34,9 +34,9 @@ Run the checks applicable to the change. For broad changes, mirror the repositor
 ```bash
 python -m pytest -q
 python scripts/check_toss_openapi.py
-python -m toss_trading.cli.research_validate_instruments
+python -m research_platform.cli.research_validate_instruments
 python -m build --wheel
-python -c "import toss_trading.runtime"
+python -c "import asset_management.orchestration.runtime"
 ```
 
 When packaging behavior changes, also verify the built wheel installs and can load its packaged resources outside the checkout, matching CI. For shell changes, run `bash -n` and `shellcheck` on the affected scripts.

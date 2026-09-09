@@ -17,9 +17,7 @@ Do not approve a change merely because tests pass. Check whether tests encode th
 When the PR references a Linear issue key such as `AMA-123`, use that context when available to verify scope and acceptance criteria. Flag scope drift explicitly.
 
 Use a higher review bar for authority-bearing paths, including:
-- `src/toss_trading/execution/`
-- `src/toss_trading/broker/`
-- `src/toss_trading/risk/`
+- `src/asset_management/toss/`
 - `src/asset_management/execution/`
 - `src/asset_management/broker/`
 - `src/asset_management/risk/`

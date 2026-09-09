@@ -81,7 +81,7 @@ Investment Thesis
 ## 필수 데이터 계약
 
 `config/focused_research_policy.json`과
-`src/toss_trading/research/variant_perception.py`가 권위 있는 계약이다.
+`src/research_platform/variant_perception.py`가 권위 있는 계약이다.
 
 각 dossier에는 최소 세 개의 expectation chain이 필요하며 다음 범주를 모두 덮어야
 한다.
@@ -476,7 +476,7 @@ Position Construction은 주문 권한이나 전략 승격 권한을 갖지 않�
 원천 JSON을 작성한 뒤 다음 명령으로 검증된 불변 dossier를 만든다.
 
 ```bash
-python -m toss_trading.cli.research_validate_focus_dossier \
+python -m research_platform.cli.research_validate_focus_dossier \
   --input /secure-input/AMAT-2026-08-20.json \
   --policy config/focused_research_policy.json \
   --code-revision "$(git rev-parse HEAD)" \

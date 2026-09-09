@@ -8,10 +8,10 @@ from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
-from toss_trading.cli.research_validate_bars import validate_parquet
-from toss_trading.cli.research_reporting import _read_summary, main as reporting_main
-from toss_trading.research import DataLake, MarketBar
-from toss_trading.research.automation import (
+from research_platform.cli.research_validate_bars import validate_parquet
+from research_platform.cli.research_reporting import _read_summary, main as reporting_main
+from research_platform import DataLake, MarketBar
+from research_platform.automation import (
     parse_provider_states,
     resolve_collection_window,
     verify_research_run,
@@ -379,8 +379,8 @@ class ResearchAutomationTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("toss-foundation.service", installer)
         self.assertNotIn("toss-foundation.timer", installer)
-        self.assertIn("toss-paper-operation.service", installer)
-        self.assertIn("toss-paper-operation.timer", installer)
+        self.assertNotIn("toss-paper-operation.service", installer)
+        self.assertNotIn("toss-paper-operation.timer", installer)
 
         research_service = Path(
             "deploy/systemd/toss-research-automation@.service"
@@ -407,7 +407,7 @@ class ResearchAutomationTest(unittest.TestCase):
 
         cloudbuild = Path("cloudbuild.yaml").read_text(encoding="utf-8")
         self.assertIn(
-            "test -f src/toss_trading/runtime/rate_limit.py",
+            "test -f src/asset_management/toss/runtime/rate_limit.py",
             cloudbuild,
         )
         self.assertIn("apt-get install", cloudbuild)

@@ -4,14 +4,13 @@
 
 한 화면에서 다음 세 질문에 답하는 것이 목표입니다.
 
-1. 수집기와 기존 Foundation 운영 감시는 정상인가?
+1. 수집기와 연구 운영 감시는 정상인가?
 2. 이번 데이터는 백테스트에 사용할 수 있을 만큼 완전한가?
 3. 검증된 전략 기준선의 수익과 위험은 시간에 따라 어떻게 변하는가?
 
 보고 기능은 주문 경로와 완전히 분리되어 있습니다.
-`live_orders_enabled=false`, 6시간 `toss-foundation.timer`, 기존 Foundation
-Foundation 경보 6개는 유지하고, 연구 경보는 BigQuery reporting upload
-실패 경보를 추가해 6개로 확장합니다.
+`live_orders_enabled=false`를 유지합니다. 연구 경보는 BigQuery reporting
+upload 실패를 포함하며, 주문 경로의 권한이나 실행 상태를 나타내지 않습니다.
 
 ## 구조
 

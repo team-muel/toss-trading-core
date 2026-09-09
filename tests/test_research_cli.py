@@ -7,8 +7,8 @@ from datetime import date, timedelta
 from io import StringIO
 from pathlib import Path
 
-from toss_trading.cli.research_backtest import main as backtest_main
-from toss_trading.cli.research_ingest_bars import main as ingest_main
+from research_platform.cli.research_backtest import main as backtest_main
+from research_platform.cli.research_ingest_bars import main as ingest_main
 
 
 class ResearchCliTest(unittest.TestCase):

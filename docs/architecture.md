@@ -21,9 +21,10 @@ under the same runtime run. The database enforces contiguous ordering, and an or
 intent requires the matching persisted risk-control stage; in-memory strings are not
 authorization evidence.
 
-The application is `src/asset_management`. The verified legacy Toss client is
-temporarily isolated behind `broker/toss_read.py`; investment logic cannot import
-it directly. Service extraction is prohibited until the monolith is stable.
+The application is `src/asset_management`. The read-only Toss boundary is
+`asset_management.toss`; investment logic cannot import it directly. Historical
+Foundation evidence is readable only through `asset_management.compatibility`.
+Service extraction is prohibited until the monolith is stable.
 
 See `src/asset_management/ARCHITECTURE.md` for compile-time dependency rules and
 `docs/adr/` for binding decisions.

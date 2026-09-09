@@ -64,7 +64,7 @@ fi
 
 REFERENCE="${RUNTIME_ROOT}/input/common-stock-reference.json"
 if [[ ! -f "${REFERENCE}" ]] || find "${REFERENCE}" -mtime +7 -print -quit | grep -q .; then
-  "${PYTHON_BIN}" -m toss_trading.cli.research_collect_massive reference \
+  "${PYTHON_BIN}" -m research_platform.cli.research_collect_massive reference \
     --output "${REFERENCE}" >/dev/null
 fi
 read -r START_DATE THROUGH_DATE < <(
@@ -75,7 +75,7 @@ print((through - timedelta(days=420)).isoformat(), through.isoformat())
 PY
 )
 BAR_JSONL="${RUNTIME_ROOT}/input/common-stock-bars.jsonl"
-"${PYTHON_BIN}" -m toss_trading.cli.research_collect_massive grouped \
+"${PYTHON_BIN}" -m research_platform.cli.research_collect_massive grouped \
   --reference "${REFERENCE}" \
   --start-date "${START_DATE}" \
   --through-date "${THROUGH_DATE}" \
@@ -93,7 +93,7 @@ FOCUS_ARGS=()
 while IFS= read -r dossier; do
   FOCUS_ARGS+=(--focus-dossier "${dossier}")
 done < <(find "${FOCUSED_RESEARCH_DIR}" -maxdepth 1 -type f -name '*.json' -print | sort)
-RESULT="$("${PYTHON_BIN}" -m toss_trading.cli.research_recommend_stocks \
+RESULT="$("${PYTHON_BIN}" -m research_platform.cli.research_recommend_stocks \
   --input-jsonl "${BAR_JSONL}" \
   --policy "${POLICY}" \
   --as-of-date "${AS_OF_DATE}" \

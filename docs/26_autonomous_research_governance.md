@@ -72,10 +72,10 @@ hypothesis-ledger/
 ## 구현 위치
 
 - 정책: `config/autonomous_research_policy.json`
-- AI 제안·불변 원장: `src/toss_trading/research/hypotheses.py`
-- 역사·전향 평가: `src/toss_trading/research/candidate_evaluation.py`
-- CLI: `src/toss_trading/cli/research_plan_hypotheses.py`,
-  `src/toss_trading/cli/research_evaluate_hypotheses.py`
+- AI 제안·불변 원장: `src/research_platform/hypotheses.py`
+- 역사·전향 평가: `src/research_platform/candidate_evaluation.py`
+- CLI: `src/research_platform/cli/research_plan_hypotheses.py`,
+  `src/research_platform/cli/research_evaluate_hypotheses.py`
 - GCP 실행: `scripts/run_research_automation_gcp.sh`
 
 ## 2026-08-11 다계열 확장

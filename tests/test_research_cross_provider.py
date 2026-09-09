@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toss_trading.cli.research_validate_bars import validate_parquet
+from research_platform.cli.research_validate_bars import validate_parquet
 
 
 @unittest.skipUnless(

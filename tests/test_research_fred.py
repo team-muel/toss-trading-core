@@ -5,7 +5,7 @@ from datetime import date
 import tempfile
 from pathlib import Path
 
-from toss_trading.cli.research_collect_fred import (
+from research_platform.cli.research_collect_fred import (
     MAX_REALTIME_WINDOW_DAYS,
     FredObservationsClient,
     _atomic_cache_json,

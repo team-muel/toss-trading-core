@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toss_trading.research.massive import (
+from research_platform.massive import (
     collect_common_stock_reference,
     collect_grouped_daily_history,
     normalize_grouped_daily,

@@ -36,7 +36,7 @@ for command in gcloud bq; do
 done
 
 if [[ "${SERVICE_ACCOUNT}" == "toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com" ]]; then
-  echo "research provisioning refuses the Foundation service account" >&2
+  echo "research provisioning refuses the retired execution service account" >&2
   exit 78
 fi
 
@@ -191,12 +191,6 @@ gcloud secrets add-iam-policy-binding "${CALIBRATION_SECRET}" \
   --project="${PROJECT_ID}" \
   --member="serviceAccount:${SERVICE_ACCOUNT}" \
   --role="roles/secretmanager.secretAccessor" \
-  --condition=None
-FOUNDATION_SERVICE_ACCOUNT="toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com"
-gcloud secrets add-iam-policy-binding "${CALIBRATION_SECRET}" \
-  --project="${PROJECT_ID}" \
-  --member="serviceAccount:${FOUNDATION_SERVICE_ACCOUNT}" \
-  --role="roles/secretmanager.secretVersionAdder" \
   --condition=None
 METRIC_DIR="${WORK_DIR}/metrics"
 "${PYTHON_BIN}" scripts/render_research_log_metrics.py \

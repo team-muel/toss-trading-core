@@ -26,7 +26,7 @@ EXECUTION_COST_CALIBRATION="${RESEARCH_EXECUTION_COST_CALIBRATION:-/home/seoje/t
 EXECUTION_COST_CALIBRATION_SECRET="${RESEARCH_EXECUTION_COST_CALIBRATION_SECRET:-}"
 : "${RESEARCH_PORTFOLIO_NOTIONAL_USD:?RESEARCH_PORTFOLIO_NOTIONAL_USD is required}"
 PORTFOLIO_NOTIONAL_USD="${RESEARCH_PORTFOLIO_NOTIONAL_USD}"
-CODE_REVISION="${FOUNDATION_CODE_REVISION:-}"
+CODE_REVISION="${RESEARCH_CODE_REVISION:-}"
 if [[ -z "${CODE_REVISION}" ]] && command -v git >/dev/null 2>&1; then
   CODE_REVISION="$(git -C "${ROOT_DIR}" rev-parse --verify HEAD 2>/dev/null || true)"
 fi
@@ -41,7 +41,7 @@ if [[ -z "${CODE_REVISION}" ]]; then
   echo "immutable code revision could not be resolved" >&2
   exit 78
 fi
-export FOUNDATION_CODE_REVISION="${CODE_REVISION}"
+export RESEARCH_CODE_REVISION="${CODE_REVISION}"
 
 RUN_TIMESTAMP="$(date -u +"%Y%m%dT%H%M%SZ")"
 RUN_ID="${RUN_MODE}-${RUN_TIMESTAMP}-${CODE_REVISION:0:12}"
@@ -160,7 +160,7 @@ load_optional_secret() {
 }
 
 read -r START_DATE THROUGH_DATE REALTIME_START REALTIME_END < <(
-  "${PYTHON_BIN}" -m toss_trading.cli.research_automation window \
+  "${PYTHON_BIN}" -m research_platform.cli.research_automation window \
     --mode "${RUN_MODE}" \
     --format fields
 )
@@ -168,7 +168,7 @@ read -r START_DATE THROUGH_DATE REALTIME_START REALTIME_END < <(
 json_log "research_automation_start" "" "running" ""
 PROVIDER_STATES=("toss=collected")
 
-"${PYTHON_BIN}" -m toss_trading.cli.research_validate_instruments \
+"${PYTHON_BIN}" -m research_platform.cli.research_validate_instruments \
   --universe "data/universe.csv" \
   --instrument-master "data/instrument_master.csv" \
   --instrument-history "data/instrument_history.csv" \
@@ -177,7 +177,7 @@ PROVIDER_STATES=("toss=collected")
   > "${REPORT_DIR}/instrument-identity-qa.json"
 json_log "research_instrument_identity_ok" "" "passed" ""
 
-"${PYTHON_BIN}" -m toss_trading.cli.research_collect_toss collect \
+"${PYTHON_BIN}" -m research_platform.cli.research_collect_toss collect \
   --universe "data/universe.csv" \
   --start-date "${START_DATE}" \
   --skip-unavailable-symbols \
@@ -185,7 +185,7 @@ json_log "research_instrument_identity_ok" "" "passed" ""
   --output "${INPUT_DIR}/toss-candles-raw.json" \
   > "${REPORT_DIR}/toss-raw-collection.json"
 
-"${PYTHON_BIN}" -m toss_trading.cli.research_collect_toss collect \
+"${PYTHON_BIN}" -m research_platform.cli.research_collect_toss collect \
   --universe "data/universe.csv" \
   --start-date "${START_DATE}" \
   --skip-unavailable-symbols \
@@ -193,21 +193,21 @@ json_log "research_instrument_identity_ok" "" "passed" ""
   --output "${INPUT_DIR}/toss-candles-adjusted.json" \
   > "${REPORT_DIR}/toss-adjusted-collection.json"
 
-"${PYTHON_BIN}" -m toss_trading.cli.research_collect_toss ingest \
+"${PYTHON_BIN}" -m research_platform.cli.research_collect_toss ingest \
   --input "${INPUT_DIR}/toss-candles-raw.json" \
   --output-root "${LAKE_DIR}" \
   --through-date "${THROUGH_DATE}" \
   --code-revision "${CODE_REVISION}" \
   > "${REPORT_DIR}/toss-raw-ingest.json"
 
-"${PYTHON_BIN}" -m toss_trading.cli.research_collect_toss ingest \
+"${PYTHON_BIN}" -m research_platform.cli.research_collect_toss ingest \
   --input "${INPUT_DIR}/toss-candles-adjusted.json" \
   --output-root "${LAKE_DIR}" \
   --through-date "${THROUGH_DATE}" \
   --code-revision "${CODE_REVISION}" \
   > "${REPORT_DIR}/toss-adjusted-ingest.json"
 
-"${PYTHON_BIN}" -m toss_trading.cli.research_collect_toss_reference \
+"${PYTHON_BIN}" -m research_platform.cli.research_collect_toss_reference \
   --universe "data/universe.csv" \
   --output-root "${LAKE_DIR}" \
   --code-revision "${CODE_REVISION}" \
@@ -227,7 +227,7 @@ if [[ "${RESEARCH_TIINGO_LICENSE_ACCEPTED:-0}" == "1" ]] \
   && load_optional_secret \
     "TIINGO_API_TOKEN" \
     "${TIINGO_API_TOKEN_SECRET:-tiingo-api-token}"; then
-  "${PYTHON_BIN}" -m toss_trading.cli.research_collect_tiingo \
+  "${PYTHON_BIN}" -m research_platform.cli.research_collect_tiingo \
     --universe "data/universe.csv" \
     --instrument-master "data/instrument_master.csv" \
     --start-date "${TIINGO_START_DATE}" \
@@ -281,7 +281,7 @@ if [[ "${RUN_MODE}" == "weekly" && "${RESEARCH_SEC_CONTACT_APPROVED:-0}" == "1" 
   && load_optional_secret \
     "SEC_USER_AGENT" \
     "${SEC_USER_AGENT_SECRET:-sec-user-agent}"; then
-  "${PYTHON_BIN}" -m toss_trading.cli.research_collect_sec \
+  "${PYTHON_BIN}" -m research_platform.cli.research_collect_sec \
     --instrument-master "data/instrument_master.csv" \
     --include-companyfacts \
     --output-root "${LAKE_DIR}" \
@@ -303,7 +303,7 @@ if [[ "${RESEARCH_FRED_SERIES_RIGHTS_APPROVED:-0}" == "1" ]] \
   && load_optional_secret \
     "FRED_API_KEY" \
     "${FRED_API_KEY_SECRET:-fred-api-key}"; then
-  "${PYTHON_BIN}" -m toss_trading.cli.research_collect_fred \
+  "${PYTHON_BIN}" -m research_platform.cli.research_collect_fred \
     --series-registry "config/fred_series.csv" \
     --realtime-start "${REALTIME_START}" \
     --realtime-end "${REALTIME_END}" \
@@ -335,7 +335,7 @@ if [[ "${TIINGO_STATE}" == "collected" ]]; then
     --cross-provider-source tiingo-eod
   )
 fi
-if ! "${PYTHON_BIN}" -m toss_trading.cli.research_validate_bars \
+if ! "${PYTHON_BIN}" -m research_platform.cli.research_validate_bars \
   "${BAR_VALIDATION_ARGS[@]}" \
   > "${REPORT_DIR}/market-bars-qa.json"; then
   json_log "research_validation_failed" "" "failed" "market_bar_qa"
@@ -355,7 +355,7 @@ if [[ "${TIINGO_STATE}" == "collected" \
   if [[ -n "${RESEARCH_HYPOTHESIS_MAX_NEW_OVERRIDE:-}" ]]; then
     PLAN_LIMIT="${RESEARCH_HYPOTHESIS_MAX_NEW_OVERRIDE}"
   fi
-  if "${PYTHON_BIN}" -m toss_trading.cli.research_plan_hypotheses \
+  if "${PYTHON_BIN}" -m research_platform.cli.research_plan_hypotheses \
     --policy "${ROOT_DIR}/config/autonomous_research_policy.json" \
     --universe "${ROOT_DIR}/data/universe.csv" \
     --ledger-dir "${RUNTIME_ROOT}/hypothesis-ledger" \
@@ -393,7 +393,7 @@ if [[ ( "${RUN_MODE}" == "weekly" \
   if [[ -n "${PREVIOUS_MARKET_DATE}" ]]; then
     PROSPECTIVE_CUTOFF_ARGS=(--prospective-cutoff "${PREVIOUS_MARKET_DATE}")
   fi
-  if "${PYTHON_BIN}" -m toss_trading.cli.research_evaluate_hypotheses \
+  if "${PYTHON_BIN}" -m research_platform.cli.research_evaluate_hypotheses \
     --policy "${ROOT_DIR}/config/autonomous_research_policy.json" \
     --ledger-dir "${RUNTIME_ROOT}/hypothesis-ledger" \
     --output-dir "${LAKE_DIR}/gold/hypothesis_evaluations" \
@@ -427,7 +427,7 @@ if [[ -z "${STRATEGY_EXPERIMENT}" \
   if [[ -n "${PREVIOUS_MARKET_DATE}" ]]; then
     STRATEGY_CUTOFF_ARGS=(--as-of-date "${PREVIOUS_MARKET_DATE}")
   fi
-  "${PYTHON_BIN}" -m toss_trading.cli.research_backtest \
+  "${PYTHON_BIN}" -m research_platform.cli.research_backtest \
     --parquet "${LAKE_DIR}/silver/market_bars/**/*.parquet" \
     "${STRATEGY_CUTOFF_ARGS[@]}" \
     --candidate SPY \
@@ -500,10 +500,10 @@ if [[ -n "${HYPOTHESIS_EVALUATION_RESULT}" \
   && -f "${HYPOTHESIS_EVALUATION_RESULT}" ]]; then
   VERIFY_ARGS+=(--hypothesis-evaluation "${HYPOTHESIS_EVALUATION_RESULT}")
 fi
-"${PYTHON_BIN}" -m toss_trading.cli.research_automation verify \
+"${PYTHON_BIN}" -m research_platform.cli.research_automation verify \
   "${VERIFY_ARGS[@]}" \
   > "${RUNTIME_ROOT}/last-verification.json"
-"${PYTHON_BIN}" -m toss_trading.cli.research_reporting event \
+"${PYTHON_BIN}" -m research_platform.cli.research_reporting event \
   --summary "${REPORT_DIR}/reporting-summary.json" \
   >> "${JSON_LOG_PATH}"
 mapfile -t STRATEGY_GATE < <(
@@ -543,7 +543,7 @@ if [[ -z "${GCS_URI}" ]]; then
   echo "RESEARCH_GCS_URI is required after local verification" >&2
   exit 66
 fi
-"${PYTHON_BIN}" -m toss_trading.cli.research_upload_gcs \
+"${PYTHON_BIN}" -m research_platform.cli.research_upload_gcs \
   --source-dir "${RUN_DIR}" \
   --destination-uri "${GCS_URI%/}/runs/${RUN_ID}" \
   --workers 16 \
@@ -556,7 +556,7 @@ fi
   > "${RUNTIME_ROOT}/last-gcs-upload.json"
 json_log "research_backup_upload_ok" "" "uploaded" "${GCS_URI%/}/runs/${RUN_ID}"
 
-if ! "${PYTHON_BIN}" -m toss_trading.cli.research_reporting \
+if ! "${PYTHON_BIN}" -m research_platform.cli.research_reporting \
   upload-bigquery \
   --summary "${REPORT_DIR}/reporting-summary.json" \
   --project-id "${GCP_PROJECT_ID}" \
@@ -613,7 +613,7 @@ if [[ "${RESEARCH_EMAIL_ENABLED:-0}" == "1" \
   INTERPRETATION_DIR="${RUNTIME_ROOT}/interpretations"
   INTERPRETATION_PATH="${INTERPRETATION_DIR}/${RUN_ID}.json"
   mkdir -p "${INTERPRETATION_DIR}"
-  if ! "${PYTHON_BIN}" -m toss_trading.cli.research_reporting \
+  if ! "${PYTHON_BIN}" -m research_platform.cli.research_reporting \
     interpret \
     --summary "${REPORT_DIR}/reporting-summary.json" \
     "${PREVIOUS_SUMMARY_ARGS[@]}" \
@@ -644,7 +644,7 @@ if [[ "${RESEARCH_EMAIL_ENABLED:-0}" == "1" \
       "fallback" \
       "fact_only_report"
   fi
-  if ! "${PYTHON_BIN}" -m toss_trading.cli.research_reporting \
+  if ! "${PYTHON_BIN}" -m research_platform.cli.research_reporting \
     email \
     --summary "${REPORT_DIR}/reporting-summary.json" \
     "${PREVIOUS_SUMMARY_ARGS[@]}" \
@@ -668,7 +668,7 @@ else
   json_log "research_email_skipped" "gmail" "disabled" "oauth_not_configured"
 fi
 
-"${PYTHON_BIN}" -m toss_trading.cli.research_record_observation \
+"${PYTHON_BIN}" -m research_platform.cli.research_record_observation \
   --ledger "${PROSPECTIVE_OBSERVATION_LEDGER}" \
   --run-id "${RUN_ID}" \
   --code-revision "${CODE_REVISION}" \

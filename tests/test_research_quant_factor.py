@@ -4,8 +4,8 @@ import math
 import unittest
 from datetime import date, timedelta
 
-from toss_trading.research import PricePoint, QuantFactorConfig, run_quant_factor_backtest
-from toss_trading.research.costs import ExecutionCostModel, SlippageTier
+from research_platform import PricePoint, QuantFactorConfig, run_quant_factor_backtest
+from research_platform.costs import ExecutionCostModel, SlippageTier
 
 
 def _points(days: int = 900) -> list[PricePoint]:
