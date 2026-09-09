@@ -12,17 +12,24 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          ref: a2a7f2b5e0b6ce817c97f56e9f8a5a26a8fc24a1
+          ref: 79d893f01e0b0eb82538996e9fe24506f3e0c00c
           persist-credentials: false
-      - name: Export only tracked cleanup source
+          path: reviewed
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 111c900eb83dead75a41699a737f332668cf69ac
+          persist-credentials: false
+          path: quant
+      - name: Export tracked source at immutable review coordinates
         run: |
           mkdir -p "${RUNNER_TEMP}/audit"
-          git archive --format=tar HEAD > "${RUNNER_TEMP}/audit/source-a2a7f2b.tar"
+          git -C reviewed archive --format=tar HEAD > "${RUNNER_TEMP}/audit/reviewed-79d893f.tar"
+          git -C quant archive --format=tar HEAD > "${RUNNER_TEMP}/audit/quant-111c900.tar"
           cd "${RUNNER_TEMP}/audit"
-          sha256sum source-a2a7f2b.tar > SHA256SUMS
+          sha256sum *.tar > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ama167-cleanup-a2a7f2b
+          name: ama167-reconciliation-sources
           path: ${{ runner.temp }}/audit
           retention-days: 1
           if-no-files-found: error
