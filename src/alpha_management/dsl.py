@@ -23,6 +23,7 @@ from lark import Lark, Transformer
 from asset_management.time.asof import AsOfContext, require_as_of_context
 
 from . import operators as ops
+from .arithmetic import BINARY_OPERATORS, binary_panel
 from .datafields import RepositoryDataFields
 
 Panel: TypeAlias = Mapping[str, Sequence[float | None]]
@@ -43,6 +44,7 @@ class ValueType(str, Enum):
 
 class Axis(str, Enum):
     ELEMENT = "ELEMENT"
+    BINARY = "BINARY"
     TIME = "TIME"
     CROSS_SECTION = "CROSS_SECTION"
 
@@ -113,6 +115,11 @@ OPERATOR_REGISTRY = {
     for name in ("rank", "zscore", "scale", "winsorize")
 }
 OPERATOR_REGISTRY["sign"] = _spec("sign", (ValueType.PANEL,), Axis.ELEMENT)
+OPERATOR_REGISTRY["negate"] = _spec("negate", (ValueType.PANEL,), Axis.ELEMENT)
+OPERATOR_REGISTRY.update({
+    name: _spec(name, (ValueType.PANEL, ValueType.PANEL), Axis.BINARY)
+    for name in BINARY_OPERATORS
+})
 OPERATOR_REGISTRY.update({
     name: _spec(name, (ValueType.PANEL, ValueType.INTEGER), Axis.TIME)
     for name in (
@@ -166,7 +173,11 @@ def validate_expression(
         validate_expression(item, data_fields=data_fields, group_fields=group_fields)
         for item in node.arguments
     )
-    if actual != spec.arguments:
+    if spec.axis is Axis.BINARY:
+        numeric = {ValueType.PANEL, ValueType.SCALAR, ValueType.INTEGER}
+        if ValueType.PANEL not in actual or any(value not in numeric for value in actual):
+            raise ExpressionError("arithmetic requires a Panel and a Panel or numeric scalar")
+    elif actual != spec.arguments:
         raise ExpressionError(
             f"{node.operator} expects {[item.value for item in spec.arguments]}, "
             f"got {[item.value for item in actual]}"
@@ -393,6 +404,10 @@ def evaluate_expression(node: ExpressionNode, resolver: PanelResolver):
     if spec is None:
         raise ExpressionError(f"unknown operator: {node.operator}")
     arguments = [evaluate_expression(item, resolver) for item in node.arguments]
+    if spec.axis is Axis.BINARY:
+        return _require_finite_panel(binary_panel(node.operator, *arguments), node.operator)
+    if node.operator == "negate":
+        return _require_finite_panel(binary_panel("subtract", 0, arguments[0]), node.operator)
     function = getattr(ops, node.operator)
     if spec.axis is Axis.TIME:
         panel, window = arguments
