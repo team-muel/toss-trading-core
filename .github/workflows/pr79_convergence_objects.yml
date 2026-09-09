@@ -1,0 +1,41 @@
+name: pr79-convergence-objects
+on:
+  push:
+    branches: [audit/pr79-convergence-publication]
+    paths: [audit/pr79-convergence/**, .github/workflows/pr79_convergence_objects.yml]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: transport
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: a2a7f2b5e0b6ce817c97f56e9f8a5a26a8fc24a1
+          path: source
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 79d893f01e0b0eb82538996e9fe24506f3e0c00c
+          path: research
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 111c900eb83dead75a41699a737f332668cf69ac
+          path: quant
+          persist-credentials: false
+      - name: Verify complete locally tested source identity
+        run: python transport/audit/pr79-convergence/publish_source_objects.py source research quant transport/audit/pr79-convergence
+      - name: Publish verified objects on audit ref only
+        working-directory: source
+        run: |
+          set -eu
+          git config user.name "Verified source object staging"
+          git config user.email "object-staging@users.noreply.github.com"
+          test "$(git write-tree)" = ffac359f613c092ff7208ad5c9b145c432986ac5
+          git commit -m "Stage verified PR79 convergence source"
+          git push origin HEAD:refs/heads/audit/objects-ffac359f613c092ff7208ad5c9b145c432986ac5
