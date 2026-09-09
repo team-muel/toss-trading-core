@@ -10,7 +10,8 @@ from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.governance import ModelAuthorization, ModelRegistry
 from asset_management.pricing import RiskFreeCurve
-from asset_management.risk import FactorRiskAssessment, SpecificRiskPolicy
+from asset_management.risk import (FACTOR_RISK_EVIDENCE_DATASET, FactorRiskAssessment,
+                                   SpecificRiskPolicy, specific_risk_policy_payload)
 from asset_management.risk.covariance import is_psd
 
 from .account_truth import CheckEvidence
@@ -67,28 +68,37 @@ class FactorRiskRuntimeEvidence:
     assessment: FactorRiskAssessment
     specific_risk_policy: SpecificRiskPolicy
     information_cutoff: datetime
-    available_at: datetime
-    source_manifest_ids: tuple[str, ...]
+    evidence_manifest_id: str
     store: ImmutableDatasetStore
 
     def check(self) -> CheckEvidence:
         cutoff = _aware(self.information_cutoff, "FACTOR_RISK_CUTOFF_INVALID")
-        available = _aware(self.available_at, "FACTOR_RISK_AVAILABLE_AT_INVALID")
         if (self.assessment.currency_basis is not CurrencyBasis.BASE or
-                self.assessment.as_of > cutoff or available > cutoff):
+                self.assessment.as_of > cutoff):
             raise ValueError("FACTOR_RISK_CONTEXT_INVALID")
         if (not is_psd(self.assessment.covariance) or
                 any(value < self.specific_risk_policy.residual_variance_floor
                     for value in self.assessment.specific_variance)):
             raise ValueError("FACTOR_RISK_DECOMPOSITION_INVALID")
-        manifests = _manifest_evidence(self.source_manifest_ids, reason="FACTOR_RISK_MANIFEST_INVALID")
-        for manifest_id in self.source_manifest_ids:
+        manifests = _manifest_evidence((self.evidence_manifest_id,), reason="FACTOR_RISK_MANIFEST_INVALID")
+        evidence_manifest, body = self.store.read(self.evidence_manifest_id)
+        evidence_available_at = _aware(
+            datetime.fromisoformat(evidence_manifest.available_at), "FACTOR_RISK_MANIFEST_TIME_INVALID")
+        if (evidence_manifest.layer != "gold" or evidence_manifest.source != "tiingo-eod" or
+                evidence_manifest.dataset != FACTOR_RISK_EVIDENCE_DATASET or evidence_available_at > cutoff or
+                not isinstance(body, dict) or body != {
+                    "assessment": self.assessment.payload(),
+                    "specific_risk_policy": specific_risk_policy_payload(self.specific_risk_policy),
+                } or not evidence_manifest.parent_manifest_ids):
+            raise ValueError("FACTOR_RISK_EVIDENCE_BINDING_INVALID")
+        for manifest_id in evidence_manifest.parent_manifest_ids:
             manifest, _ = self.store.read(manifest_id)
             manifest_available_at = _aware(
                 datetime.fromisoformat(manifest.available_at), "FACTOR_RISK_MANIFEST_TIME_INVALID")
             if manifest.source != "tiingo-eod" or manifest_available_at > cutoff:
                 raise ValueError("FACTOR_RISK_MANIFEST_CONTEXT_INVALID")
-        return CheckEvidence(True, manifests)
+        return CheckEvidence(True, manifests + _manifest_evidence(
+            evidence_manifest.parent_manifest_ids, reason="FACTOR_RISK_MANIFEST_INVALID"))
 
 
 @dataclass(frozen=True, slots=True)

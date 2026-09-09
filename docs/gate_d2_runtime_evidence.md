@@ -8,8 +8,10 @@ caller-provided booleans:
   horizons. The manifest and each point must be available at the requested
   information cutoff and use the approved currency,
   `BUS/252`, and `EFFECTIVE_ANNUAL` conventions.
-- Factor/specific-risk evidence requires a USD-base assessment with a complete
-  immutable Tiingo EOD source-manifest set, a known availability time, PSD covariance, and
+- Factor/specific-risk evidence requires a USD-base assessment, PSD covariance,
+  and a positive specific-risk floor. It is published as an immutable Tiingo
+  EOD gold evidence artifact with the exact assessment/policy payload and a
+  complete immutable Tiingo EOD source-manifest parent set.
   the validated specific-risk floor/decomposition already enforced by the
   assessment contract.
 - Model-lineage evidence requires an active registry authorization, a matching

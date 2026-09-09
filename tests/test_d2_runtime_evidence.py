@@ -5,7 +5,7 @@ from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.pricing import RiskFreeCurve, RiskFreePoint
 from asset_management.quality.models import QualityStatus
 from asset_management.domain.economics import CurrencyBasis
-from asset_management.risk import FactorRiskAssessment, SpecificRiskPolicy
+from asset_management.risk import FactorRiskAssessment, SpecificRiskPolicy, publish_factor_risk_evidence
 import pytest
 
 from asset_management.validation import (
@@ -62,16 +62,19 @@ def test_factor_evidence_requires_psd_covariance_and_the_specific_risk_floor(tmp
     valid = FactorRiskAssessment(("A",), (Decimal(".04"),), (Decimal(".01"),),
                                  (Decimal(".05"),), ((Decimal(".05"),),), CurrencyBasis.BASE,
                                  NOW, "specific-risk@1", Decimal(0), Decimal(0))
+    published = publish_factor_risk_evidence(
+        store=store, assessment=valid, policy=policy, source_manifest_ids=(evidence_id,), published_at=NOW,
+        code_revision="factor-risk-evidence@1")
     result = assemble_d2_runtime_evidence(
         risk_free=None,
-        factor_risk=FactorRiskRuntimeEvidence(valid, policy, NOW, NOW, (evidence_id,), store), model_lineage=None)
+        factor_risk=FactorRiskRuntimeEvidence(valid, policy, NOW, published.manifest_id, store), model_lineage=None)
     assert result.checks["FACTOR_SPECIFIC_RISK_DECOMPOSITION_AND_FLOOR_VERIFIED"].passed
     below_floor = FactorRiskAssessment(("A",), (Decimal(".04"),), (Decimal(".001"),),
                                        (Decimal(".041"),), ((Decimal(".041"),),), CurrencyBasis.BASE,
                                        NOW, "specific-risk@1", Decimal(0), Decimal(0))
     denied = assemble_d2_runtime_evidence(
         risk_free=None,
-        factor_risk=FactorRiskRuntimeEvidence(below_floor, policy, NOW, NOW, (evidence_id,), store), model_lineage=None)
+        factor_risk=FactorRiskRuntimeEvidence(below_floor, policy, NOW, published.manifest_id, store), model_lineage=None)
     assert denied.failure_reasons["FACTOR_SPECIFIC_RISK_DECOMPOSITION_AND_FLOOR_VERIFIED"] == "FACTOR_RISK_DECOMPOSITION_INVALID"
 
 
