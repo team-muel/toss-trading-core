@@ -1,0 +1,29 @@
+name: ama162-source-snapshot
+
+on:
+  push:
+    branches: [feat/ama-162-canonical-research]
+    paths: [.github/workflows/ama162_source_snapshot.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 7f893118a7227ef9de6f388e824c55165c05c5d0
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: |
+          git archive --format=tar HEAD > "${RUNNER_TEMP}/source-7f893118.tar"
+          sha256sum "${RUNNER_TEMP}/source-7f893118.tar"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ama162-pinned-source
+          path: ${{ runner.temp }}/source-7f893118.tar
+          retention-days: 1
+          if-no-files-found: error
