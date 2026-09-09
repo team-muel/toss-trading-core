@@ -1,45 +1,31 @@
-# GCP research-data automation
+# GCP research-data automation — retired
 
-Research automation is a separate, read-only collection surface. It produces
-immutable data products for `research_platform`; it never starts an account,
-portfolio, risk, or execution runtime and cannot submit orders.
+> **Operational status: retired.** This document no longer authorizes or describes a supported standalone research deployment. Do not provision, install, enable, or start the former `toss-research-*`, `toss-stock-recommendations*`, `toss-foundation*`, or `toss-paper-operation*` units from repository history.
 
-## Scheduled work
+The repository now has one operational identity: the Point-in-Time Asset Management OS through the canonical `asset_management` runtime. `research_platform` and `alpha_management` are upstream research capabilities only; they are not separately scheduled cloud applications and do not own account, risk, portfolio, paper-broker, or execution authority.
 
-| Schedule | Scope | Output |
-| --- | --- | --- |
-| daily | Recent market bars and revision window | Immutable run directory and QA report |
-| weekly | Long-horizon reconciliation and provider revisions | Immutable run directory and QA report |
-| prune | Retention of validated local runs | Keeps the current and rollback releases |
+## Historical evidence
 
-The active systemd units are `toss-research-daily.timer`,
-`toss-research-weekly.timer`, and `toss-research-prune.timer`. The installer is
-`scripts/install_research_automation_vm.sh`. It installs only research and
-stock-recommendation units; deprecated account and paper-operation units are
-not installed.
+Previously collected immutable datasets, hypotheses, QA reports, and replay artifacts may remain readable as historical evidence when they satisfy the canonical PIT and lineage contracts. Retaining those artifacts does **not** retain authority to run the old collectors or schedulers.
 
-## Controls
+## Retirement procedure
 
-- `flock` prevents overlapping collection runs.
-- Missing provider consent, credentials, or contact information emits a
-  provider-specific skipped result; it does not silently change collection scope.
-- A run uploads only after lineage, coverage, temporal ordering, and quality
-  checks pass.
-- GCS writes are create-only under the run id; mutable latest pointers are
-  derived after validation.
-- Secrets remain in Secret Manager or the protected research environment, never
-  in Git, manifests, or logs.
-
-## Deployment verification
+Legacy systemd resources are inventoried with the fail-closed retirement planner:
 
 ```bash
-./scripts/provision_research_automation_gcp.sh
-./scripts/install_research_automation_vm.sh
-sudo systemctl start toss-research-automation@daily.service
-systemctl is-enabled toss-research-daily.timer
-systemctl is-enabled toss-research-weekly.timer
+python -m asset_management.cli.legacy_retirement systemd
 ```
 
-This deployment does not authorize research outputs for trading. Any future
-handoff must enter `asset_management` through its explicit governed integration
-boundary and satisfy its normal evidence gates.
+The command is dry-run by default. Any apply operation requires an explicitly reviewed, fresh `plan_sha256` and revalidates the recorded unit identities before the first destructive command. Unknown unit names or changed unit files fail closed.
+
+GCP monitoring resources are handled separately with an explicit project and instance scope:
+
+```bash
+python -m asset_management.cli.legacy_retirement gcp --project <project-id> --instance-id <numeric-instance-id>
+```
+
+This is also dry-run by default. Shared or dynamically scoped resources remain for manual review. IAM, secrets, buckets, datasets, account data, and canonical OS resources are outside the automatic retirement surface.
+
+## Current rule
+
+Do not reactivate the historical daily/weekly/prune services or their installer/provisioner scripts. New research consumers must enter the canonical immutable/PIT data and governed Signal/Forecast path owned by `asset_management`; production adoption is accepted only through the corresponding OS gates and current runbooks.
