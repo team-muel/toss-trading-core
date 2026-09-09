@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
 
-from asset_management.calculations import CalculationLineageGraph, ModelCalculationBinding
+from asset_management.calculations import (MODEL_LINEAGE_EVIDENCE_DATASET, CalculationLineageGraph,
+                                           ModelCalculationBinding, model_authorization_payload)
 from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.governance import ModelAuthorization, ModelRegistry
@@ -109,6 +110,7 @@ class ModelLineageRuntimeEvidence:
     lineage: CalculationLineageGraph
     store: ImmutableDatasetStore
     information_cutoff: datetime
+    evidence_manifest_id: str
 
     def check(self) -> CheckEvidence:
         cutoff = _aware(self.information_cutoff, "MODEL_LINEAGE_CUTOFF_INVALID")
@@ -120,9 +122,21 @@ class ModelLineageRuntimeEvidence:
                 self.binding.bound_at > cutoff):
             raise ValueError("MODEL_LINEAGE_BINDING_INVALID")
         self.lineage.verify_raw_manifests(self.store)
-        manifests = tuple(node.raw_manifest_id for node in self.lineage.trace()
-                          if node.raw_manifest_id is not None)
-        return CheckEvidence(True, _manifest_evidence(manifests, reason="MODEL_LINEAGE_MANIFEST_INVALID"))
+        raw_manifests = tuple(node.raw_manifest_id for node in self.lineage.trace()
+                              if node.raw_manifest_id is not None)
+        evidence, body = self.store.read(self.evidence_manifest_id)
+        evidence_available_at = _aware(datetime.fromisoformat(evidence.available_at),
+                                        "MODEL_LINEAGE_MANIFEST_TIME_INVALID")
+        if (evidence.layer != "gold" or evidence.source != "model-lineage" or
+                evidence.dataset != MODEL_LINEAGE_EVIDENCE_DATASET or evidence_available_at > cutoff or
+                evidence.parent_manifest_ids != tuple(sorted(raw_manifests)) or not isinstance(body, dict) or
+                body != {"registry": self.registry.payload(),
+                         "model_authorization": model_authorization_payload(self.authorization),
+                         "binding": self.binding.payload(), "lineage": self.lineage.payload()}):
+            raise ValueError("MODEL_LINEAGE_EVIDENCE_BINDING_INVALID")
+        return CheckEvidence(True, _manifest_evidence((self.evidence_manifest_id,),
+            reason="MODEL_LINEAGE_MANIFEST_INVALID") + _manifest_evidence(
+                raw_manifests, reason="MODEL_LINEAGE_MANIFEST_INVALID"))
 
 
 @dataclass(frozen=True, slots=True)

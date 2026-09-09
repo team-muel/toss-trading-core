@@ -16,7 +16,9 @@ caller-provided booleans:
   assessment contract.
 - Model-lineage evidence requires an active registry authorization, a matching
   model-calculation binding, and a calculation graph whose raw manifests verify
-  in the immutable store.
+  in the immutable store. It is published as a gold `model-lineage-evidence`
+  artifact containing the exact registry, authorization, binding, and graph
+  payloads, with all traced raw manifests retained as immutable parents.
 
 `build_d2_gate_input` accepts the remaining static checks separately and
 derives these three runtime checks from `assemble_d2_runtime_evidence`. It
