@@ -75,10 +75,16 @@ def test_historical_compatibility_has_no_fresh_collector():
     assert not hasattr(HistoricalAccountReader,'snapshot')
 
 
-def write_curve(store, body):
+def write_curve(store, body, *, schema_version='fred-risk-free-curve@1', quality_status='RAW'):
     return store.write(body,layer='bronze',source='fred-alfred',dataset='risk-free-curve',
-        schema_version='fred-risk-free-curve@1',retrieved_at=NOW,available_at=NOW,provider_timestamp=NOW,
-        license_tag=LICENSE,code_revision='test',request_hash='b'*64,quality_status='RAW').manifest_id
+        schema_version=schema_version,retrieved_at=NOW,available_at=NOW,provider_timestamp=NOW,
+        license_tag=LICENSE,code_revision='test',request_hash='b'*64,quality_status=quality_status).manifest_id
+
+
+def curve_body():
+    return {'observations':[
+        {'series_id':s,'as_of':NOW.isoformat(),'available_at':NOW.isoformat(),'value_percent':'4'}
+        for s in ('DGS1MO','DGS3MO','DGS6MO','DGS1')]}
 
 
 def test_curve_with_empty_artifact_cannot_pass(tmp_path):
@@ -95,15 +101,28 @@ def test_curve_with_empty_artifact_cannot_pass(tmp_path):
 def test_curve_rates_are_recalculated_not_just_metadata_checked(tmp_path):
     from decimal import Decimal
     store=ImmutableDatasetStore(tmp_path)
-    mid=write_curve(store, {'observations':[
-        {'series_id':s,'as_of':NOW.isoformat(),'available_at':NOW.isoformat(),'value_percent':'4'}
-        for s in ('DGS1MO','DGS3MO','DGS6MO','DGS1')]})
+    mid=write_curve(store, curve_body())
     curve=materialize_usd_fred_risk_free_curve(store=store,manifest_id=mid,information_cutoff=NOW)
     assert RiskFreeRuntimeEvidence(curve,'USD',NOW,store).check().passed
     forged=RiskFreeCurve(tuple(RiskFreePoint(NOW,NOW,h,Decimal('.99'),'fred-alfred',mid,QualityStatus.VALID)
                               for h in (21,63,126,252)))
     with pytest.raises(ValueError,match='NOT_BOUND'):
         RiskFreeRuntimeEvidence(forged,'USD',NOW,store).check()
+
+
+@pytest.mark.parametrize(('schema_version','quality_status'), [
+    ('unapproved-schema','RAW'),
+    ('fred-risk-free-curve@1','VALID'),
+])
+def test_curve_unapproved_manifest_contract_cannot_pass_d2(tmp_path, schema_version, quality_status):
+    store=ImmutableDatasetStore(tmp_path)
+    mid=write_curve(store, curve_body(), schema_version=schema_version, quality_status=quality_status)
+    curve=materialize_usd_fred_risk_free_curve(store=store,manifest_id=mid,information_cutoff=NOW)
+    result=assemble_d2_runtime_evidence(
+        risk_free=RiskFreeRuntimeEvidence(curve,'USD',NOW,store),factor_risk=None,model_lineage=None)
+    name='RISK_FREE_CURRENCY_HORIZON_COMPOUNDING_VERIFIED'
+    assert not result.checks[name].passed
+    assert result.failure_reasons[name]=='RISK_FREE_MANIFEST_CONTEXT_INVALID'
 
 
 def test_unrelated_tiingo_parent_cannot_approve_factor_risk(tmp_path):
