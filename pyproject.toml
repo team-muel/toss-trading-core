@@ -81,6 +81,8 @@ alpha_management = ["fast_expression.lark"]
 "share/toss-trading/docs/economics" = ["docs/toss_accounting_evidence.md", "docs/portfolio_accounting.md", "docs/economic_semantics.md", "docs/economic_semantics_remediation.md"]
 "share/toss-trading/schemas/ama-49" = ["schemas/stress_scenario.schema.json", "schemas/event_risk_control.schema.json"]
 "share/toss-trading/docs/ama-49" = ["docs/stress_event_risk.md"]
+"share/toss-trading/schemas/gate-d2" = ["schemas/pricing_expectation_risk_integrity_acceptance.schema.json"]
+"share/toss-trading/docs/gate-d2" = ["docs/gate_d2_pricing_expectation_risk.md", "docs/evidence/gate_d2_pricing_expectation_risk_2026-09-08.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
