@@ -24,6 +24,10 @@ from .portfolio_decision_integrity import (
     REQUIRED_PORTFOLIO_DECISION_INTEGRITY_CHECKS, PortfolioDecisionIntegrityGateInput,
     PortfolioDecisionIntegrityGateResult, evaluate_portfolio_decision_integrity_gate,
 )
+from .pricing_expectation_risk_integrity import (
+    REQUIRED_PRICING_EXPECTATION_RISK_CHECKS, PricingExpectationRiskIntegrityGateInput,
+    PricingExpectationRiskIntegrityGateResult, evaluate_pricing_expectation_risk_integrity_gate,
+)
 from .backtest_run_specification import (
     BacktestPeriod, BacktestRunEvent, BacktestRunRegistry, BacktestRunSpec, BacktestRunStatus,
 )
@@ -41,6 +45,8 @@ __all__ = [
     "SignalForecastIntegrityGateResult", "evaluate_signal_forecast_integrity_gate",
     "REQUIRED_PORTFOLIO_DECISION_INTEGRITY_CHECKS", "PortfolioDecisionIntegrityGateInput",
     "PortfolioDecisionIntegrityGateResult", "evaluate_portfolio_decision_integrity_gate",
+    "REQUIRED_PRICING_EXPECTATION_RISK_CHECKS", "PricingExpectationRiskIntegrityGateInput",
+    "PricingExpectationRiskIntegrityGateResult", "evaluate_pricing_expectation_risk_integrity_gate",
     "BacktestPeriod", "BacktestRunEvent", "BacktestRunRegistry", "BacktestRunSpec",
     "BacktestRunStatus",
 ]

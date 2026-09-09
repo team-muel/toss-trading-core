@@ -7,6 +7,7 @@ from enum import StrEnum
 from asset_management.pricing.models import HORIZONS
 from asset_management.quality.models import QualityStatus
 from asset_management.domain.horizon import SignalValidity, require_horizon_alignment
+from asset_management.domain.economics import EconomicValue
 from .equity import EquityGrowthBasis, EQUITY_COMPONENTS, AGGREGATE_EQUITY_COMPONENTS
 
 class AssetClass(StrEnum):
@@ -127,3 +128,44 @@ class AlphaEstimate:
 
     @property
     def abstain(self) -> bool: return self.decision == "ABSTAIN"
+
+
+@dataclass(frozen=True)
+class ModelRelativeAlphaAssessment:
+    """Canonical ex-ante model residual with shrinkage and ABSTAIN evidence."""
+
+    value: EconomicValue
+    raw_alpha: Decimal
+    lower_bound: Decimal
+    upper_bound: Decimal
+    confidence: Decimal
+    prior: Decimal
+    shrinkage_amount: Decimal
+    combined_signal_forecast_id: str
+    decision: str
+    reason_codes: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        from asset_management.domain.economics import ReturnSemanticType, ReturnMetricStatus
+        values = (self.raw_alpha, self.lower_bound, self.upper_bound, self.confidence,
+                  self.prior, self.shrinkage_amount)
+        if (self.value.semantic_type is not ReturnSemanticType.MODEL_RELATIVE_ALPHA or
+                self.value.status is not ReturnMetricStatus.AVAILABLE or
+                any(not item.is_finite() for item in values) or
+                not Decimal(0) <= self.confidence <= Decimal(1) or
+                self.lower_bound > self.upper_bound or len(self.combined_signal_forecast_id) != 64 or
+                any(char not in "0123456789abcdef" for char in self.combined_signal_forecast_id) or
+                self.decision not in {"ELIGIBLE", "ABSTAIN"} or
+                (self.decision == "ABSTAIN") != bool(self.reason_codes)):
+            raise ValueError("MODEL_RELATIVE_ALPHA_ASSESSMENT_INVALID")
+
+    @property
+    def abstain(self) -> bool:
+        return self.decision == "ABSTAIN"
+
+    def payload(self) -> dict[str, object]:
+        return {"raw_alpha": str(self.raw_alpha), "lower_bound": str(self.lower_bound),
+                "upper_bound": str(self.upper_bound), "confidence": str(self.confidence),
+                "prior": str(self.prior), "shrinkage_amount": str(self.shrinkage_amount),
+                "combined_signal_forecast_id": self.combined_signal_forecast_id,
+                "decision": self.decision, "reason_codes": list(self.reason_codes)}

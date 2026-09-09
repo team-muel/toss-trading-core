@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "reason_codes", "order_capacity_notional", "position_capacity_notional", "expected_liquidation_cost", "currency", "return_horizon_days", "liquidity_horizon_days", "confidence", "formula_version", "session"],
+  "properties": {
+    "status": {"enum": ["KNOWN", "BLOCKED"]},
+    "reason_codes": {"type": "array", "items": {"type": "string"}},
+    "order_capacity_notional": {"type": ["string", "null"]},
+    "position_capacity_notional": {"type": ["string", "null"]},
+    "expected_liquidation_cost": {"type": ["string", "null"]},
+    "currency": {"type": "string", "minLength": 1},
+    "return_horizon_days": {"type": "integer", "minimum": 1},
+    "liquidity_horizon_days": {"type": "integer", "minimum": 1},
+    "confidence": {"type": "string"},
+    "formula_version": {"type": "string", "minLength": 1},
+    "session": {"type": "string", "minLength": 1}
+  }
+}

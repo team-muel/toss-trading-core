@@ -10,7 +10,7 @@ from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityStatus
 
 from .models import FactorPremium, PricingResult
-from .risk_free import annual_to_horizon
+from .risk_free import RiskFreeReturn, annual_to_horizon, require_risk_free_alignment
 from asset_management.domain.horizon import SignalValidity
 from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
 
@@ -59,6 +59,15 @@ def multifactor_pricing_baseline_return(*, currency, currency_basis, asset_scope
     result = _multifactor_numeric(**inputs)
     return result.economic_payload(currency=currency, currency_basis=currency_basis,
         formula_version="multifactor-pricing-baseline@2", model_key="MULTIFACTOR@2")
+
+
+def multifactor_pricing_baseline_from_risk_free(*, risk_free: RiskFreeReturn,
+                                                currency: str, **inputs):
+    """Canonical factor-model entry point with currency and horizon validation."""
+    require_risk_free_alignment(risk_free=risk_free, currency=currency,
+        forecast_horizon=inputs["horizon"], information_cutoff=inputs["as_of"])
+    return multifactor_pricing_baseline_return(currency=currency,
+        risk_free_rate=risk_free.annualized_rate, **inputs)
 
 
 def require_distinct_factor_roles(*, required_return_factors: set[str],

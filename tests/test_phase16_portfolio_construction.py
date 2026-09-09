@@ -2,6 +2,7 @@ from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 import pytest
 from asset_management.domain.errors import DataQualityError, InvariantViolation
+from asset_management.domain.economics import ReturnSemanticType
 from asset_management.governance import (BenchmarkDefinition, InvestorMandate, InvestorMandateRegistry,
     MandateObjective, RiskPreference, WealthConvention)
 from asset_management.portfolio import *
@@ -22,6 +23,11 @@ def target(weights=(D(".5"),D(".5")),stage="TEST"):
 
 def absolute_return_input(values=(D(".10"),D(".01"))):
     return OptimizationReturnInput(OptimizationReturnMode.ABSOLUTE, INSTRUMENTS, values)
+
+def test_pricing_baseline_cannot_substitute_for_optimizer_forecast_total_return():
+    with pytest.raises(DataQualityError, match="OPTIMIZER_RETURN_INPUT_INVALID"):
+        OptimizationReturnInput(OptimizationReturnMode.ABSOLUTE, INSTRUMENTS, (D(".1"),D(".01")),
+                                return_semantic_type=ReturnSemanticType.PRICING_BASELINE_RETURN)
 def policy(**changes):
     values=dict(cash_instrument="CASH",max_single_weight=D(".8"),min_cash_weight=D(".1"),
         max_volatility=D(".2"),max_cvar=D(".15"),max_stress_loss=D(".25"),max_turnover=D(".5"),
@@ -90,6 +96,12 @@ def test_active_and_model_alpha_modes_require_a_matching_benchmark_mandate():
 def test_risk_scaling_changes_total_exposure_not_all_to_cash():
     result=risk_scale(target(),cash_instrument="CASH",current_volatility=D(".20"),target_volatility=D(".10"),drawdown_multiplier=D(".8"),confidence_multiplier=D(".9"))
     assert result.weights==(D(".25"),D(".75"))
+
+def test_risk_scaling_cannot_apply_forecast_confidence_twice():
+    with pytest.raises(DataQualityError, match="CONFIDENCE_DOUBLE_COUNTING"):
+        risk_scale(target(),cash_instrument="CASH",current_volatility=D(".20"),target_volatility=D(".10"),drawdown_multiplier=D(".8"),confidence_multiplier=D(".9"),confidence_already_applied=True)
+    result=risk_scale(target(),cash_instrument="CASH",current_volatility=D(".20"),target_volatility=D(".10"),drawdown_multiplier=D(".8"),confidence_multiplier=D(1),confidence_already_applied=True)
+    assert result.stage=="RISK_CONSTRAINED_TARGET"
 
 def test_all_constraints_and_infeasible_are_explicit():
     exposures={"equity":(D(1),D(0))}; factors={"beta":(D(1),D(0))}; currencies={"USD":(D(1),D(1))}; liquidity={"illiquid":(D(1),D(0))}
