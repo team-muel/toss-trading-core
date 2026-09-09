@@ -256,7 +256,8 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
             "parameter_set_id": session.context.parameter_set_id,
             "code_revision": session.context.code_revision,
         },
-        "instrument_ids": sorted(session.instrument_ids),
+        "instrument_ids": list(session.instrument_ids),
+        "effective_time_utc": session.effective_time_utc.isoformat(),
         # A canonical resolver may include known instruments outside the
         # historical membership union. Their masked panels are still hashed;
         # preserve the full read axis so replay can recover those exact hashes.
@@ -269,11 +270,13 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
                    for name, panel in groups.items()},
         "neutralization_groups": dict(session.neutralization_groups),
     }
-    # Keep replay coordinates even for delay/warm-up points whose simulated
-    # output intentionally has no signal lineage yet. Values remain in the
-    # immutable dataset store; their exact consumed panel is bound by the hash.
-    coordinates = {key: value for key, value in payload.items() if key != "fields"}
-    return replace(session, resolver=snapshot), _hash(payload), coordinates
+    # Store the consumed values, not just a pointer to a latest-vintage query.
+    # Canonical append-only observation APIs can admit subsequently imported
+    # vintages with historical availability. The manifest remains immutable but
+    # a replay query may then choose another value under that same manifest.
+    # This mechanism receipt freezes the input; its hash is not an approval.
+    return replace(session, resolver=snapshot), _hash(payload), payload
+
 
 
 def _history_payload(result: HistorySimulationResult) -> dict:

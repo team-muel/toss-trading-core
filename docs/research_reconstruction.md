@@ -114,8 +114,10 @@ none is an order, production weight, calibrated forecast or permission grant.
 The receipt records the spec, spec hash, consumed-input hashes, replay coordinates
 for *every* session (including unavailable warm-up points), contexts, manifests,
 reference periods, memberships, group classifications and canonical result hash.
-The actual observed values remain in the immutable dataset store; retain those
-artifacts and their repository records for replay. The receipt is content-addressed,
+The exact consumed field values and both instrument-axis orders are frozen in
+the receipt. Retain the upstream immutable artifacts as provenance. Replaying
+a receipt uses its frozen panels, not a latest-vintage query that may change
+after a later canonical append under the same manifest. The receipt is content-addressed,
 not signed: an ordinary Python object or a recomputed hash is not an approval.
 External import/authentication and durable storage belong to the outer owner.
 
@@ -152,6 +154,6 @@ self-review added historical membership and manifest-schema checks; that work is
 not an independent external review. Existing architecture tests still constrain
 imports. Run full required CI and obtain review against the exact PR head.
 
-No live flag, broker authority, portfolio/risk policy, cloud runtime or deployment
-is changed. Revert the finite PR to roll back the new APIs; old consumers are not
-switched by this slice. A passing unit test or CI job never authorizes trading.
+No live flag, broker authority, account data, migration or live-write authorization
+is introduced by the reconstruction. Rollback is a reviewed revert of this finite
+change. A passing unit test or CI job never authorizes trading.
