@@ -182,7 +182,7 @@ def test_explicit_universe_version_must_match_canonical_membership(tmp_path):
     _, sessions = repository_sessions(tmp_path, research_spec)
     forged = replace(sessions[-1], universe_version='approved-universe-v1')
     with pytest.raises(DataQualityError, match='UNIVERSE_VERSION_PROVENANCE_MISMATCH'):
-        run_expression_research(research_spec, [forged])
+        run_expression_research(research_spec, [*sessions[:-1], forged])
 
 
 def test_research_run_rejects_result_from_different_receipt(tmp_path):
