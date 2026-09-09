@@ -162,14 +162,23 @@ def gcp_plan(*, project: str, instance: str, policies: list, metrics: list) -> d
 def apply_plan(plan: dict, expected_hash: str, *, run: Callable = command) -> None:
     if identity(plan) != expected_hash:
         raise ValueError("retirement plan changed; review the fresh plan")
+    if plan["kind"] == "systemd":
+        root = Path(plan["root"])
+        # Revalidate every recorded unit identity before the first destructive
+        # command. A reviewed plan that has gone stale must have zero effects.
+        for name, recorded in plan["unit_files"].items():
+            path = root/name
+            if (not path.exists() and not path.is_symlink()) or _file_identity(path) != recorded:
+                raise ValueError("unit changed before retirement")
     for argv in plan["commands"]:
         run(argv)
     if plan["kind"] == "systemd":
         root = Path(plan["root"])
         for name, recorded in plan["unit_files"].items():
             path = root/name
-            # systemctl disable may already remove an alias symlink. No other
-            # process may substitute a different file after the plan was read.
+            # systemctl disable may already remove an alias symlink. If the
+            # path still exists, revalidate again before unlinking it so a
+            # concurrent replacement cannot be removed.
             if not path.exists() and not path.is_symlink():
                 continue
             if _file_identity(path) != recorded:
