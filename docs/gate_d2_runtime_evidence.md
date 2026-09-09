@@ -24,3 +24,9 @@ stale, malformed, or unverifiable inputs remain failed checks and preserve
 
 No collector run, FRED credential use, model activation, paper order, or live
 trading authority is performed by this protocol.
+
+`materialize_usd_fred_risk_free_curve` is the pure input boundary for the
+risk-free artifact. It opens one verified `fred-alfred` bronze
+`risk-free-curve` manifest and requires exactly DGS1MO, DGS3MO, DGS6MO, and
+DGS1 observations with common `as_of`, explicit availability, and decimal-safe
+percent values. It does not interpolate tenors or backfill missing observations.
