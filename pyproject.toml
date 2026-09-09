@@ -94,6 +94,8 @@ alpha_management = ["fast_expression.lark"]
 "share/toss-trading/schemas/capital-reserve" = ["schemas/capital_reserve_assessment.schema.json"]
 "share/toss-trading/docs/capital-reserve" = ["docs/capital_flow_reserve.md"]
 "share/toss-trading/docs/economic-trade-evidence" = ["docs/economic_trade_evidence.md"]
+"share/toss-trading/schemas/liquidity-risk" = ["schemas/liquidity_risk_assessment.schema.json"]
+"share/toss-trading/docs/liquidity-risk" = ["docs/risk_liquidity_contract.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
