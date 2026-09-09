@@ -5,7 +5,8 @@ from datetime import datetime, timedelta
 import pytest
 
 from alpha_management import HistoricalSession, RepositoryPanelResolver, simulate_history
-from alpha_management.campaign import run_expression_research
+from alpha_management.campaign import ResearchRun, run_expression_research
+from asset_management.domain.errors import DataQualityError
 from asset_management.time.asof import AsOfContext
 from test_research_campaign import IDS, T, repository_sessions, settings, spec, append_group_evidence
 
@@ -22,7 +23,7 @@ def nonmember_sessions(tmp_path, research_spec):
     return source, [replace(session, instrument_ids=IDS[:1], resolver=replace(
         session.resolver,
         universe_membership={period: frozenset(IDS[:1]) for period in session.resolver.reference_periods},
-    )) for session in sessions]
+    ), universe_version="unspecified") for session in sessions]
 
 
 # Codex PR #78 R1: the resolver may include known nonmembers. Every snapshotted
@@ -174,3 +175,22 @@ def test_receipt_replays_values_after_valid_backdated_repository_append(tmp_path
     assert current.payload()['session_input_hashes'][-1] != original.payload()['session_input_hashes'][-1]
     restored = replay_from_receipt(original)
     assert simulate_history(research_spec.compiled, restored, research_spec.settings) == original.result
+
+
+def test_explicit_universe_version_must_match_canonical_membership(tmp_path):
+    research_spec = spec()
+    _, sessions = repository_sessions(tmp_path, research_spec)
+    forged = replace(sessions[-1], universe_version='approved-universe-v1')
+    with pytest.raises(DataQualityError, match='UNIVERSE_VERSION_PROVENANCE_MISMATCH'):
+        run_expression_research(research_spec, [forged])
+
+
+def test_research_run_rejects_result_from_different_receipt(tmp_path):
+    research_spec = spec()
+    _, first = repository_sessions(tmp_path/'a', research_spec)
+    _, second = repository_sessions(tmp_path/'b', research_spec,
+        values=((200,204,220,240),(1000,1010,1040,1050)))
+    run_a = run_expression_research(research_spec, first)
+    run_b = run_expression_research(research_spec, second)
+    with pytest.raises(ValueError, match='result/evidence mismatch'):
+        ResearchRun(run_b.result, run_a.evidence_json)
