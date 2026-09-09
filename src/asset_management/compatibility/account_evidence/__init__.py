@@ -1,4 +1,4 @@
-from .snapshot import AccountEvidenceSnapshotResult, AccountEvidenceSnapshotter
+from .reader import HistoricalAccountReader
 from .ledger import AccountLedger, AccountStateExplanation, ReservedCashResult
 from .replay import AccountEvidenceReplayResult, replay_account_evidence_run
 from .reconciliation import ReconciliationResult, reconcile_value
@@ -9,8 +9,7 @@ __all__ = [
     "AccountState",
     "AccountStateExplanation",
     "ReservedCashResult",
-    "AccountEvidenceSnapshotResult",
-    "AccountEvidenceSnapshotter",
+    "HistoricalAccountReader",
     "AccountEvidenceReplayResult",
     "ReconciliationResult",
     "replay_account_evidence_run",

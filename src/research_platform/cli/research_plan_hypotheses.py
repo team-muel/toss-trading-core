@@ -216,42 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
-    if not args.project_id:
-        raise ValueError("--project-id or GCP_PROJECT_ID is required")
-    exit_code = 0
-    try:
-        result = plan_hypotheses(
-            policy_path=args.policy,
-            universe_path=args.universe,
-            ledger_dir=args.ledger_dir,
-            output_dir=args.output_dir,
-            project_id=args.project_id,
-            location=args.location,
-            model=args.model,
-            max_new=args.max_new,
-        )
-    except Exception as exc:
-        result = {
-            "state": "failed",
-            "created": [],
-            "reused": [],
-            "registered_count": None,
-            "model": args.model,
-            "failure_reason_type": type(exc).__name__,
-        }
-        exit_code = 1
-    destination = Path(args.result)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_suffix(destination.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temporary.replace(destination)
-    print(json.dumps(result, ensure_ascii=False, sort_keys=True))
-    return exit_code
+def main(argv: list[str] | None = None) -> int:
+    """The old standalone application entry point is intentionally retired."""
+    raise SystemExit("Standalone research execution/delivery retired by AMA-156; use canonical orchestration.")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,8 @@ from unittest.mock import patch
 import urllib.error
 import urllib.request
 
-from asset_management.compatibility.account_evidence import AccountLedger, AccountEvidenceSnapshotter
+from asset_management.compatibility.account_evidence import AccountLedger
+from legacy_snapshot_fixture import AccountEvidenceSnapshotter
 from asset_management.toss.broker.credentials import TossCredentials
 from asset_management.toss.broker.toss import TossReadOnlyAdapter
 from asset_management.toss.broker.toss import TossApiResult

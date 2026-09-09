@@ -3,7 +3,8 @@ import unittest
 import sqlite3
 from pathlib import Path
 
-from asset_management.compatibility.account_evidence import AccountLedger, AccountEvidenceSnapshotter
+from asset_management.compatibility.account_evidence import AccountLedger
+from legacy_snapshot_fixture import AccountEvidenceSnapshotter
 from asset_management.compatibility.account_evidence.audit import audit_account_evidence_db
 from asset_management.compatibility.reference import load_instrument_mappings
 

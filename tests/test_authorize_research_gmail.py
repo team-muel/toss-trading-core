@@ -75,3 +75,11 @@ def test_store_secret_creates_when_missing_and_writes_via_stdin(monkeypatch) -> 
     assert calls[2][0][:4] == ["secrets", "versions", "add", "secret-name"]
     assert calls[2][1] == "sensitive-value"
     assert all("sensitive-value" not in args for args, _stdin in calls)
+
+
+def test_retired_bootstrap_does_not_change_credentials(monkeypatch):
+    def fail(*args, **kwargs):
+        raise AssertionError("credential operation must not run")
+    monkeypatch.setattr(MODULE, "_run_gcloud", fail)
+    with pytest.raises(SystemExit, match="retired"):
+        MODULE.main()

@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from asset_management.compatibility.account_evidence import AccountLedger
+from .reader import HistoricalAccountReader
 from asset_management.compatibility.reference import (
     load_instrument_mappings,
     load_universe,
@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--db",
-        default="runtime/account_evidence_state.sqlite",
+        default="runtime/foundation_account_state.sqlite",
         help="SQLite database path to audit.",
     )
     parser.add_argument(
@@ -120,7 +120,8 @@ def _schema_failure(db_path: str | Path) -> str | None:
     path = Path(db_path)
     if not path.exists():
         return "account_evidence_database_not_found"
-    conn = sqlite3.connect(path)
+    reader = HistoricalAccountReader(path)
+    conn = reader.conn
     try:
         required_tables = {
             "snapshot_run",
@@ -187,7 +188,7 @@ def audit_account_evidence_db(
             lines=["account_evidence_audit=failed", f"profile={profile}", f"failure={schema_failure}"],
         )
 
-    ledger = AccountLedger(db_path)
+    ledger = HistoricalAccountReader(db_path)
     try:
         conn = ledger.conn
         instrument_count = _count(conn, "SELECT COUNT(DISTINCT ticker) FROM instrument_master")

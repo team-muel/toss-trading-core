@@ -40,42 +40,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    policy = load_recommendation_policy(args.policy)
-    if not policy.get("enabled", False):
-        raise ValueError(
-            f"stock recommendations are gated: {policy.get('activation_gate')}"
-        )
-    rows = [
-        json.loads(line)
-        for line in Path(args.input_jsonl).read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    payload = generate_stock_recommendations(
-        rows,
-        policy=policy,
-        as_of_date=args.as_of_date,
-        code_revision=args.code_revision,
-        focused_research_dossiers=load_focused_research_dossiers(
-            args.focus_dossier
-        ),
-        focused_research_maximum_age_days=int(
-            load_focused_research_policy(args.focused_research_policy)[
-                "maximum_dossier_age_days"
-            ]
-        ),
-    )
-    destination = Path(args.output_dir) / f"{payload['recommendation_id']}.json"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    body = json.dumps(
-        payload, ensure_ascii=False, sort_keys=True, indent=2
-    ).encode("utf-8")
-    if destination.exists() and destination.read_bytes() != body:
-        raise FileExistsError("immutable stock recommendation conflict")
-    if not destination.exists():
-        destination.write_bytes(body)
-    print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
-    return 0
+    """The old standalone application entry point is intentionally retired."""
+    raise SystemExit("Standalone research execution/delivery retired by AMA-156; use canonical orchestration.")
 
 
 if __name__ == "__main__":
