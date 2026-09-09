@@ -203,13 +203,6 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
         raise ValueError("session universe differs from effective panel membership")
     if set(resolver.fields.source.universes.members(spec.settings.universe, session.context)) != set(session.instrument_ids):
         raise ValueError("session universe differs from canonical reference truth")
-    membership_identity = ";".join(
-        f"{period}:{','.join(sorted(resolver.universe_membership[period]))}"
-        for period in periods
-    )
-    canonical_universe_version = f"sha256:{sha256(membership_identity.encode('utf-8')).hexdigest()}"
-    if session.universe_version != canonical_universe_version:
-        raise DataQualityError("UNIVERSE_VERSION_PROVENANCE_MISMATCH")
     if spec.settings.neutralization == "group" and (
             set(session.neutralization_groups) != set(session.instrument_ids) or
             any(not isinstance(value, str) or not value.strip()
@@ -229,6 +222,16 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
             spec.settings.universe, historical.context))
         if members[index] != known_members:
             raise ValueError("historical membership differs from canonical reference truth")
+    # Validate the advertised universe version only after proving that the full
+    # historical membership axis itself is canonical. This preserves the more
+    # specific membership failure while still rejecting arbitrary version labels.
+    membership_identity = ";".join(
+        f"{period}:{','.join(sorted(resolver.universe_membership[period]))}"
+        for period in periods
+    )
+    canonical_universe_version = f"sha256:{sha256(membership_identity.encode('utf-8')).hexdigest()}"
+    if session.universe_version != canonical_universe_version:
+        raise DataQualityError("UNIVERSE_VERSION_PROVENANCE_MISMATCH")
     ids = tuple(session.dataset_manifest_ids)
     if not ids or ids != resolver.dataset_manifest_ids:
         raise ValueError("missing or mismatched repository manifest lineage")
