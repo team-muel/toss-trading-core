@@ -1,0 +1,28 @@
+name: ama161-audit-source
+on:
+  push:
+    branches: [audit/ama-161-review-20260910]
+    paths: [.github/workflows/ama161-audit-source.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 9b4a4a685a8c00957aa2add70008ada6513adfea
+          persist-credentials: false
+      - name: Archive only tracked source at the reviewed commit
+        run: |
+          mkdir -p /tmp/ama161-audit
+          git archive --format=tar.gz --output=/tmp/ama161-audit/source.tar.gz HEAD
+          git rev-parse HEAD HEAD^{tree} > /tmp/ama161-audit/identity.txt
+          sha256sum /tmp/ama161-audit/source.tar.gz > /tmp/ama161-audit/checksum.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ama161-source-9b4a4a6
+          path: /tmp/ama161-audit/
+          retention-days: 1
+          if-no-files-found: error
