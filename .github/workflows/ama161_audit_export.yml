@@ -8,25 +8,21 @@ permissions:
 jobs:
   export:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          ref: 197a7ae8d9e6e4629b43cfbba4def31ed1a59872
+          ref: a2a7f2b5e0b6ce817c97f56e9f8a5a26a8fc24a1
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: '3.13'
-      - name: Export only tracked source and public pinned dependencies
+      - name: Export only tracked cleanup source
         run: |
-          mkdir -p "${RUNNER_TEMP}/audit/wheels"
-          git archive --format=tar HEAD > "${RUNNER_TEMP}/audit/source.tar"
-          python -m pip download --only-binary=:all: -r requirements-dev.lock -d "${RUNNER_TEMP}/audit/wheels"
+          mkdir -p "${RUNNER_TEMP}/audit"
+          git archive --format=tar HEAD > "${RUNNER_TEMP}/audit/source-a2a7f2b.tar"
           cd "${RUNNER_TEMP}/audit"
-          sha256sum source.tar wheels/* > SHA256SUMS
+          sha256sum source-a2a7f2b.tar > SHA256SUMS
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ama161-audit-197a7ae
+          name: ama167-cleanup-a2a7f2b
           path: ${{ runner.temp }}/audit
           retention-days: 1
           if-no-files-found: error
