@@ -5,14 +5,14 @@
 ## Official Base
 
 - Approved schema version: `1.2.15`
-- Approved SHA-256: `c5d7b87daa6db64e6e41dc581c3e820a3c6b8455412946a1f9971b813852cb79`
+- Approved SHA-256: `ebaf20df342270274a5f6f5ad3a3d3d67b0ce02f30977da84606f3654924103e`
 - Base server: `https://openapi.tossinvest.com`
 - Auth: OAuth2 Client Credentials Grant
 - Token endpoint: `POST /oauth2/token`
 - Account context header: `X-Tossinvest-Account: {accountSeq}`
 - Runtime style: REST API (read-only Foundation)
 
-2026-09-08 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
+2026-09-11 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
 OpenAPI version `1.2.15`를 확인했습니다. 현재 공식 paths에는 별도 현금
 잔고 또는 balance endpoint가 없고, 현금 관련 주문 전 constraint는
 `GET /api/v1/buying-power`의 `cashBuyingPower`입니다. 따라서 내부 초기
