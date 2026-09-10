@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Mapping
 
@@ -15,6 +15,10 @@ from .risk_free import RiskFreeCurve
 
 
 FRED_USD_RISK_FREE_SERIES = {21: "DGS1MO", 63: "DGS3MO", 126: "DGS6MO", 252: "DGS1"}
+# DGS tenors are daily Treasury series. Gate D2 accepts weekends/market holidays
+# but refuses to certify a curve whose observation date is more than one calendar
+# week behind the decision cutoff.
+FRED_USD_RISK_FREE_MAX_AGE = timedelta(days=7)
 
 
 def _aware(value: object, reason: str) -> datetime:
@@ -48,8 +52,9 @@ def materialize_usd_fred_risk_free_curve(*, store: ImmutableDatasetStore, manife
     The input body must have an ``observations`` array whose rows contain
     ``series_id``, ``as_of``, ``available_at``, and ``value_percent``. This is
     deliberately a strict, no-interpolation boundary: missing FRED values,
-    differing as-of timestamps, and observations that arrived after the
-    requested cutoff make the curve unavailable.
+    differing as-of timestamps, observations that arrived after the requested
+    cutoff, and observations older than the approved freshness window make the
+    curve unavailable.
     """
     if information_cutoff.tzinfo is None or information_cutoff.utcoffset() is None:
         raise DataQualityError("RISK_FREE_CUTOFF_INVALID")
@@ -86,6 +91,8 @@ def materialize_usd_fred_risk_free_curve(*, store: ImmutableDatasetStore, manife
         available_at = _aware(row["available_at"], "RISK_FREE_FRED_TIME_INVALID")
         if available_at < as_of or as_of > cutoff or available_at > cutoff:
             raise DataQualityError("RISK_FREE_FRED_POINT_NOT_ELIGIBLE")
+        if cutoff - as_of > FRED_USD_RISK_FREE_MAX_AGE:
+            raise DataQualityError("RISK_FREE_FRED_POINT_STALE")
         if curve_as_of is None:
             curve_as_of = as_of
         elif as_of != curve_as_of:
