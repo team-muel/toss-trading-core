@@ -90,7 +90,7 @@ class FactorRiskRuntimeEvidence:
                 any(value < self.specific_risk_policy.residual_variance_floor
                     for value in self.assessment.specific_variance)):
             raise ValueError("FACTOR_RISK_DECOMPOSITION_INVALID")
-        manifests = _manifest_evidence((self.evidence_manifest_id,), reason="FACTOR_RISK_MANIFEST_INVALID")
+        _manifest_evidence((self.evidence_manifest_id,), reason="FACTOR_RISK_MANIFEST_INVALID")
         evidence_manifest, body = self.store.read(self.evidence_manifest_id)
         evidence_available_at = _aware(
             datetime.fromisoformat(evidence_manifest.available_at), "FACTOR_RISK_MANIFEST_TIME_INVALID")
@@ -126,8 +126,8 @@ class ModelLineageRuntimeEvidence:
                 self.binding.final_node_id != self.lineage.final_node_id or
                 self.binding.bound_at > cutoff):
             raise ValueError("MODEL_LINEAGE_BINDING_INVALID")
-        # Verify persisted/reconstructed bindings through their owner as well
-        # as their hashes. Publication alone is not an admission authority.
+        # Verify persisted/reconstructed bindings through their owner as well as
+        # their hashes; publication alone is not an admission authority.
         rebuilt = bind_authorized_model_calculation(
             model_registry=self.registry, authorization=self.authorization,
             model_key=self.binding.model_key, scope=self.binding.scope,
@@ -185,30 +185,35 @@ def assemble_d2_runtime_evidence(*, risk_free: RiskFreeRuntimeEvidence | None,
     }
     checks: dict[str, CheckEvidence] = {}
     failures: dict[str, str] = {}
-    for check_name, source in sources.items():
-        if source is None:
-            failures[check_name] = "EVIDENCE_SOURCE_MISSING"
-            continue
+    expected_types = dict(zip(sources, (RiskFreeRuntimeEvidence, FactorRiskRuntimeEvidence, ModelLineageRuntimeEvidence)))
+    for name, source in sources.items():
         try:
-            checks[check_name] = source.check()
-        except Exception as exc:  # fail closed and preserve the specific rejection reason
-            failures[check_name] = str(exc) or exc.__class__.__name__
+            if source is None:
+                raise ValueError("EVIDENCE_MISSING")
+            if type(source) is not expected_types[name]:
+                raise ValueError("EVIDENCE_TYPE_INVALID")
+            checks[name] = source.check()
+        except Exception as exc:
+            reason = str(exc) if re.fullmatch(r"[A-Z][A-Z0-9_]{2,80}", str(exc)) else "EVIDENCE_INVALID"
+            checks[name] = CheckEvidence(False, (f"d2-runtime:{name.lower()}",))
+            failures[name] = reason
     return D2RuntimeEvidenceResult(checks, failures)
 
 
-def build_d2_gate_input(*, static_checks: dict[str, CheckEvidence],
-                        risk_free: RiskFreeRuntimeEvidence | None,
-                        factor_risk: FactorRiskRuntimeEvidence | None,
-                        model_lineage: ModelLineageRuntimeEvidence | None) -> PricingExpectationRiskIntegrityGateInput:
-    """Combine caller-supplied static evidence with artifact-derived runtime checks."""
-    overlap = RUNTIME_D2_CHECKS.intersection(static_checks)
-    if overlap:
-        raise ValueError("D2_RUNTIME_CHECKS_CALLER_SUPPLIED")
-    result = assemble_d2_runtime_evidence(
-        risk_free=risk_free, factor_risk=factor_risk, model_lineage=model_lineage)
-    checks = dict(static_checks)
-    checks.update(result.checks)
-    if set(checks) != set(REQUIRED_PRICING_EXPECTATION_RISK_CHECKS):
-        missing = sorted(set(REQUIRED_PRICING_EXPECTATION_RISK_CHECKS).difference(checks))
-        raise ValueError(f"D2_EVIDENCE_INCOMPLETE:{','.join(missing)}")
-    return PricingExpectationRiskIntegrityGateInput(checks)
+def build_d2_gate_input(*, evaluated_at: datetime, code_revision: str,
+                        static_checks: dict[str, CheckEvidence],
+                        risk_free: RiskFreeRuntimeEvidence | None = None,
+                        factor_risk: FactorRiskRuntimeEvidence | None = None,
+                        model_lineage: ModelLineageRuntimeEvidence | None = None) -> PricingExpectationRiskIntegrityGateInput:
+    """Recompute runtime checks from their artifacts; never accept a result token."""
+    expected_static = set(REQUIRED_PRICING_EXPECTATION_RISK_CHECKS) - RUNTIME_D2_CHECKS
+    if set(static_checks) != expected_static:
+        raise ValueError("D2_RUNTIME_CHECK_SET_INVALID")
+    evaluated_at = _aware(evaluated_at, "D2_EVALUATION_TIME_INVALID")
+    for source in (risk_free, factor_risk, model_lineage):
+        if source is not None and source.information_cutoff != evaluated_at:
+            raise ValueError("D2_EVIDENCE_EVALUATION_TIME_MISMATCH")
+    runtime = assemble_d2_runtime_evidence(risk_free=risk_free, factor_risk=factor_risk,
+                                           model_lineage=model_lineage)
+    return PricingExpectationRiskIntegrityGateInput(
+        evaluated_at, code_revision, {**static_checks, **runtime.checks})
