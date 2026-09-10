@@ -102,7 +102,14 @@ def repository_with_verified_artifacts():
     })
     conn.execute("INSERT INTO am_portfolio_target VALUES ('target@1', 'expectation@1', 'risk-model@1', 'investment@1', 'params@1', ?, ?)",
                  (target_payload, target_hash))
-    risk_decision_hash = "b" * 64
+    risk_decision_hash = content_hash({
+        "action": "ALLOW",
+        "policy_hash": risk_policy_hash,
+        "policy_version": "risk@1",
+        "portfolio_target_hash": target_hash,
+        "portfolio_target_id": "target@1",
+        "reason_codes": [],
+    })
     conn.execute("INSERT INTO am_risk_decision VALUES ('decision@1', 'target@1', 'ALLOW', '[]', 'risk@1', ?)",
                  (risk_decision_hash,))
 
@@ -154,10 +161,53 @@ def test_tampered_assembled_economic_value_and_persisted_hash_conflict_fail_clos
     )
     adapter = DecisionKernel("decision-kernel@1")
     with pytest.raises(InvariantViolation, match="CANONICAL_DECISION_ASSEMBLY_TAMPERED"):
-        adapter.evaluate(replace(request, forecast_values={"SPY": Decimal("99")}), descriptor())
+        adapter._evaluate_assembled(
+            replace(request, forecast_values={"SPY": Decimal("99")}), descriptor()
+        )
 
     repository._conn.execute("PRAGMA foreign_keys=OFF")
+    repository._conn.execute("DROP TRIGGER am_expectation_run_no_update")
     repository._conn.execute("UPDATE am_expectation_run SET payload_json=? WHERE expectation_run_id='expectation@1'",
                              (json.dumps({"strategy_key": "quality-momentum@1", "forecast_values": {"SPY": "99"}}),))
     with pytest.raises(InvariantViolation, match="CANONICAL_ASSEMBLER_EXPECTATION_PAYLOAD_INVALID"):
         repository.assemble_canonical_decision_request("run@1", pricing_applicability_evidence=pricing_authority)
+
+
+def test_public_kernel_requires_repository_and_economic_rows_are_append_only():
+    repository, pricing_authority = repository_with_verified_artifacts()
+    kernel = DecisionKernel("decision-kernel@1")
+    with pytest.raises(TypeError):
+        kernel.evaluate(
+            repository.assemble_canonical_decision_request(
+                "run@1", pricing_applicability_evidence=pricing_authority,
+            ),
+            descriptor(),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="feature runs are append-only"):
+        repository._conn.execute(
+            "UPDATE am_feature_run SET payload_json='{}' WHERE feature_run_id='feature@1'"
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="risk model runs are append-only"):
+        repository._conn.execute(
+            "UPDATE am_risk_model_run SET content_hash=? WHERE risk_model_run_id='risk-model@1'",
+            ("f" * 64,),
+        )
+
+
+def test_forged_risk_decision_content_fails_closed_even_when_stage_hash_matches():
+    repository, pricing_authority = repository_with_verified_artifacts()
+    repository._conn.execute("DROP TRIGGER am_decision_no_update")
+    forged_hash = "f" * 64
+    repository._conn.execute(
+        "UPDATE am_risk_decision SET content_hash=? WHERE risk_decision_id='decision@1'",
+        (forged_hash,),
+    )
+    repository._conn.execute("DROP TRIGGER am_pipeline_stage_no_update")
+    repository._conn.execute(
+        "UPDATE am_pipeline_stage_evidence SET content_hash=? WHERE stage_name='RISK_CONTROL'",
+        (forged_hash,),
+    )
+    with pytest.raises(InvariantViolation, match="CANONICAL_ASSEMBLER_RISK_DECISION_CONTENT_INVALID"):
+        repository.assemble_canonical_decision_request(
+            "run@1", pricing_applicability_evidence=pricing_authority,
+        )

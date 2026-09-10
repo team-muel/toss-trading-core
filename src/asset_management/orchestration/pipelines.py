@@ -125,6 +125,16 @@ class PipelineEvidenceRepository:
             raise InvariantViolation("CANONICAL_ASSEMBLER_TARGET_HASH_INVALID")
         risk_state = self._decision_state(row["risk_action"])
         reason_codes = self._reason_codes(row["risk_reason_codes"])
+        expected_risk_decision_hash = content_hash({
+            "action": risk_state.value,
+            "policy_hash": self._hash(row["risk_policy_hash"], "RISK_POLICY_HASH"),
+            "policy_version": self._text(row["risk_policy_version"], "RISK_POLICY"),
+            "portfolio_target_hash": self._hash(row["target_hash"], "TARGET"),
+            "portfolio_target_id": self._text(row["portfolio_target_id"], "TARGET"),
+            "reason_codes": list(reason_codes),
+        })
+        if row["risk_decision_hash"] != expected_risk_decision_hash:
+            raise InvariantViolation("CANONICAL_ASSEMBLER_RISK_DECISION_CONTENT_INVALID")
 
         as_of = self._utc(row["as_of_utc"], "AS_OF")
         cutoff = self._utc(row["information_cutoff_utc"], "INFORMATION_CUTOFF")
@@ -199,9 +209,11 @@ class PipelineEvidenceRepository:
                           expectation.content_hash AS expectation_hash,
                           risk_model.risk_model_version, risk_model.payload_json AS risk_payload,
                           risk_model.content_hash AS risk_hash,
-                          target.parameter_set_id, target.payload_json AS target_payload, target.content_hash AS target_hash,
+                          target.portfolio_target_id, target.parameter_set_id,
+                          target.payload_json AS target_payload, target.content_hash AS target_hash,
                           decision.risk_decision_id, decision.action AS risk_action,
                           decision.reason_codes_json AS risk_reason_codes, decision.policy_version AS risk_policy_version,
+                          risk_policy.content_hash AS risk_policy_hash,
                           decision.content_hash AS risk_decision_hash
                    FROM am_runtime_run runtime
                    JOIN am_feature_run feature ON feature.runtime_run_id=runtime.runtime_run_id
@@ -213,6 +225,7 @@ class PipelineEvidenceRepository:
                    JOIN am_state_run risk_state ON risk_state.state_run_id=risk_model.state_run_id
                    JOIN am_feature_run risk_feature ON risk_feature.feature_run_id=risk_state.feature_run_id
                    JOIN am_risk_decision decision ON decision.portfolio_target_id=target.portfolio_target_id
+                   JOIN am_policy_version risk_policy ON risk_policy.policy_version=decision.policy_version
                    WHERE runtime.runtime_run_id=? AND risk_feature.runtime_run_id=?
                      AND expectation.expectation_run_id=? AND target.portfolio_target_id=?
                      AND decision.risk_decision_id=?""",

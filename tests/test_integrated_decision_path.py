@@ -155,8 +155,12 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
 
     ledger = DecisionParityLedger()
     kernel = DecisionKernel("decision-kernel@1")
-    replay = ledger.record(kernel.evaluate(decision_request, adapter(DecisionRuntime.HISTORICAL_REPLAY)))
-    paper = ledger.record(kernel.evaluate(decision_request, adapter(DecisionRuntime.PAPER)))
+    replay = ledger.record(kernel._evaluate_assembled(
+        decision_request, adapter(DecisionRuntime.HISTORICAL_REPLAY)
+    ))
+    paper = ledger.record(kernel._evaluate_assembled(
+        decision_request, adapter(DecisionRuntime.PAPER)
+    ))
     assert replay.semantic_hash == paper.semantic_hash
     assert ledger.require_parity(inputs.input_hash, runtimes=(DecisionRuntime.HISTORICAL_REPLAY, DecisionRuntime.PAPER)) == replay.semantic_hash
     assert replay.decision.pricing_applicable is True

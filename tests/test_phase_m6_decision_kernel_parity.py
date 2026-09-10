@@ -68,7 +68,7 @@ def test_one_kernel_produces_identical_pre_execution_semantics_for_all_runtimes(
     inputs = frozen_input()
     kernel = DecisionKernel("decision-kernel@1")
     ledger = DecisionParityLedger()
-    results = [ledger.record(kernel.evaluate(request(inputs), adapter(runtime)))
+    results = [ledger.record(kernel._evaluate_assembled(request(inputs), adapter(runtime)))
                for runtime in DecisionRuntime]
     assert len({item.semantic_hash for item in results}) == 1
     assert ledger.require_parity(inputs.input_hash) == results[0].semantic_hash
@@ -83,13 +83,13 @@ def test_runtime_specific_semantic_change_and_evidence_overwrite_fail_closed():
     inputs = frozen_input()
     ledger = DecisionParityLedger()
     standard = DecisionKernel("decision-kernel@1")
-    ledger.record(standard.evaluate(request(inputs), adapter(DecisionRuntime.HISTORICAL_REPLAY)))
+    ledger.record(standard._evaluate_assembled(request(inputs), adapter(DecisionRuntime.HISTORICAL_REPLAY)))
     divergent = DecisionKernel("decision-kernel@1")
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PARITY_MISMATCH"):
-        ledger.record(divergent.evaluate(
+        ledger.record(divergent._evaluate_assembled(
             request(inputs, risk_outputs={"volatility": Decimal(".20")}), adapter(DecisionRuntime.PAPER)))
     with pytest.raises(InvariantViolation, match="DECISION_RUNTIME_EVIDENCE_CONFLICT"):
-        ledger.record(divergent.evaluate(
+        ledger.record(divergent._evaluate_assembled(
             request(inputs, risk_outputs={"volatility": Decimal(".20")}), adapter(DecisionRuntime.HISTORICAL_REPLAY)))
     with pytest.raises(InvariantViolation, match="DECISION_PARITY_EVIDENCE_INCOMPLETE"):
         ledger.require_parity(inputs.input_hash)
@@ -131,7 +131,7 @@ def test_pricing_non_applicability_cannot_authorize_a_target():
 def test_schema_covers_published_parity_evidence():
     inputs = frozen_input()
     ledger = DecisionParityLedger()
-    result = ledger.record(DecisionKernel("decision-kernel@1").evaluate(
+    result = ledger.record(DecisionKernel("decision-kernel@1")._evaluate_assembled(
         request(inputs), adapter(DecisionRuntime.HISTORICAL_REPLAY),
     ))
     schema = json.loads((Path(__file__).parents[1] / "schemas/decision_kernel_parity.schema.json").read_text())

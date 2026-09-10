@@ -376,8 +376,25 @@ class DecisionKernel:
     def __init__(self, kernel_version: str) -> None:
         self.kernel_version = _text(kernel_version, "DECISION_KERNEL_VERSION_INVALID")
 
-    def evaluate(self, request: CanonicalDecisionRequest,
+    def evaluate(self, *, repository: object, runtime_run_id: str,
+                 pricing_applicability_evidence: PricingApplicabilityEvidence,
                  adapter: RuntimeAdapterDescriptor) -> DecisionKernelEvaluation:
+        """Evaluate only a request freshly assembled from persisted evidence."""
+        from .pipelines import PipelineEvidenceRepository
+
+        if (not isinstance(repository, PipelineEvidenceRepository) or
+                not isinstance(pricing_applicability_evidence, PricingApplicabilityEvidence)):
+            raise InvariantViolation("DECISION_KERNEL_REPOSITORY_REQUIRED")
+        _text(runtime_run_id, "DECISION_KERNEL_REPOSITORY_REQUIRED")
+        request = repository.assemble_canonical_decision_request(
+            runtime_run_id,
+            pricing_applicability_evidence=pricing_applicability_evidence,
+        )
+        return self._evaluate_assembled(request, adapter)
+
+    def _evaluate_assembled(self, request: CanonicalDecisionRequest,
+                            adapter: RuntimeAdapterDescriptor) -> DecisionKernelEvaluation:
+        """Internal pure evaluator retained for focused parity unit tests."""
         if not isinstance(request, CanonicalDecisionRequest) or not isinstance(adapter, RuntimeAdapterDescriptor):
             raise InvariantViolation("DECISION_KERNEL_EVALUATION_INVALID")
         request.require_persisted_assembly()
@@ -416,11 +433,12 @@ class DecisionRuntimeAdapter:
     def decide(self) -> DecisionKernelEvaluation:
         """Assemble and evaluate; callers cannot supply economic values or a request."""
 
-        request = self._repository.assemble_canonical_decision_request(
-            self._runtime_run_id,
+        return self._kernel.evaluate(
+            repository=self._repository,
+            runtime_run_id=self._runtime_run_id,
             pricing_applicability_evidence=self._pricing_applicability_evidence,
+            adapter=self.descriptor,
         )
-        return self._kernel.evaluate(request, self.descriptor)
 
 
 class DecisionParityLedger:
