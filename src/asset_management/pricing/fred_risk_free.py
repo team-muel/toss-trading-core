@@ -60,7 +60,9 @@ def materialize_usd_fred_risk_free_curve(*, store: ImmutableDatasetStore, manife
         raise DataQualityError("RISK_FREE_MANIFEST_UNVERIFIED") from exc
     manifest_available = _aware(manifest.available_at, "RISK_FREE_MANIFEST_TIME_INVALID")
     if (manifest.layer != "bronze" or manifest.source != "fred-alfred" or
-            manifest.dataset != "risk-free-curve" or manifest_available > cutoff):
+            manifest.dataset != "risk-free-curve" or
+            manifest.schema_version != "fred-risk-free-curve@1" or
+            manifest.quality_status != "RAW" or manifest_available > cutoff):
         raise DataQualityError("RISK_FREE_MANIFEST_CONTEXT_INVALID")
     if not isinstance(body, Mapping) or set(body) != {"observations"} or not isinstance(body["observations"], list):
         raise DataQualityError("RISK_FREE_FRED_SCHEMA_INVALID")

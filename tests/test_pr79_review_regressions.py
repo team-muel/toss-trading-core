@@ -117,7 +117,9 @@ def test_curve_rates_are_recalculated_not_just_metadata_checked(tmp_path):
 def test_curve_unapproved_manifest_contract_cannot_pass_d2(tmp_path, schema_version, quality_status):
     store=ImmutableDatasetStore(tmp_path)
     mid=write_curve(store, curve_body(), schema_version=schema_version, quality_status=quality_status)
-    curve=materialize_usd_fred_risk_free_curve(store=store,manifest_id=mid,information_cutoff=NOW)
+    from decimal import Decimal
+    curve=RiskFreeCurve(tuple(RiskFreePoint(NOW,NOW,h,Decimal('.04'),'fred-alfred',mid,QualityStatus.VALID)
+                              for h in (21,63,126,252)))
     result=assemble_d2_runtime_evidence(
         risk_free=RiskFreeRuntimeEvidence(curve,'USD',NOW,store),factor_risk=None,model_lineage=None)
     name='RISK_FREE_CURRENCY_HORIZON_COMPOUNDING_VERIFIED'
