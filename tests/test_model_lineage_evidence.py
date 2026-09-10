@@ -100,5 +100,6 @@ def test_runtime_rejects_legacy_lineage_with_post_binding_raw_input(tmp_path):
     result = assemble_d2_runtime_evidence(risk_free=None, factor_risk=None,
         model_lineage=ModelLineageRuntimeEvidence(
             registry, authorization, binding, lineage, store, published_at, legacy_evidence.manifest_id))
-    assert "MODEL_SCOPE_AND_CALCULATION_LINEAGE_COMPLETE" not in result.checks
-    assert result.failure_reasons["MODEL_SCOPE_AND_CALCULATION_LINEAGE_COMPLETE"] == "MODEL_LINEAGE_RAW_AFTER_BINDING"
+    name = "MODEL_SCOPE_AND_CALCULATION_LINEAGE_COMPLETE"
+    assert not result.checks[name].passed
+    assert result.failure_reasons[name] == "MODEL_LINEAGE_RAW_AFTER_BINDING"
