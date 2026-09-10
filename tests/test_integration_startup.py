@@ -3,8 +3,10 @@ from pathlib import Path
 import sqlite3
 
 import pytest
+import yaml
 
 from asset_management.domain.errors import ConfigurationError
+from asset_management.orchestration import DecisionRuntime, RuntimeAdapterDescriptor
 from asset_management.orchestration.runtime import ApplicationRuntime
 from asset_management.config.loader import load_policy_registry
 from asset_management.time.clock import FrozenClock
@@ -29,6 +31,19 @@ def test_real_read_only_configuration_boots_and_applies_migrations_once():
     assert second.migration_versions == ()
     assert first.policies is not None
     assert first.policies.policies["data"].is_effective(NOW)
+
+
+def test_runtime_exposes_typed_canonical_decision_adapter():
+    raw_config = yaml.safe_load((ROOT / "config/application.yaml").read_text(encoding="utf-8"))
+    runtime = ApplicationRuntime.start(raw_config, FrozenClock(NOW))
+    adapter = runtime.decision_adapter(
+        kernel_version="decision-kernel@1",
+        descriptor=RuntimeAdapterDescriptor(
+            DecisionRuntime.HISTORICAL_REPLAY, "clock@1", "data@1", "broker@1",
+            "execution@1", "persistence@1",
+        ),
+    )
+    assert adapter.descriptor.runtime is DecisionRuntime.HISTORICAL_REPLAY
 
 
 def test_draft_trading_policies_block_non_read_only_boot(tmp_path):
@@ -59,4 +74,3 @@ def test_policy_document_tampering_is_detected(tmp_path):
     (docs / "data_policy.md").write_text("tampered", encoding="utf-8")
     with pytest.raises(ValueError, match="hash mismatch"):
         load_policy_registry(registry, repository_root=tmp_path)
-
