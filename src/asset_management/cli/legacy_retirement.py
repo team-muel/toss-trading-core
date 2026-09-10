@@ -11,6 +11,7 @@ from hashlib import sha256
 import json
 from pathlib import Path
 import re
+import shutil
 import socket
 import subprocess
 from typing import Callable
@@ -37,6 +38,14 @@ METRICS = frozenset(ALERTS.values()) | {
 
 
 def command(argv: list[str]) -> str:
+    # The Google Cloud SDK exposes gcloud.cmd on Windows.  subprocess does not
+    # resolve PowerShell's gcloud.ps1 command shim, so select the executable
+    # explicitly while keeping the Linux/macOS gcloud path unchanged.
+    if argv and argv[0] == "gcloud":
+        binary = shutil.which("gcloud.cmd") or shutil.which("gcloud")
+        if binary is None:
+            raise FileNotFoundError("gcloud CLI is required for GCP retirement planning")
+        argv = [binary, *argv[1:]]
     return subprocess.run(argv, check=True, capture_output=True, text=True, timeout=60).stdout
 
 

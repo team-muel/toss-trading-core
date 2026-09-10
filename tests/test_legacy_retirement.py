@@ -1,6 +1,7 @@
 """Retirement is an explicitly reviewed maintenance action, never deployment."""
 from pathlib import Path
 import json
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
@@ -160,3 +161,20 @@ def test_cli_dry_run_never_executes_deletes(monkeypatch,capsys):
     assert 'plan_sha256' in capsys.readouterr().out
     with pytest.raises(SystemExit):
         main(['gcp','--project',PROJECT,'--instance-id',INSTANCE,'--apply'])
+
+
+def test_command_uses_windows_gcloud_cmd_when_available(monkeypatch):
+    from asset_management.cli import legacy_retirement as module
+    seen = {}
+
+    def fake_which(name):
+        return 'C:/sdk/gcloud.cmd' if name == 'gcloud.cmd' else None
+
+    def fake_run(argv, **kwargs):
+        seen['argv'] = argv
+        return SimpleNamespace(stdout='[]')
+
+    monkeypatch.setattr(module.shutil, 'which', fake_which)
+    monkeypatch.setattr(module.subprocess, 'run', fake_run)
+    assert module.command(['gcloud', 'monitoring', 'policies', 'list']) == '[]'
+    assert seen['argv'] == ['C:/sdk/gcloud.cmd', 'monitoring', 'policies', 'list']
