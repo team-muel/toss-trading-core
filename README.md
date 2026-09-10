@@ -1,56 +1,78 @@
-# Toss Trading
+# toss-trading-core
 
-This repository has one canonical execution boundary: `asset_management`.
-Its runtime starts only in `READ_ONLY` mode and preserves the documented
-policy, point-in-time, reconciliation, risk, authorization, and immutable
-evidence gates. It does not enable live trading.
+`toss-trading-core` is a point-in-time asset-management and research repository with one canonical production execution boundary: `asset_management`.
 
-## Package responsibilities
+The supported runtime is fail-closed and starts in `READ_ONLY` mode. Live trading is disabled. Research, historical compatibility, and provider adapters may supply governed evidence, but they do not create a second execution path or grant broker-write authority.
+
+## Canonical boundaries
 
 | Package | Responsibility | Authority |
 | --- | --- | --- |
-| `asset_management` | Canonical runtime, account/data/time truth, policy, portfolio, risk, and execution contracts | The only production runtime boundary |
-| `asset_management.toss` | Read-only Toss API adapter and contract types | Outer adapter; no investment decision authority |
-| `asset_management.compatibility` | Read/replay of immutable historical Foundation evidence | Historical evidence only; no runtime entry point |
-| `research_platform` | Collection, immutable datasets, backtests, hypotheses, and reporting | Research only; cannot create orders |
-| `alpha_management` | Expression language, operators, simulations, and evaluation | Research only; cannot call brokers or create orders |
+| `asset_management` | Account/data/time truth, financial calculations, portfolio construction, risk, decision and execution contracts | Only production runtime boundary |
+| `asset_management.toss` | Toss API contract and read-only broker/provider adapters | Outer adapter only; no investment-decision authority |
+| `asset_management.compatibility` | Read/replay of finalized immutable Foundation-era evidence | Historical evidence only; no runtime entry point |
+| `research_platform` | Data collection, immutable datasets, backtests, hypotheses, diagnostics and reporting | Research/offline only; cannot create orders |
+| `alpha_management` | Research expression language, transforms, canonical quantitative templates and evaluation | Research only; cannot call brokers or bypass portfolio/risk policy |
 
-The retired `toss_trading` package, Foundation runner, and former Paper
-operation do not exist in the checkout or packaged wheel. Their source history
-remains recoverable from Git; historical broker evidence remains readable via
-the compatibility boundary without restoring a second execution path.
+The retired `toss_trading` runtime, Foundation runner, Paper operation, standalone research schedulers and superseded deployment entry points are not supported execution surfaces. Their Git history remains available, while retained historical account evidence is accessed only through the explicit read-only compatibility boundary.
 
-## Canonical validation
+## Governed runtime order
 
-```powershell
+Every decision run must preserve the same evidence chain:
+
+```text
+investment policy
+  -> account truth
+    -> time truth
+      -> data truth
+        -> financial calculation
+          -> target portfolio
+            -> risk control
+              -> order
+```
+
+Each accepted stage is bound to immutable evidence under the same runtime run. A later stage cannot infer, repair or substitute for an earlier stage. Missing, stale, conflicting or unverifiable prerequisites stop the run.
+
+Research output reaches production only through an explicit outer integration boundary. A research score, backtest result or model hash is not itself a forecast, portfolio target, risk approval or order authorization.
+
+## Validation
+
+Canonical read-only validation:
+
+```bash
 python -m asset_management.cli.runtime_validate
 python -m research_platform.cli.research_validate_instruments
 ```
 
-`toss-runtime-validate` validates the canonical runtime against an in-memory
-database at an explicit UTC instant. It neither contacts Toss nor uses broker
-credentials. Research is an internal/offline capability, not a second cloud
-application. Legacy standalone installers, timers, recommendation orchestration,
-and Gmail/report delivery entry points fail closed. Removing files does not stop
-already deployed units: use the reviewed retirement plan in
-[PR #79 convergence](docs/pr79_convergence.md) before operational acceptance.
+Repository verification commonly includes:
 
-## Operational rules
-
-- Live trading stays disabled in `config/application.yaml`.
-- Missing, stale, conflicting, or unverifiable evidence stops the relevant run.
-- Research and alpha results must pass the explicit outer integration boundary
-  before they can contribute to any portfolio proposal.
-- Review the repository contract in [AGENTS.md](AGENTS.md), the runtime
-  architecture in [docs/architecture.md](docs/architecture.md), and the
-  maintenance workflow in [docs/maintenance_workflow.md](docs/maintenance_workflow.md).
-
-## Verification baseline
-
-```powershell
+```bash
 python -m pytest -q
 python scripts/check_toss_openapi.py
+python scripts/check_maintenance_registry.py
 python -m research_platform.cli.research_validate_instruments
 python -m build --wheel
 python -c "import asset_management.orchestration.runtime"
 ```
+
+Exact required evidence depends on the changed maintenance surfaces. Follow `docs/maintenance_workflow.md`; a passing local suite or CI run does not grant semantic, operational or live-trading approval.
+
+## Operational migration status
+
+Repository cleanup does not prove that previously deployed VM units, schedulers, alert policies or log metrics have been retired. The reviewed fail-closed inventory/apply procedure is documented in `docs/pr79_convergence.md` and implemented by `asset_management.cli.legacy_retirement`. Unknown, shared or unverifiable cloud resources are retained for manual review rather than deleted speculatively.
+
+The remaining acceptance work is intentionally separate from repository cleanup, including real host/cloud retirement evidence, raw-return-to-factor-estimator lineage, real-data OOS/Signal/Forecast acceptance, and production consumer cutover. None of those gaps is converted into authority by documentation or compatibility code.
+
+## Documentation map
+
+- `docs/00_report_digest.md` — current operating and safety digest.
+- `docs/architecture.md` — runtime architecture and mandatory gate order.
+- `src/asset_management/ARCHITECTURE.md` — compile-time dependency rules.
+- `docs/pr79_convergence.md` — canonical-runtime convergence and legacy-retirement procedure.
+- `docs/research_reconstruction.md` — research reconstruction and authority boundaries.
+- `docs/maintenance_workflow.md` — finite-change and evergreen maintenance workflow.
+- `AGENTS.md` — repository contribution and governance contract.
+
+## Safety invariant
+
+Live trading remains disabled in `config/application.yaml`. No documentation, research result, compatibility reader, migration helper or passing test may be interpreted as implicit broker-write authorization.
