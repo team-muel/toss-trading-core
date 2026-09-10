@@ -6,9 +6,11 @@ lineage outputs assembled by the canonical pipeline. It has no public calculatio
 caller cannot substitute a different calculation for a runtime adapter.
 
 `ApplicationRuntime.decision_adapter` is the composition-root entry point for the historical-replay,
-paper, shadow, or live I/O descriptor and then calls the same kernel. Adapter keys are recorded with
-each evaluation but excluded from the semantic hash. The hash instead binds the kernel version,
-frozen input hash, complete pre-execution decision, and data/calculation lineage.
+paper, shadow, or live I/O descriptor. It requires the verified `PipelineEvidenceRepository`, runtime
+run ID and pricing-applicability authority; the public adapter accepts no decision request or economic
+values from its caller. Adapter keys are recorded with each evaluation but excluded from the semantic
+hash. The hash instead binds the kernel version, frozen input hash, complete pre-execution decision,
+and data/calculation lineage.
 
 Production requests are assembled by `PipelineEvidenceRepository.assemble_canonical_decision_request`.
 It re-resolves the contiguous persisted stages through `RISK_CONTROL`, verifies the selected JSON

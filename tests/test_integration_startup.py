@@ -6,7 +6,10 @@ import pytest
 import yaml
 
 from asset_management.domain.errors import ConfigurationError
-from asset_management.orchestration import DecisionRuntime, RuntimeAdapterDescriptor
+from asset_management.orchestration import (
+    DecisionRuntime, PricingApplicabilityEvidence, RuntimeAdapterDescriptor,
+)
+from asset_management.orchestration.pipelines import PipelineEvidenceRepository
 from asset_management.orchestration.runtime import ApplicationRuntime
 from asset_management.config.loader import load_policy_registry
 from asset_management.time.clock import FrozenClock
@@ -41,6 +44,12 @@ def test_runtime_exposes_typed_canonical_decision_adapter():
         descriptor=RuntimeAdapterDescriptor(
             DecisionRuntime.HISTORICAL_REPLAY, "clock@1", "data@1", "broker@1",
             "execution@1", "persistence@1",
+        ),
+        repository=PipelineEvidenceRepository(sqlite3.connect(":memory:")),
+        runtime_run_id="runtime@1",
+        pricing_applicability_evidence=PricingApplicabilityEvidence.create(
+            scope_key="asset-class:equity", applicable=True, reason=None,
+            policy_version="pricing-applicability@1",
         ),
     )
     assert adapter.descriptor.runtime is DecisionRuntime.HISTORICAL_REPLAY

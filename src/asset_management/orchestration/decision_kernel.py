@@ -395,15 +395,31 @@ class DecisionKernel:
 
 
 class DecisionRuntimeAdapter:
-    """Adapter boundary: it identifies runtime I/O but cannot alter kernel inputs or outputs."""
+    """Public runtime entry point backed exclusively by persisted pipeline evidence."""
 
-    def __init__(self, kernel: DecisionKernel, descriptor: RuntimeAdapterDescriptor) -> None:
-        if not isinstance(kernel, DecisionKernel) or not isinstance(descriptor, RuntimeAdapterDescriptor):
+    def __init__(self, kernel: DecisionKernel, descriptor: RuntimeAdapterDescriptor, *,
+                 repository: object, runtime_run_id: str,
+                 pricing_applicability_evidence: PricingApplicabilityEvidence) -> None:
+        from .pipelines import PipelineEvidenceRepository
+
+        if (not isinstance(kernel, DecisionKernel) or not isinstance(descriptor, RuntimeAdapterDescriptor) or
+                not isinstance(repository, PipelineEvidenceRepository) or
+                not isinstance(pricing_applicability_evidence, PricingApplicabilityEvidence)):
             raise InvariantViolation("DECISION_RUNTIME_ADAPTER_INVALID")
+        _text(runtime_run_id, "DECISION_RUNTIME_ADAPTER_INVALID")
         self._kernel = kernel
         self.descriptor = descriptor
+        self._repository = repository
+        self._runtime_run_id = runtime_run_id
+        self._pricing_applicability_evidence = pricing_applicability_evidence
 
-    def decide(self, request: CanonicalDecisionRequest) -> DecisionKernelEvaluation:
+    def decide(self) -> DecisionKernelEvaluation:
+        """Assemble and evaluate; callers cannot supply economic values or a request."""
+
+        request = self._repository.assemble_canonical_decision_request(
+            self._runtime_run_id,
+            pricing_applicability_evidence=self._pricing_applicability_evidence,
+        )
         return self._kernel.evaluate(request, self.descriptor)
 
 

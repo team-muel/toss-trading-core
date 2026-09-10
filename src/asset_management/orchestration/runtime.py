@@ -12,7 +12,10 @@ from asset_management.config.migrations import Migrator, load_migration_catalog
 from asset_management.config.schemas import PolicyRegistry
 from asset_management.config.validation import ValidatedConfig, validate_startup_config
 from asset_management.time.clock import Clock
-from .decision_kernel import DecisionKernel, DecisionRuntimeAdapter, RuntimeAdapterDescriptor
+from .decision_kernel import (
+    DecisionKernel, DecisionRuntimeAdapter, PricingApplicabilityEvidence, RuntimeAdapterDescriptor,
+)
+from .pipelines import PipelineEvidenceRepository
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +56,13 @@ class ApplicationRuntime:
         applied = Migrator(conn, clock).migrate(catalog)
         return cls(config, clock, policies, applied)
 
-    def decision_adapter(self, *, kernel_version: str,
-                         descriptor: RuntimeAdapterDescriptor) -> DecisionRuntimeAdapter:
+    def decision_adapter(self, *, kernel_version: str, descriptor: RuntimeAdapterDescriptor,
+                         repository: PipelineEvidenceRepository, runtime_run_id: str,
+                         pricing_applicability_evidence: PricingApplicabilityEvidence) -> DecisionRuntimeAdapter:
         """Expose the canonical pre-execution kernel from the composition root."""
 
-        return DecisionRuntimeAdapter(DecisionKernel(kernel_version), descriptor)
+        return DecisionRuntimeAdapter(
+            DecisionKernel(kernel_version), descriptor, repository=repository,
+            runtime_run_id=runtime_run_id,
+            pricing_applicability_evidence=pricing_applicability_evidence,
+        )

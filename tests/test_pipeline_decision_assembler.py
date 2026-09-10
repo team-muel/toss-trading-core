@@ -130,7 +130,11 @@ def test_production_assembler_uses_only_verified_persisted_economic_values():
         "run@1", pricing_applicability_evidence=pricing_authority,
     )
 
-    result = DecisionRuntimeAdapter(DecisionKernel("decision-kernel@1"), descriptor()).decide(request)
+    path = DecisionRuntimeAdapter(
+        DecisionKernel("decision-kernel@1"), descriptor(), repository=repository, runtime_run_id="run@1",
+        pricing_applicability_evidence=pricing_authority,
+    )
+    result = path.decide()
     assert result.decision.forecast_values == {"SPY": Decimal("0.08")}
     assert result.decision.target_weights == {"CASH": Decimal("0.4"), "SPY": Decimal("0.6")}
     assert result.decision.risk_decision_id == "decision@1"
@@ -139,6 +143,8 @@ def test_production_assembler_uses_only_verified_persisted_economic_values():
             "run@1", pricing_applicability_evidence=pricing_authority,
             forecast_values={"SPY": Decimal("99")},
         )
+    with pytest.raises(TypeError):
+        path.decide(request)
 
 
 def test_tampered_assembled_economic_value_and_persisted_hash_conflict_fail_closed():
@@ -146,9 +152,9 @@ def test_tampered_assembled_economic_value_and_persisted_hash_conflict_fail_clos
     request = repository.assemble_canonical_decision_request(
         "run@1", pricing_applicability_evidence=pricing_authority,
     )
-    adapter = DecisionRuntimeAdapter(DecisionKernel("decision-kernel@1"), descriptor())
+    adapter = DecisionKernel("decision-kernel@1")
     with pytest.raises(InvariantViolation, match="CANONICAL_DECISION_ASSEMBLY_TAMPERED"):
-        adapter.decide(replace(request, forecast_values={"SPY": Decimal("99")}))
+        adapter.evaluate(replace(request, forecast_values={"SPY": Decimal("99")}), descriptor())
 
     repository._conn.execute("PRAGMA foreign_keys=OFF")
     repository._conn.execute("UPDATE am_expectation_run SET payload_json=? WHERE expectation_run_id='expectation@1'",

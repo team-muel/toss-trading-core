@@ -10,7 +10,7 @@ from asset_management.decisions.governor import DecisionState
 from asset_management.domain.errors import InvariantViolation
 from asset_management.orchestration import (
     CanonicalDecisionRequest, DecisionKernel, DecisionParityLedger, DecisionRuntime,
-    DecisionRuntimeAdapter, FrozenDecisionInput, PricingApplicabilityEvidence,
+    FrozenDecisionInput, PricingApplicabilityEvidence,
     RuntimeAdapterDescriptor,
 )
 
@@ -68,7 +68,7 @@ def test_one_kernel_produces_identical_pre_execution_semantics_for_all_runtimes(
     inputs = frozen_input()
     kernel = DecisionKernel("decision-kernel@1")
     ledger = DecisionParityLedger()
-    results = [ledger.record(DecisionRuntimeAdapter(kernel, adapter(runtime)).decide(request(inputs)))
+    results = [ledger.record(kernel.evaluate(request(inputs), adapter(runtime)))
                for runtime in DecisionRuntime]
     assert len({item.semantic_hash for item in results}) == 1
     assert ledger.require_parity(inputs.input_hash) == results[0].semantic_hash
@@ -83,14 +83,14 @@ def test_runtime_specific_semantic_change_and_evidence_overwrite_fail_closed():
     inputs = frozen_input()
     ledger = DecisionParityLedger()
     standard = DecisionKernel("decision-kernel@1")
-    ledger.record(DecisionRuntimeAdapter(standard, adapter(DecisionRuntime.HISTORICAL_REPLAY)).decide(request(inputs)))
+    ledger.record(standard.evaluate(request(inputs), adapter(DecisionRuntime.HISTORICAL_REPLAY)))
     divergent = DecisionKernel("decision-kernel@1")
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PARITY_MISMATCH"):
-        ledger.record(DecisionRuntimeAdapter(divergent, adapter(DecisionRuntime.PAPER)).decide(
-            request(inputs, risk_outputs={"volatility": Decimal(".20")})))
+        ledger.record(divergent.evaluate(
+            request(inputs, risk_outputs={"volatility": Decimal(".20")}), adapter(DecisionRuntime.PAPER)))
     with pytest.raises(InvariantViolation, match="DECISION_RUNTIME_EVIDENCE_CONFLICT"):
-        ledger.record(DecisionRuntimeAdapter(divergent, adapter(DecisionRuntime.HISTORICAL_REPLAY)).decide(
-            request(inputs, risk_outputs={"volatility": Decimal(".20")})))
+        ledger.record(divergent.evaluate(
+            request(inputs, risk_outputs={"volatility": Decimal(".20")}), adapter(DecisionRuntime.HISTORICAL_REPLAY)))
     with pytest.raises(InvariantViolation, match="DECISION_PARITY_EVIDENCE_INCOMPLETE"):
         ledger.require_parity(inputs.input_hash)
 
@@ -131,10 +131,9 @@ def test_pricing_non_applicability_cannot_authorize_a_target():
 def test_schema_covers_published_parity_evidence():
     inputs = frozen_input()
     ledger = DecisionParityLedger()
-    result = ledger.record(DecisionRuntimeAdapter(
-        DecisionKernel("decision-kernel@1"),
-        adapter(DecisionRuntime.HISTORICAL_REPLAY),
-    ).decide(request(inputs)))
+    result = ledger.record(DecisionKernel("decision-kernel@1").evaluate(
+        request(inputs), adapter(DecisionRuntime.HISTORICAL_REPLAY),
+    ))
     schema = json.loads((Path(__file__).parents[1] / "schemas/decision_kernel_parity.schema.json").read_text())
     payload = ledger.payload()
     assert set(schema["required"]) == set(payload)
