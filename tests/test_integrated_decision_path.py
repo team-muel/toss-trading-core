@@ -144,7 +144,7 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
         pricing_applicability_evidence=PRICING_EVIDENCE,
     )
 
-    decision_request = CanonicalDecisionRequest(
+    decision_request = CanonicalDecisionRequest._from_persisted_pipeline(
         inputs=inputs, feature_values={feature.feature_id: Decimal(feature.value)},
         signal_values={key: Decimal(value) for key, value in signal.values.items()},
         forecast_values=forecast_values, pricing_outputs={"pricing-baseline": Decimal(".06")},

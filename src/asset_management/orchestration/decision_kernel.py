@@ -1,7 +1,7 @@
 """Runtime-independent pre-execution decision kernel and parity evidence."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
@@ -15,6 +15,7 @@ from asset_management.domain.errors import InvariantViolation
 
 
 _HASH = re.compile(r"[0-9a-f]{64}")
+_PERSISTED_PIPELINE_ASSEMBLER = object()
 
 
 def _text(value: str, reason: str) -> str:
@@ -194,6 +195,26 @@ class CanonicalDecisionRequest:
     pricing_applicability_evidence_id: str
     pricing_applicable: bool = True
     pricing_non_applicability_reason: str | None = None
+    _assembler: object | None = field(default=None, repr=False, compare=False)
+    _assembly_hash: str | None = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def _from_persisted_pipeline(cls, **values: object) -> "CanonicalDecisionRequest":
+        """Capability used only by the persistent pipeline assembler."""
+        request = cls(**values, _assembler=_PERSISTED_PIPELINE_ASSEMBLER)
+        decision = request.build_decision()
+        return replace(request, _assembly_hash=digest(canonical({
+            "input_hash": request.inputs.input_hash,
+            "decision": decision.payload(),
+        })))
+
+    def require_persisted_assembly(self) -> None:
+        if self._assembler is not _PERSISTED_PIPELINE_ASSEMBLER or self._assembly_hash is None:
+            raise InvariantViolation("CANONICAL_DECISION_ASSEMBLY_REQUIRED")
+        decision = self.build_decision()
+        expected = digest(canonical({"input_hash": self.inputs.input_hash, "decision": decision.payload()}))
+        if self._assembly_hash != expected:
+            raise InvariantViolation("CANONICAL_DECISION_ASSEMBLY_TAMPERED")
 
     def build_decision(self) -> "PreExecutionDecision":
         if not isinstance(self.inputs, FrozenDecisionInput):
@@ -359,6 +380,7 @@ class DecisionKernel:
                  adapter: RuntimeAdapterDescriptor) -> DecisionKernelEvaluation:
         if not isinstance(request, CanonicalDecisionRequest) or not isinstance(adapter, RuntimeAdapterDescriptor):
             raise InvariantViolation("DECISION_KERNEL_EVALUATION_INVALID")
+        request.require_persisted_assembly()
         inputs = request.inputs
         decision = request.build_decision()
         evidence = inputs.pricing_applicability_evidence

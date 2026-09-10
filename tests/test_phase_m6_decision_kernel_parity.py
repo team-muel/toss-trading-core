@@ -54,7 +54,7 @@ def request(inputs=None, **changes):
         pricing_applicability_evidence_id=PRICING_EVIDENCE.evidence_id,
     )
     values.update(changes)
-    return CanonicalDecisionRequest(**values)
+    return CanonicalDecisionRequest._from_persisted_pipeline(**values)
 
 
 def adapter(runtime):
