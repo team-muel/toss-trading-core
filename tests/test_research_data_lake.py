@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toss_trading.research import DataLake, MarketBar, validate_market_bars
+from research_platform import DataLake, MarketBar, validate_market_bars
 
 
 def market_bar(

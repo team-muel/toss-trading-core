@@ -6,13 +6,13 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from toss_trading.cli.research_evaluate_hypotheses import (
+from research_platform.cli.research_evaluate_hypotheses import (
     evaluate_registered_hypotheses,
 )
-from toss_trading.research import PricePoint
-from toss_trading.research.candidate_evaluation import block_bootstrap_test
-from toss_trading.research.costs import ExecutionCostModel, SlippageTier
-from toss_trading.research.hypotheses import (
+from research_platform import PricePoint
+from research_platform.candidate_evaluation import block_bootstrap_test
+from research_platform.costs import ExecutionCostModel, SlippageTier
+from research_platform.hypotheses import (
     HypothesisLedger,
     hypothesis_from_proposal,
     load_research_policy,

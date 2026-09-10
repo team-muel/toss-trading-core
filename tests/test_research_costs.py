@@ -6,11 +6,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toss_trading.cli.research_export_cost_model import (
+from research_platform.cli.research_export_cost_model import (
     build_cost_calibration,
     load_execution_cost_policy,
 )
-from toss_trading.research.costs import load_execution_cost_model
+from research_platform.costs import load_execution_cost_model
 
 
 class ResearchCostTests(unittest.TestCase):

@@ -27,7 +27,7 @@ research_data/
 - `catalog`: source, availability, license, schema, code revision, parent
   manifest를 기록한 불변 JSON manifest
 
-SQLite Foundation DB는 계좌·주문·체결 증거 전용으로 유지합니다. 대량
+SQLite historical account-evidence database는 계좌·주문·체결 증거 전용으로 유지합니다. 대량
 시계열을 SQLite에 계속 적재하지 않습니다.
 
 ## Market Bar 계약
@@ -60,7 +60,7 @@ provider 라이선스에 따라 내보낸 CSV를 원본과 Parquet으로 함께 
 ```powershell
 python -m pip install -r requirements-research.lock
 $env:PYTHONPATH='src'
-python -m toss_trading.cli.research_ingest_bars `
+python -m research_platform.cli.research_ingest_bars `
   --input "<provider-export.csv>" `
   --source "<approved-provider>" `
   --license-tag "<license-or-contract-id>" `
@@ -82,12 +82,12 @@ python -m toss_trading.cli.research_ingest_bars `
 - 월말 신호, 다음 거래일 적용
 - 절대 모멘텀이 0보다 큰 후보 중 상위 1개
 - 통과 후보가 없으면 `SGOV`
-- Foundation의 sanitized 현재 미국 수수료 schedule과 protocol에 사전 선언된
+- historical account-evidence의 sanitized 현재 미국 수수료 schedule과 protocol에 사전 선언된
   주문금액별 slippage tier를 매도·매수 양쪽 체결금액에 적용합니다. calibration이
   없거나 만료되면 실행하지 않습니다.
 
 ```powershell
-python -m toss_trading.cli.research_backtest `
+python -m research_platform.cli.research_backtest `
   --parquet "<silver market-bars parquet>" `
   --candidate SPY --candidate QQQ --candidate VTV `
   --candidate XLP --candidate XLU --candidate TLT --candidate GLD `
@@ -131,7 +131,7 @@ equity curve, rebalance, walk-forward 상세를 산출물에서 제거하고 `me
 ## 승격 기준
 
 P1부터 walk-forward 통과 fold는 수익률이 0보다 큰지가 아니라 동일 기간의
-`SPY buy-and-hold` 총수익률을 초과했는지로 판정한다. 수수료는 Foundation의 현재
+`SPY buy-and-hold` 총수익률을 초과했는지로 판정한다. 수수료는 historical account-evidence의 현재
 미국 계좌 schedule을 percent에서 bps로 정규화하고, slippage는 포트폴리오 notional과
 각 매수·매도 leg 규모에 따른 보수적 tier를 적용한다. 만료되거나 누락된 calibration은
 weekly 후보평가와 baseline 생성을 중단시킨다.

@@ -13,7 +13,7 @@ from asset_management.domain.errors import DataQualityError, ReconciliationError
 from asset_management.ledger import CashLedger, OpenBuyOrder, cash_state_from_buying_power
 from asset_management.broker.toss_read import TossReadAdapter
 from asset_management.time.clock import FrozenClock
-from toss_trading.broker.toss import TossApiResult
+from asset_management.toss.broker.toss import TossApiResult
 
 
 ROOT = Path(__file__).parents[1]

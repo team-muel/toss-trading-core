@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toss_trading.research.hypotheses import (
+from research_platform.hypotheses import (
     HypothesisLedger,
     VertexHypothesisPlanner,
     hypothesis_from_proposal,

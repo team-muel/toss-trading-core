@@ -3,14 +3,14 @@ import tempfile
 import unittest
 from datetime import date, timedelta
 
-from toss_trading.research import (
+from research_platform import (
     DualMomentumConfig,
     PricePoint,
     run_dual_momentum_backtest,
 )
-from toss_trading.research.backtest import write_experiment_record
-from toss_trading.research.costs import ExecutionCostModel, SlippageTier
-from toss_trading.research.reporting import strategy_snapshot
+from research_platform.backtest import write_experiment_record
+from research_platform.costs import ExecutionCostModel, SlippageTier
+from research_platform.reporting import strategy_snapshot
 
 
 def execution_cost_model(

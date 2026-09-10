@@ -5,7 +5,7 @@ import unittest
 from datetime import date, timedelta
 from pathlib import Path
 
-from toss_trading.research import (
+from research_platform import (
     DataLake,
     MacroRegimeConfig,
     MacroVintageObservation,
@@ -15,9 +15,9 @@ from toss_trading.research import (
     run_macro_regime_backtest,
     parse_alfred_payload,
 )
-from toss_trading.research.costs import ExecutionCostModel, SlippageTier
-from toss_trading.research.candidate_evaluation import evaluate_hypothesis
-from toss_trading.research.hypotheses import load_research_policy
+from research_platform.costs import ExecutionCostModel, SlippageTier
+from research_platform.candidate_evaluation import evaluate_hypothesis
+from research_platform.hypotheses import load_research_policy
 
 
 def _macro_observations() -> list[MacroVintageObservation]:

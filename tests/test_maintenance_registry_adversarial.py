@@ -34,12 +34,12 @@ class MaintenanceAdversarialTests(unittest.TestCase):
     def test_all_provider_entry_points_include_data_schema_and_tests(self):
         # Deliberately independent of surfaces[0] and cross_surface_rules[0].
         paths = (
-            "src/toss_trading/broker/toss.py",
+            "src/asset_management/toss/broker/toss.py",
             "src/asset_management/broker/toss_read.py",
             "src/asset_management/data/adapters/toss.py",
-            "src/toss_trading/research/providers.py",
-            "src/toss_trading/cli/research_collect_tiingo.py",
-            "src/toss_trading/cli/research_collect_sec.py",
+            "src/research_platform/providers.py",
+            "src/research_platform/cli/research_collect_tiingo.py",
+            "src/research_platform/cli/research_collect_sec.py",
             "config/toss_openapi_contract.json",
             "config/data_sources.yaml",
             "config/fred_series.csv",

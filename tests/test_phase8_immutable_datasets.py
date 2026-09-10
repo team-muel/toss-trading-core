@@ -6,8 +6,8 @@ import pytest
 
 from asset_management.data.adapters.toss import TossDatasetAdapter
 from asset_management.data.immutable import ImmutableDatasetStore, ProviderDatasetAdapter
-from toss_trading.broker.credentials import TossCredentials
-from toss_trading.broker.toss import TossApiResult, TossReadOnlyAdapter
+from asset_management.toss.broker.credentials import TossCredentials
+from asset_management.toss.broker.toss import TossApiResult, TossReadOnlyAdapter
 
 
 NOW = datetime(2026, 9, 5, tzinfo=timezone.utc)

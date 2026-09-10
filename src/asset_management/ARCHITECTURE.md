@@ -23,9 +23,10 @@ decision. Execution consumes an already journaled and governed order intent.
 outer application-shell modules. They may compose core modules, while core
 modules must never import them.
 
-Imports from the legacy `toss_trading` package are permitted only inside
-anti-corruption adapters while the verified Toss foundation is migrated. They
-must not leak into domain models or investment logic.
+The retired `toss_trading` package is not importable. Historical Foundation
+evidence is readable only through `asset_management.compatibility`, and the
+read-only Toss boundary lives in `asset_management.toss`. Neither boundary may
+leak into domain models or investment logic.
 
 ## Alpha research boundary
 

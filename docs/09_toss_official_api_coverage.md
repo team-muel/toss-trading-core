@@ -10,7 +10,7 @@
 - Auth: OAuth2 Client Credentials Grant
 - Token endpoint: `POST /oauth2/token`
 - Account context header: `X-Tossinvest-Account: {accountSeq}`
-- Runtime style: REST API (read-only Foundation)
+- Runtime style: REST API (read-only canonical adapter)
 
 2026-09-08 `latest/openapi.json`을 다시 다운로드해 위 SHA-256과
 OpenAPI version `1.2.15`를 확인했습니다. 현재 공식 paths에는 별도 현금

@@ -5,8 +5,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from toss_trading.cli.research_plan_hypotheses import plan_hypotheses
-from toss_trading.research.hypotheses import HypothesisLedger
+from research_platform.cli.research_plan_hypotheses import plan_hypotheses
+from research_platform.hypotheses import HypothesisLedger
 
 
 class _Planner:

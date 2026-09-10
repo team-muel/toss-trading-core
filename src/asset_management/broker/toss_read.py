@@ -1,5 +1,5 @@
-from toss_trading.broker.toss import TossReadOnlyAdapter
-from toss_trading.contracts.toss import (
+from asset_management.toss.broker.toss import TossReadOnlyAdapter
+from asset_management.toss.contracts.toss import (
     TossContractError,
     commission_rate_items,
     holdings_items,

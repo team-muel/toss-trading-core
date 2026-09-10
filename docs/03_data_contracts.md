@@ -82,7 +82,7 @@
 
 OHLCV bar 저장소입니다. Toss와 외부 provider 모두 들어올 수 있으므로 `source`와 timestamp metadata가 필수입니다.
 
-연구용 대량 시계열의 canonical 저장소는 Foundation SQLite가 아니라
+연구용 대량 시계열의 canonical 저장소는 historical account-evidence SQLite가 아니라
 `research_data/silver`의 Parquet입니다. `interval`, `adjustment`,
 `available_at`, `source_revision`, `raw_manifest_id`, `schema_version`을
 반드시 보존합니다. raw와 total-return 값을 같은 key로 덮어쓰지 않습니다.

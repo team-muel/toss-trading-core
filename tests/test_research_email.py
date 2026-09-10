@@ -6,14 +6,14 @@ from email import policy
 from email.parser import BytesParser
 from pathlib import Path
 
-from toss_trading.research.email_digest import (
+from research_platform.email_digest import (
     EmailDeliveryLedger,
     GmailApiClient,
     build_gmail_message,
     deliver_research_digest,
     render_research_digest,
 )
-from toss_trading.research.interpretation import (
+from research_platform.interpretation import (
     build_research_evidence,
     interpretation_from_payload,
 )

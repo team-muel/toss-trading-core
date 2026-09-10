@@ -1,0 +1,289 @@
+"""Plan a narrowly scoped retirement; apply only a freshly revalidated plan hash.
+
+No credentials, account data, IAM roles, buckets, or secrets are deleted. The
+operator must review the exact host/project/instance plan before applying it.
+Application deployment cannot implicitly invoke this maintenance command.
+"""
+from __future__ import annotations
+
+import argparse
+from hashlib import sha256
+import json
+from pathlib import Path
+import re
+import shutil
+import socket
+import subprocess
+from typing import Callable
+
+UNITS = frozenset({
+    "toss-foundation.service", "toss-foundation.timer", "toss-paper-operation.service",
+    "toss-paper-operation.timer", "toss-research-automation@.service",
+    "toss-research-automation@daily.service", "toss-research-automation@weekly.service",
+    "toss-research-daily.timer", "toss-research-weekly.timer", "toss-research-prune.service",
+    "toss-research-prune.timer", "toss-stock-recommendations.service", "toss-stock-recommendations.timer",
+})
+PREFIXES = ("toss-foundation", "toss-paper-operation", "toss-research-", "toss-stock-recommendations")
+ALERTS = {
+    "Toss Foundation audit failed": "foundation_audit_failed_count",
+    "Toss Foundation runner heartbeat missing": "foundation_runner_ok_count",
+    "Toss Foundation snapshot failed": "foundation_snapshot_failed_count",
+    "Toss Foundation runner failed": "foundation_runner_failed_count",
+    "Toss Foundation runner lock contention": "foundation_runner_lock_busy_count",
+    "Toss Foundation backup upload heartbeat missing": "foundation_runner_backup_upload_ok_count",
+}
+METRICS = frozenset(ALERTS.values()) | {
+    "foundation_snapshot_ok_count", "foundation_audit_ok_count", "foundation_runner_backup_ok_count",
+}
+
+
+def command(argv: list[str]) -> str:
+    # The Google Cloud SDK exposes gcloud.cmd on Windows.  subprocess does not
+    # resolve PowerShell's gcloud.ps1 command shim, so select the executable
+    # explicitly while keeping the Linux/macOS gcloud path unchanged.
+    if argv and argv[0] == "gcloud":
+        binary = shutil.which("gcloud.cmd") or shutil.which("gcloud")
+        if binary is None:
+            raise FileNotFoundError("gcloud CLI is required for GCP retirement planning")
+        argv = [binary, *argv[1:]]
+    return subprocess.run(argv, check=True, capture_output=True, text=True, timeout=60).stdout
+
+
+def identity(plan: dict) -> str:
+    return sha256(json.dumps(plan, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def _file_identity(path: Path) -> dict:
+    if path.is_symlink():
+        try:
+            target = path.resolve(strict=True)
+        except (FileNotFoundError, RuntimeError, OSError) as exc:
+            raise ValueError("retired unit symlink target must be a readable file") from exc
+        if not target.is_file():
+            raise ValueError("retired unit symlink target must be a readable file")
+        return {
+            "symlink": str(path.readlink()),
+            "target": str(target),
+            "target_sha256": sha256(target.read_bytes()).hexdigest(),
+        }
+    if path.is_file():
+        return {"sha256": sha256(path.read_bytes()).hexdigest()}
+    raise ValueError("retired unit must be a file or symlink")
+
+
+def systemd_plan(*, run: Callable = command, root: Path = Path("/etc/systemd/system"), host: str | None = None) -> dict:
+    files = run(["systemctl", "list-unit-files", "--all", "--no-legend", "--no-pager"])
+    loaded = run(["systemctl", "list-units", "--all", "--plain", "--no-legend", "--no-pager"])
+    names = {line.split()[0] for text in (files, loaded) for line in text.splitlines() if line.split()}
+    names |= {p.name for p in root.iterdir() if p.name.startswith(PREFIXES)}
+    candidates = sorted(n for n in names if n.startswith(PREFIXES))
+    unknown = sorted(set(candidates) - UNITS)
+    if unknown:
+        raise ValueError(f"unrecognized retired units require manual review: {unknown}")
+    retained_files, fragment_paths = {}, {}
+    for name in candidates:
+        path = root/name
+        if path.exists() or path.is_symlink():
+            retained_files[name] = _file_identity(path)
+        fragment = run(["systemctl", "show", name, "--property=FragmentPath", "--value"]).strip()
+        allowed_fragments = {str(path)}
+        if "@" in name and not name.endswith("@.service"):
+            template = name.split("@", 1)[0] + "@.service"
+            if template in UNITS:
+                allowed_fragments.add(str(root/template))
+        if fragment and fragment not in allowed_fragments:
+            raise ValueError(f"unit outside reviewed systemd root: {name}")
+        if fragment:
+            # Instantiated services normally load the template, not an
+            # instance-specific file. Hash that actual fragment for review.
+            fragment_path = Path(fragment)
+            retained_files[fragment_path.name] = _file_identity(fragment_path)
+        elif name not in retained_files:
+            raise ValueError(f"unit has no reviewed file identity: {name}")
+        # A main fragment hash does not cover drop-in overrides. They require
+        # manual review rather than an incomplete automatic retirement plan.
+        if run(["systemctl", "show", name, "--property=DropInPaths", "--value"]).strip():
+            raise ValueError(f"unit drop-ins require manual review: {name}")
+        fragment_paths[name] = fragment
+    # Stop timers before services. Templates are unlinked after their known
+    # instances are stopped; never ask systemctl to stop an abstract template.
+    stop = sorted((n for n in candidates if "@.service" not in n), key=lambda n: (not n.endswith(".timer"), n))
+    return {"schema": "legacy-retirement-plan-v1", "kind": "systemd", "host": host or socket.gethostname(),
+            "root": str(root), "units": stop, "unit_files": retained_files, "fragment_paths": fragment_paths,
+            "commands": [["systemctl", "disable", "--now", n] for n in stop],
+            "excluded": ["account databases", "artifacts", "environment files", "canonical units"]}
+
+
+def _filters(policy: dict) -> list[str]:
+    filters = []
+    for condition in policy.get("conditions", []):
+        bodies = [condition[key] for key in ("conditionThreshold", "conditionAbsent") if key in condition]
+        if len(bodies) != 1:
+            raise ValueError("unrecognized alert condition requires manual review")
+        body = bodies[0]
+        if not isinstance(body, dict) or not isinstance(body.get("filter"), str):
+            raise ValueError("unrecognized alert condition requires manual review")
+        filters.append(body["filter"])
+        # Ratio alerts may consume a second metric. Its selector has the same
+        # shared-resource protection as the numerator, including dynamic scope.
+        if "denominatorFilter" in body and body["denominatorFilter"] != "":
+            if not isinstance(body["denominatorFilter"], str):
+                raise ValueError("unrecognized alert denominator requires manual review")
+            filters.append(body["denominatorFilter"])
+    if not filters:
+        raise ValueError("empty alert policy")
+    return filters
+
+
+def _filter_equalities(filter_: str) -> dict[str, str] | None:
+    """Recognize only complete conjunctions; never trust a matching substring."""
+    if not isinstance(filter_, str):
+        return None
+    pairs = {}
+    for clause in re.split(r"\s+AND\s+", filter_):
+        match = re.fullmatch(r'\s*([A-Za-z_.]+)\s*=\s*"([^"\\]+)"\s*', clause)
+        if not match or match[1] in pairs:
+            return None
+        pairs[match[1]] = match[2]
+    return pairs
+
+
+def _literal_metric_selector(filter_: str) -> bool:
+    pairs = _filter_equalities(filter_)
+    return pairs is not None and re.fullmatch(r"[A-Za-z0-9_./-]+", pairs.get("metric.type", "")) is not None
+
+
+def _exact_scope(filter_: str, instance: str, *, metric: str | None = None) -> bool:
+    # An OR/subexpression must not escape the instance boundary.
+    pairs = _filter_equalities(filter_)
+    if pairs is None:
+        return False
+    if pairs.get("resource.type") != "gce_instance" or pairs.get("resource.labels.instance_id") != instance:
+        return False
+    if metric is not None:
+        return pairs == {"resource.type": "gce_instance", "resource.labels.instance_id": instance,
+                         "metric.type": "logging.googleapis.com/user/"+metric}
+    return True
+
+
+def gcp_plan(*, project: str, instance: str, policies: list, metrics: list) -> dict:
+    if not re.fullmatch(r"[a-z][a-z0-9-]{4,61}[a-z0-9]", project) or not re.fullmatch(r"[0-9]+", instance):
+        raise ValueError("explicit GCP project ID and numeric instance ID required")
+    removed, retained = [], []
+    all_names = [p.get("name") for p in policies]
+    if len(all_names) != len(set(all_names)):
+        raise ValueError("duplicate policy inventory")
+    for policy in policies:
+        title = policy.get("displayName")
+        if title not in ALERTS:
+            continue
+        if not re.fullmatch(re.escape(f"projects/{project}/alertPolicies/")+r"[0-9]+", policy.get("name", "")):
+            raise ValueError("policy is not in the explicitly selected project")
+        filters = _filters(policy)
+        if not all(_exact_scope(f, instance, metric=ALERTS[title]) for f in filters):
+            retained.append({"name": policy["name"], "reason": "different-or-unverified-instance-scope"})
+            continue
+        removed.append(policy["name"])
+    commands = [["gcloud", "monitoring", "policies", "delete", name, f"--project={project}", "--quiet"]
+                for name in sorted(removed)]
+    if len({m.get("name") for m in metrics}) != len(metrics):
+        raise ValueError("duplicate metric inventory")
+    # A dynamic/unsupported metric selector may refer to a shared metric even
+    # without its literal name. Preserve all legacy metrics in that case.
+    unknown_selectors = False
+    for policy in policies:
+        if policy.get("name") in removed:
+            continue
+        try:
+            filters = _filters(policy)
+            if any(not _literal_metric_selector(f) for f in filters):
+                unknown_selectors = True
+        except ValueError:
+            unknown_selectors = True
+    for metric in metrics:
+        name = metric.get("name")
+        if name not in METRICS:
+            continue
+        references = [p for p in policies if p.get("name") not in removed and
+                      f"logging.googleapis.com/user/{name}" in json.dumps(p)]
+        if unknown_selectors or references or not _exact_scope(metric.get("filter", ""), instance):
+            retained.append({"name": name, "reason": "shared-or-unverified-metric"})
+        else:
+            commands.append(["gcloud", "logging", "metrics", "delete", name, f"--project={project}", "--quiet"])
+    return {"schema": "legacy-retirement-plan-v1", "kind": "gcp", "project": project, "instance_id": instance,
+            "inventory_hash": identity({"policies": sorted(policies, key=lambda p:p['name']),
+                                        "metrics": sorted(metrics, key=lambda m:m['name'])}),
+            "commands": commands, "retained_for_review": retained,
+            "excluded": ["IAM", "secrets", "buckets", "datasets", "shared/canonical alerts", "Ops Agent config"]}
+
+
+def apply_plan(plan: dict, expected_hash: str, *, run: Callable = command) -> None:
+    if identity(plan) != expected_hash:
+        raise ValueError("retirement plan changed; review the fresh plan")
+    if plan["kind"] == "systemd":
+        root = Path(plan["root"])
+        # Revalidate every recorded unit identity before the first destructive
+        # command. A reviewed plan that has gone stale must have zero effects.
+        for name, recorded in plan["unit_files"].items():
+            path = root/name
+            if (not path.exists() and not path.is_symlink()) or _file_identity(path) != recorded:
+                raise ValueError("unit changed before retirement")
+        if not isinstance(plan.get("fragment_paths"), dict):
+            raise ValueError("fresh retirement plan with runtime identities required")
+        # Check effective manager identities too, before the first destructive
+        # operation. Configuration writers must remain quiescent during apply.
+        for name, fragment in plan["fragment_paths"].items():
+            current = run(["systemctl", "show", name, "--property=FragmentPath", "--value"]).strip()
+            dropins = run(["systemctl", "show", name, "--property=DropInPaths", "--value"]).strip()
+            if current != fragment or dropins:
+                raise ValueError("unit runtime identity changed before retirement")
+    for argv in plan["commands"]:
+        run(argv)
+    if plan["kind"] == "systemd":
+        root = Path(plan["root"])
+        for name, recorded in plan["unit_files"].items():
+            path = root/name
+            # systemctl disable may already remove an alias symlink. If the
+            # path still exists, revalidate again before unlinking it so a
+            # concurrent replacement cannot be removed.
+            if not path.exists() and not path.is_symlink():
+                continue
+            if _file_identity(path) != recorded:
+                raise ValueError("unit changed during retirement")
+            path.unlink()
+        run(["systemctl", "daemon-reload"])
+        for name in plan["units"]:
+            state = run(["systemctl", "show", name, "--property=ActiveState", "--value"]).strip()
+            if state not in {"inactive", "failed", ""}:
+                raise ValueError("retired unit remains active")
+
+
+def main(argv=None) -> int:
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("kind", choices=("systemd", "gcp"))
+    parser.add_argument("--project")
+    parser.add_argument("--instance-id")
+    parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--expect-plan-sha256")
+    args=parser.parse_args(argv)
+    if args.apply and not args.expect_plan_sha256:
+        parser.error("--apply requires a reviewed --expect-plan-sha256")
+    if args.kind == "systemd":
+        plan=systemd_plan()
+    else:
+        if not args.project or not args.instance_id:
+            parser.error("gcp requires --project and --instance-id")
+        # These reads do not fetch credentials or broker/account payloads.
+        policies=json.loads(command(["gcloud", "monitoring", "policies", "list", f"--project={args.project}", "--format=json"]))
+        metrics=json.loads(command(["gcloud", "logging", "metrics", "list", f"--project={args.project}", "--format=json"]))
+        plan=gcp_plan(project=args.project, instance=args.instance_id, policies=policies, metrics=metrics)
+    print(json.dumps({"plan_sha256": identity(plan), "plan": plan}, sort_keys=True, indent=2))
+    if args.apply:
+        apply_plan(plan, args.expect_plan_sha256)
+        print("scoped_retirement_applied=true")
+    # Even a successful scoped retirement is not complete GCP operational acceptance.
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

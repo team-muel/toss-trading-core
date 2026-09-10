@@ -1,7 +1,7 @@
 import unittest
 
-from toss_trading.broker.credentials import TossCredentials
-from toss_trading.broker.toss import TossApiResult, TossReadOnlyAdapter
+from asset_management.toss.broker.credentials import TossCredentials
+from asset_management.toss.broker.toss import TossApiResult, TossReadOnlyAdapter
 
 
 class RecordingAdapter(TossReadOnlyAdapter):

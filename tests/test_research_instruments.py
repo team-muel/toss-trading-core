@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toss_trading.data.universe import load_instrument_mappings, load_universe
-from toss_trading.research.instruments import (
+from asset_management.compatibility.reference.universe import load_instrument_mappings, load_universe
+from research_platform.instruments import (
     build_instrument_lifetime_index,
     load_corporate_actions,
     load_instrument_history,

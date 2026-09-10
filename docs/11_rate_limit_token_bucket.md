@@ -2,16 +2,18 @@
 
 ## Implementation Status
 
-Foundation runner now has a conservative in-memory token bucket:
+read-only research runner now has a conservative in-memory token bucket:
 
-- implementation: `src/toss_trading/runtime/rate_limit.py`
+- implementation: `src/asset_management/toss/runtime/rate_limit.py`
 - adapter integration: `TossReadOnlyAdapter`
 - defaults: `TOSS_RATE_LIMIT_CAPACITY=20`, `TOSS_RATE_LIMIT_REFILL_PER_SECOND=5`
 - response header sync: `X-RateLimit-Limit`, `X-RateLimit-Remaining`
 
-This is enough for read-only foundation snapshot/audit on one VM process. It is not yet a distributed or persisted bucket. Before multi-process runners, cron overlap, or live order submission, rate-limit state must be persisted or process concurrency must be prevented.
+This is enough for read-only read-only evidence validation on one VM process. It is not yet a distributed or persisted bucket. Before multi-process runners, cron overlap, or live order submission, rate-limit state must be persisted or process concurrency must be prevented.
 
-The GCP foundation runner uses `flock` through `scripts/run_foundation_gcp.sh` to prevent overlapping read-only runs on one VM. This is still not a distributed rate-limit bucket and does not cover multiple VMs.
+Research automation uses `flock` to prevent overlapping collection runs on one
+VM. This is still not a distributed rate-limit bucket and does not cover
+multiple VMs.
 
 ## Goal
 

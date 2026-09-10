@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toss_trading.research.interpretation import (
+from research_platform.interpretation import (
     VertexResearchInterpreter,
     build_research_evidence,
     deterministic_interpretation,

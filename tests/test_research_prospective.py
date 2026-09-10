@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from toss_trading.research.prospective import (
+from research_platform.prospective import (
     append_collection_observation,
     append_run_completion,
     assess_collection_continuity,

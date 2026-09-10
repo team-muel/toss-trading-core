@@ -81,7 +81,7 @@ investment policy -> account truth -> time truth -> data truth
 
 근거: `src/asset_management/domain/`, `src/asset_management/time/`,
 `src/asset_management/config/`, `docs/db_migrations.md`,
-`tests/test_phase1_common_foundation.py`, `tests/test_integration_startup.py`.
+`tests/test_phase1_common_account evidence.py`, `tests/test_integration_startup.py`.
 
 판정: **완료**.
 
@@ -99,9 +99,9 @@ investment policy -> account truth -> time truth -> data truth
   sellable quantity, commission, KR/US calendar와 instrument reference를 포함한다.
 - replay는 저장 hash를 검증하고 Toss에 접속하지 않는다.
 
-근거: `docs/toss_read_only.md`, `src/toss_trading/broker/toss.py`,
+근거: `docs/toss_read_only.md`, `src/asset_management/toss/broker/toss.py`,
 `src/asset_management/broker/toss_read.py`, `src/asset_management/data/raw_store.py`,
-`tests/test_phase2_toss_read_only.py`, `tests/test_foundation_account_state.py`.
+`tests/test_phase2_toss_read_only.py`, `tests/test_account_evidence_state.py`.
 
 판정: **완료**. 실운영 호출에는 Toss 자격증명과 허용 IP가 필요하지만 쓰기 권한은 없다.
 

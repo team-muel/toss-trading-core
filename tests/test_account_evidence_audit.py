@@ -1,0 +1,413 @@
+import tempfile
+import unittest
+import sqlite3
+from pathlib import Path
+
+from asset_management.compatibility.account_evidence import AccountLedger
+from legacy_snapshot_fixture import AccountEvidenceSnapshotter
+from asset_management.compatibility.account_evidence.audit import audit_account_evidence_db
+from asset_management.compatibility.reference import load_instrument_mappings
+
+from test_account_evidence_state import FakeTossAdapter
+
+
+class AccountEvidenceAuditTest(unittest.TestCase):
+    def test_audit_reports_incompatible_legacy_schema_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "legacy.sqlite"
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE raw_api_response (id TEXT PRIMARY KEY)")
+            conn.commit()
+            conn.close()
+
+            result = audit_account_evidence_db(db_path=db_path)
+
+            self.assertFalse(result.ok)
+            self.assertIn("incompatible_account_evidence_schema", result.as_text())
+            self.assertIn("snapshot_run", result.as_text())
+
+    def test_audit_passes_complete_account_evidence_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.close()
+
+            result = audit_account_evidence_db(db_path=db_path)
+
+            self.assertTrue(result.ok, result.as_text())
+            self.assertIn("account_evidence_audit=ok", result.lines[0])
+
+    def test_v1_audit_passes_funded_read_only_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(
+                account_seq="1",
+                target_order_id="closed-1",
+            )
+            ledger.close()
+
+            result = audit_account_evidence_db(
+                db_path=db_path,
+                profile="v1-funded-read-only",
+            )
+
+            self.assertTrue(result.ok, result.as_text())
+            self.assertIn("profile=v1-funded-read-only", result.as_text())
+
+    def test_v1_audit_rejects_empty_account_evidence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            class EmptyFakeTossAdapter(FakeTossAdapter):
+                def get_holdings(self):
+                    return self._raw("/api/v1/holdings", {"result": {"items": []}})
+
+            fake = EmptyFakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.close()
+
+            result = audit_account_evidence_db(
+                db_path=db_path,
+                profile="v1-funded-read-only",
+            )
+
+            self.assertFalse(result.ok)
+            self.assertIn("v1_requires_nonzero_holdings", result.as_text())
+            self.assertIn("v1_requires_target_order_id", result.as_text())
+
+    def test_v2_audit_requires_cash_genesis_and_closed_continuity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(
+                account_seq="1",
+                target_order_id="closed-1",
+                include_closed_orders=True,
+                policy_hash="policy-1",
+                code_revision="abc123",
+            )
+            ledger.close()
+
+            missing = audit_account_evidence_db(
+                db_path=db_path,
+                profile="v2-live-readiness",
+            )
+            self.assertFalse(missing.ok)
+            self.assertIn("v2_missing_cash_genesis:USD", missing.as_text())
+
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.record_cash_ledger_genesis(
+                account_seq="1",
+                currency="USD",
+                as_of="2026-07-30T00:00:00+00:00",
+                opening_balance="2500",
+                evidence_ref="broker-statement:2026-07-30",
+                approved_by="operator",
+            )
+            ledger.close()
+
+            ready = audit_account_evidence_db(
+                db_path=db_path,
+                profile="v2-live-readiness",
+            )
+            self.assertTrue(ready.ok, ready.as_text())
+
+    def test_v1_audit_ignores_commission_rows_without_amount(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(
+                account_seq="1",
+                target_order_id="closed-1",
+            )
+            ledger.conn.execute(
+                """
+                UPDATE broker_order_snapshot
+                SET cumulative_commission = NULL,
+                    cumulative_commission_decimal = NULL
+                WHERE account_seq = '1' AND broker_order_id = 'closed-1'
+                """
+            )
+            ledger.conn.commit()
+            ledger.close()
+
+            result = audit_account_evidence_db(
+                db_path=db_path,
+                profile="v1-funded-read-only",
+            )
+
+            self.assertFalse(result.ok)
+            self.assertIn("commission_rows=0", result.as_text())
+            self.assertIn("v1_requires_execution_commission", result.as_text())
+
+    def test_audit_fails_when_latest_toss_health_is_blocked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            run_id = ledger.begin_snapshot_run(account_seq="1")
+            ledger.record_source_health(
+                source="toss",
+                channel="rest:/oauth2/token",
+                source_status="blocked",
+                action="register_current_ip_in_toss_openapi_allowlist",
+            )
+            ledger.finish_snapshot_run(run_id, account_seq="1")
+            ledger.close()
+
+            result = audit_account_evidence_db(db_path=db_path)
+
+            self.assertFalse(result.ok)
+            self.assertIn("latest_source_health_not_ok", result.as_text())
+
+    def test_audit_fails_when_reconciliation_block_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.conn.execute(
+                """
+                INSERT INTO broker_reconciliation_log (
+                  id, ts, account_seq, item_type, broker_value, internal_value,
+                  difference, status, action_required, created_at
+                ) VALUES (
+                  'block-1',
+                  (SELECT started_at FROM snapshot_run ORDER BY completed_at DESC LIMIT 1), '1',
+                  'execution_snapshot', '{}', '{}',
+                  'negative_execution_delta', 'BLOCK',
+                  'inspect_order_detail_before_new_orders',
+                  (SELECT started_at FROM snapshot_run ORDER BY completed_at DESC LIMIT 1)
+                )
+                """
+            )
+            ledger.conn.commit()
+            ledger.close()
+
+            result = audit_account_evidence_db(db_path=db_path)
+
+            self.assertFalse(result.ok)
+            self.assertIn("reconciliation_block_rows=1", result.as_text())
+            self.assertIn(
+                "broker_reconciliation_block:block-1:execution_snapshot",
+                result.as_text(),
+            )
+            self.assertIn("negative_execution_delta", result.as_text())
+
+    def test_audit_keeps_historical_block_until_explicit_resolution(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.conn.execute(
+                """
+                INSERT INTO broker_reconciliation_log (
+                  id, ts, account_seq, item_type, broker_value, internal_value,
+                  difference, status, action_required, created_at
+                ) VALUES (
+                  'historical-block', '2020-01-01T00:00:00+00:00', '1',
+                  'cash', '100', '90', '10', 'BLOCK',
+                  'reconcile_before_live', '2020-01-01T00:00:00+00:00'
+                )
+                """
+            )
+            ledger.conn.commit()
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.close()
+
+            blocked = audit_account_evidence_db(db_path=db_path)
+            self.assertFalse(blocked.ok)
+            self.assertIn("historical-block:cash:10", blocked.as_text())
+
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.resolve_reconciliation_block(
+                "historical-block",
+                note="matched against approved broker statement",
+            )
+            ledger.close()
+
+            resolved = audit_account_evidence_db(db_path=db_path)
+            self.assertTrue(resolved.ok, resolved.as_text())
+
+    def test_audit_fails_when_unknown_order_status_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.conn.execute(
+                """
+                INSERT INTO broker_order_snapshot (
+                  id, run_id, ts, account_seq, broker_order_id, symbol, status, created_at
+                ) VALUES (
+                  'unknown-status-1',
+                  (SELECT run_id FROM snapshot_run ORDER BY completed_at DESC LIMIT 1),
+                  '2026-07-09T00:00:00+00:00', '1',
+                  'order-unknown', 'SPY', 'BROKER_NEW_STATUS',
+                  '2026-07-09T00:00:00+00:00'
+                )
+                """
+            )
+            ledger.conn.commit()
+            ledger.close()
+
+            result = audit_account_evidence_db(db_path=db_path)
+
+            self.assertFalse(result.ok)
+            self.assertIn("unknown_order_statuses=['BROKER_NEW_STATUS']", result.as_text())
+            self.assertIn("unknown_order_status:BROKER_NEW_STATUS", result.as_text())
+
+    def test_audit_fails_when_review_order_status_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "account evidence.sqlite"
+            ledger = AccountLedger(db_path)
+            ledger.init_schema()
+            ledger.load_instrument_mappings(
+                load_instrument_mappings("data/instrument_master.csv")
+            )
+            ledger.save_raw_api_response(
+                source="toss",
+                source_type="broker",
+                endpoint="/oauth2/token",
+                http_method="POST",
+                body={"access_token": "redacted"},
+                status_code=200,
+            )
+            fake = FakeTossAdapter()
+            fake.ledger = ledger
+            AccountEvidenceSnapshotter(fake, ledger).snapshot(account_seq="1")
+            ledger.conn.execute(
+                """
+                INSERT INTO broker_order_snapshot (
+                  id, run_id, ts, account_seq, broker_order_id, symbol, status, created_at
+                ) VALUES (
+                  'review-status-1',
+                  (SELECT run_id FROM snapshot_run ORDER BY completed_at DESC LIMIT 1),
+                  '2026-07-09T00:00:00+00:00', '1',
+                  'order-review', 'SPY', 'CANCEL_REJECTED',
+                  '2026-07-09T00:00:00+00:00'
+                )
+                """
+            )
+            ledger.conn.commit()
+            ledger.close()
+
+            result = audit_account_evidence_db(db_path=db_path)
+
+            self.assertFalse(result.ok)
+            self.assertIn("review_order_statuses=['CANCEL_REJECTED']", result.as_text())
+            self.assertIn(
+                "review_order_status_requires_order_detail:CANCEL_REJECTED",
+                result.as_text(),
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

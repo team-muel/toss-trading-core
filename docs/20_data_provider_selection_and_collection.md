@@ -52,14 +52,14 @@ Tiingo Starter의 `Internal Use Only`는 개인 내부 연구만 허용하는 �
 
 ```bash
 export PYTHONPATH=src
-python -m toss_trading.cli.research_collect_toss collect \
+python -m research_platform.cli.research_collect_toss collect \
   --universe data/universe.csv \
   --start-date 2004-01-01 \
   --skip-unavailable-symbols \
   --raw \
   --output toss-candles-raw.json
 
-python -m toss_trading.cli.research_collect_toss collect \
+python -m research_platform.cli.research_collect_toss collect \
   --universe data/universe.csv \
   --start-date 2004-01-01 \
   --skip-unavailable-symbols \
@@ -72,7 +72,7 @@ bundle을 승인된 연구 저장소로 복사한 후 로컬에서 다음과 같
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m toss_trading.cli.research_collect_toss ingest `
+python -m research_platform.cli.research_collect_toss ingest `
   --input toss-candles-raw.json `
   --output-root research_data `
   --through-date '<last-completed-US-session>' `
@@ -83,7 +83,7 @@ python -m toss_trading.cli.research_collect_toss ingest `
 
 ```powershell
 $env:PYTHONPATH='src'
-python -m toss_trading.cli.research_collect_tiingo `
+python -m research_platform.cli.research_collect_tiingo `
   --universe data/universe.csv `
   --start-date 2004-01-01 `
   --output-root research_data `
@@ -97,7 +97,7 @@ python -m toss_trading.cli.research_collect_tiingo `
 ```powershell
 $env:PYTHONPATH='src'
 $env:SEC_USER_AGENT='toss-trading-core research <approved-contact>'
-python -m toss_trading.cli.research_collect_sec `
+python -m research_platform.cli.research_collect_sec `
   --instrument-master data/instrument_master.csv `
   --output-root research_data `
   --code-revision '<git-sha>'
@@ -122,7 +122,7 @@ issuer CIK submission 원본을 bronze에 보관한다.
 정규화 후 자동 검사는 다음 명령으로 실행한다.
 
 ```powershell
-python -m toss_trading.cli.research_validate_bars `
+python -m research_platform.cli.research_validate_bars `
   --parquet 'research_data/silver/market_bars/source=toss-openapi/**/*.parquet' `
   --require-adjustment raw `
   --require-adjustment split_adjusted
@@ -144,7 +144,7 @@ python -m toss_trading.cli.research_validate_bars `
 ## 2026-07-24 실제 수집 결과
 
 승인된 고정 IP VM에서 운영 서비스와 분리된 임시 경로를 사용했다.
-`toss-foundation.timer`, 현재 release symlink와 Cloud Monitoring 경보는 변경하지
+현재 release symlink와 Cloud Monitoring 경보는 변경하지
 않았다.
 
 - 요청 universe: 15개 ETF

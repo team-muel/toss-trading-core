@@ -8,14 +8,14 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from toss_trading.broker.toss import TossApiError
-from toss_trading.cli import research_collect_toss_reference
-from toss_trading.cli.research_validate_bars import (
+from asset_management.toss.broker.toss import TossApiError
+from research_platform.cli import research_collect_toss_reference
+from research_platform.cli.research_validate_bars import (
     main as validate_bars_main,
     validate_parquet,
 )
-from toss_trading.research import DataLake
-from toss_trading.research.providers import (
+from research_platform import DataLake
+from research_platform.providers import (
     SecEdgarClient,
     TiingoEodClient,
     collect_sec_reference_data,

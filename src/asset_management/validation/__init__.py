@@ -28,6 +28,10 @@ from .pricing_expectation_risk_integrity import (
     REQUIRED_PRICING_EXPECTATION_RISK_CHECKS, PricingExpectationRiskIntegrityGateInput,
     PricingExpectationRiskIntegrityGateResult, evaluate_pricing_expectation_risk_integrity_gate,
 )
+from .d2_runtime_evidence import (
+    D2RuntimeEvidenceResult, FactorRiskRuntimeEvidence, ModelLineageRuntimeEvidence,
+    RiskFreeRuntimeEvidence, RUNTIME_D2_CHECKS, assemble_d2_runtime_evidence, build_d2_gate_input,
+)
 from .backtest_run_specification import (
     BacktestPeriod, BacktestRunEvent, BacktestRunRegistry, BacktestRunSpec, BacktestRunStatus,
 )
@@ -47,6 +51,8 @@ __all__ = [
     "PortfolioDecisionIntegrityGateResult", "evaluate_portfolio_decision_integrity_gate",
     "REQUIRED_PRICING_EXPECTATION_RISK_CHECKS", "PricingExpectationRiskIntegrityGateInput",
     "PricingExpectationRiskIntegrityGateResult", "evaluate_pricing_expectation_risk_integrity_gate",
+    "D2RuntimeEvidenceResult", "FactorRiskRuntimeEvidence", "ModelLineageRuntimeEvidence",
+    "RiskFreeRuntimeEvidence", "RUNTIME_D2_CHECKS", "assemble_d2_runtime_evidence", "build_d2_gate_input",
     "BacktestPeriod", "BacktestRunEvent", "BacktestRunRegistry", "BacktestRunSpec",
     "BacktestRunStatus",
 ]

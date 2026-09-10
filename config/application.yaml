@@ -7,7 +7,7 @@ data_sources:
     kind: broker
     schema_version: 1.2.15
 parameter_set:
-  id: read-only-foundation-v1
+  id: read-only-asset-management-v1
   status: APPROVED
 risk_limits:
   max_open_orders: "1"

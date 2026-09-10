@@ -1,72 +1,109 @@
 # Report Digest
 
-이 문서는 지금까지 작성한 전략, Toss API, USD 현물 퀀트, 외부 데이터 피드 보고서의 결론만 모은 운영 기준입니다. 상세 endpoint 목록은 `docs/09_toss_official_api_coverage.md`, 외부 피드 설계는 `docs/12_external_data_feeds.md`를 기준으로 합니다.
+이 문서는 현재 `toss-trading-core`의 운영·검증 원칙을 짧게 요약한 문서입니다. 과거 Foundation/Paper/standalone research runtime의 운용 계획이 아니라, `asset_management`를 단일 production boundary로 사용하는 현재 구조를 기준으로 합니다.
 
-## 결정된 원칙
+상세 구조는 `docs/architecture.md`와 `src/asset_management/ARCHITECTURE.md`, 연구 재구성은 `docs/research_reconstruction.md`, 레거시 정리와 실제 VM/GCP retirement 절차는 `docs/pr79_convergence.md`를 기준으로 합니다.
 
-1. Toss Open API는 실행·계좌·보유·주문 상태의 기준원장입니다.
-2. 외부 데이터는 신호, 필터, 리스크 판단을 보강할 뿐 계좌 상태를 덮어쓰지 않습니다.
-3. live 후보 범위는 전용 계좌의 미국 상장 USD long-only ETF 현물 주문으로 제한합니다.
-4. 옵션, 숏/대차, 직접 T-bill ladder, 마진 전략은 Toss 단독 live 범위가 아닙니다.
-5. 전략 신호보다 계좌 상태 엔진, 장부, 체결 대사, rate limit 처리가 먼저입니다.
-6. 보고서의 숫자는 초기 운용 가드레일이며 코드에 시장 법칙처럼 박아 넣지 않습니다.
-7. `clientOrderId`는 모든 live 주문에 필수이고 내부적으로 영구 재사용하지 않습니다.
-8. `cashBuyingPower`는 현금 잔고가 아니라 브로커가 반환한 주문 제약값입니다.
-9. `CANCEL_REJECTED`, `REPLACE_REJECTED`는 terminal 상태가 아니라 원주문 재조회가 필요한 review 상태입니다.
-10. `raw_api_response` 없이는 broker/vendor 장애를 재현할 수 없습니다.
+## 현재 결정된 원칙
 
-## Live MVP 범위
+1. `asset_management`만 production runtime authority를 가집니다.
+2. `asset_management.toss`는 Toss 계약과 read-only broker/provider boundary를 제공하지만 투자 판단 권한을 가지지 않습니다.
+3. `research_platform`과 `alpha_management`는 연구 계층입니다. 연구 결과는 직접 주문, 포지션, risk approval 또는 broker-write authority가 될 수 없습니다.
+4. 모든 운영 판단은 point-in-time 데이터와 immutable evidence lineage를 보존해야 합니다.
+5. 누락·stale·충돌·검증 불가 evidence는 추정으로 메우지 않고 fail-closed 처리합니다.
+6. 과거 Foundation 계좌 evidence는 `asset_management.compatibility`를 통해 finalized/read-only 형태로만 읽습니다. 호환성 계층을 두 번째 runtime으로 복원하지 않습니다.
+7. `cashBuyingPower` 같은 broker 값은 계약에 정의된 의미 그대로 사용하며 내부 현금 장부나 회계 NAV와 임의로 동일시하지 않습니다.
+8. Research -> Signal/Forecast -> Portfolio/Risk 사이의 의미 전환은 명시적인 outer integration boundary에서만 일어납니다.
+9. 테스트 통과, hash 일치, receipt 존재만으로 데이터 진실성·경제적 유용성·운영 승인 또는 live 권한을 주장하지 않습니다.
+10. live trading은 현재 비활성화 상태이며 문서나 migration helper가 이를 우회할 수 없습니다.
 
-허용 후보:
+## Canonical runtime order
 
-- 광역 ETF 듀얼모멘텀 + 현금 또는 현금성 ETF 오버레이
-- 동질 ETF 대체군 평균회귀 long-only
-- 분배형 ETF 신규진입 차단 필터
-- 계좌 상태 기반 주문 가능 금액, 포지션, open order 관리
+```text
+investment policy
+  -> account truth
+    -> time truth
+      -> data truth
+        -> financial calculation
+          -> target portfolio
+            -> risk control
+              -> order
+```
 
-초기 제외:
+각 단계는 같은 runtime run 아래 immutable evidence identifier와 content hash에 결속됩니다. 뒤 단계가 앞 단계의 누락을 보정하거나 새로 계산해 권한을 만들어서는 안 됩니다.
 
-- 해외 옵션 주문 및 옵션 캐리 live 자동화
-- short leg 또는 borrow rate가 필요한 pair
-- 직접 T-bill/채권 ladder 자동화
-- NAV arbitrage처럼 실시간 NAV/iNAV 품질이 필요한 전략
-- headline sentiment 기반 고빈도 이벤트 매매
+## 데이터와 연구 역할
 
-## 외부 피드 최소 스택
+현재 주요 데이터 계층은 다음처럼 구분합니다.
 
-비용과 복잡도를 줄이는 1차 조합:
+- Toss: 계좌·보유·주문·buying-power 등 broker/account evidence의 외부 계약 경계.
+- FRED/ALFRED: 금리와 vintage-aware 거시 시계열.
+- Tiingo/Massive 등 시장 데이터 provider: 연구 및 검증용 시장 시계열.
+- SEC/issuer source: 재무·공시·fundamental research 입력.
+- immutable dataset/reference stores: PIT universe, source/schema/version/availability lineage의 기준.
 
-- Toss Open API: 실행, 계좌, 주문, holdings, buying power
-- Tiingo EOD: 미국 ETF 장기 raw/adjusted/total-return 일봉
-- FRED/ALFRED: 금리, SOFR, Treasury yield, point-in-time 거시 시계열
-- SEC EDGAR: 8-K, 10-Q, 10-K, fund filing, CIK 기반 event gate
-- issuer parser: ETF NAV, premium/discount, ROC 공백 보완
+외부 데이터가 풍부해도 account truth나 execution authority를 대체하지 않습니다. 반대로 broker 응답도 연구 모델의 경제적 유효성을 증명하지 않습니다.
 
-성능 우선 2차 확장:
+## 현재 연구 범위
 
-- Massive REST: 옵션/지수/선물/배당/분할 등 보조
-- Massive WebSocket
-- SEC 실시간 poller
-- Tradier 옵션 체인/ETB 보조
-- source health dashboard
+재구성된 연구 계층에는 다음이 포함됩니다.
 
-## 구현 순서
+- canonical ResearchSpec/ResearchRun receipt와 replay coordinates
+- 여섯 개 Quant research family
+- ALFRED 기반 canonical MacroState
+- 검증된 재무 입력을 사용하는 Fundamental research feature
 
-1. Toss 계좌·주문 동기화
-2. 내부 ledger와 `raw_api_response`
-3. rate limit과 주문 상태 machine
-4. 외부 피드 canonical schema
-5. stale-data gate와 source health
-6. paper replay
-7. shadow-live
-8. 초소형 live 또는 No-Go
+이 결과물은 연구 메커니즘과 재현성 계약을 제공하지만 실데이터 OOS 성과, Signal/Forecast 승인, portfolio allocation 또는 live execution acceptance를 의미하지 않습니다.
+
+## 폐기된 운영 개념
+
+다음은 현재 지원되는 독립 실행 경로가 아닙니다.
+
+- `toss_trading` production runtime
+- Foundation runner
+- former Paper operation runtime
+- standalone stock-recommendation service/timer
+- standalone research cloud scheduler/application
+- Gmail/report/GCS delivery를 독립 runtime으로 사용하는 경로
+
+역사적 코드는 Git history에 남고 필요한 immutable evidence는 compatibility reader로 읽을 수 있지만, 이 경로들을 다시 production entry point로 복원하지 않습니다.
+
+## 남아 있는 acceptance gap
+
+Repository 수준 정리와 실제 운영 acceptance는 별개입니다. 특히 다음은 별도 증거가 필요합니다.
+
+- 실제 VM의 legacy unit/scheduler retirement
+- 실제 GCP alert/log metric 등 cloud resource ownership 및 retirement
+- raw return -> factor estimator -> factor-risk evidence의 완전한 lineage/replay
+- real-data OOS 및 Signal/Forecast acceptance
+- production consumer cutover와 no-second-scheduler 증명
+
+소유권이나 selector가 불명확한 cloud resource는 추정 삭제하지 않고 보존하여 manual review 대상으로 남깁니다.
+
+## 검증 원칙
+
+대표적인 repository 검증은 다음을 포함합니다.
+
+```bash
+python -m pytest -q
+python scripts/check_toss_openapi.py
+python scripts/check_maintenance_registry.py
+python -m research_platform.cli.research_validate_instruments
+python -m asset_management.cli.runtime_validate
+python -m build --wheel
+```
+
+변경 surface에 따라 필요한 검증 범위는 달라집니다. `docs/maintenance_workflow.md`의 실제 diff 기반 분류와 정확한 head 기준 review/evidence를 따릅니다.
 
 ## No-Go 원칙
 
-다음 중 하나라도 발생하면 전략 성과와 무관하게 live 신규 주문을 막습니다.
+다음 상황에서는 후속 단계로 진행하지 않습니다.
 
-- Toss holdings, orders, buying power와 내부 장부가 어긋남
-- 주문 상태 불명 또는 duplicate create 위험
-- 외부 피드 stale 상태에서 이전 신호로 주문을 계속 냄
-- NAV/ROC 불확실성이 큰 ETF를 필터 없이 매수함
-- rate limit degraded 상태에서 신규 주문이 조회·취소보다 우선됨
+- account/data/time truth가 일치하거나 검증되지 않음
+- stale 또는 미래 정보가 PIT 경계를 침범함
+- model/scope/calculation lineage가 서로 결속되지 않음
+- risk approval과 실제 target/order identity가 다름
+- research receipt 또는 hash만으로 production authority를 만들려고 함
+- retirement plan 이후 실제 systemd/cloud 대상이 변경됨
+- cloud resource가 shared인지 legacy-only인지 증명할 수 없음
+- live trading을 명시적으로 승인하는 별도 gate 없이 broker-write path를 활성화하려 함

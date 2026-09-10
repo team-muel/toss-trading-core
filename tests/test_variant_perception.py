@@ -2,7 +2,7 @@ import copy
 import unittest
 from datetime import date, timedelta
 
-from toss_trading.research.variant_perception import (
+from research_platform.variant_perception import (
     build_focused_research_dossier,
     load_focused_research_policy,
     render_focused_research_memo,
