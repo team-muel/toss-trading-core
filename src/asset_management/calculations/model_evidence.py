@@ -22,6 +22,16 @@ def model_authorization_payload(authorization: ModelAuthorization) -> dict[str, 
             "authorization_hash": authorization.authorization_hash}
 
 
+def _available_at(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise InvariantViolation("MODEL_LINEAGE_EVIDENCE_RAW_TIME_INVALID") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise InvariantViolation("MODEL_LINEAGE_EVIDENCE_RAW_TIME_INVALID")
+    return parsed.astimezone(timezone.utc)
+
+
 def publish_model_lineage_evidence(*, store: ImmutableDatasetStore, registry: ModelRegistry,
                                    authorization: ModelAuthorization, binding: ModelCalculationBinding,
                                    lineage: CalculationLineageGraph, published_at: datetime,
@@ -29,8 +39,10 @@ def publish_model_lineage_evidence(*, store: ImmutableDatasetStore, registry: Mo
     """Bind model authorization, calculation graph, and verified raw parents.
 
     Publication is impossible unless the live registry still authorizes the
-    binding at the publication time and each raw node resolves in the immutable
-    store. The resulting gold manifest retains every raw input as a parent.
+    binding at the publication time and every raw node resolves in the immutable
+    store. Raw inputs must also have been available at the claimed binding
+    instant, so later-arriving data cannot be certified as point-in-time input.
+    The resulting gold manifest retains every raw input as a parent.
     """
     if published_at.tzinfo is None or published_at.utcoffset() is None:
         raise InvariantViolation("MODEL_LINEAGE_EVIDENCE_TIME_INVALID")
@@ -51,9 +63,13 @@ def publish_model_lineage_evidence(*, store: ImmutableDatasetStore, registry: Mo
     parents = tuple(sorted(node.raw_manifest_id for node in lineage.trace() if node.raw_manifest_id is not None))
     if not parents:
         raise InvariantViolation("MODEL_LINEAGE_EVIDENCE_RAW_MISSING")
+    binding_at = binding.bound_at.astimezone(timezone.utc)
     for identifier in parents:
         manifest, _ = store.read(identifier)
-        if datetime.fromisoformat(manifest.available_at) > available_at:
+        raw_available_at = _available_at(manifest.available_at)
+        if raw_available_at > binding_at:
+            raise InvariantViolation("MODEL_LINEAGE_EVIDENCE_RAW_AFTER_BINDING")
+        if raw_available_at > available_at:
             raise InvariantViolation("MODEL_LINEAGE_EVIDENCE_RAW_AFTER_CUTOFF")
     # `authorization` is a generic secret-redaction key in the immutable store;
     # use a precise, non-secret field name so the signed authorization payload
