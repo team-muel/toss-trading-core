@@ -52,6 +52,10 @@ def _multifactor_numeric(*, instrument_id, risk_free_rate, loadings, premiums, h
 
 def multifactor_pricing_baseline_return(*, currency, currency_basis, asset_scope,
                                         model_registry, authorization, **inputs):
+    if asset_scope not in ("EQUITY", "EQUITY_ETF"):
+        raise DataQualityError("PRICING_ASSET_SCOPE_NOT_APPLICABLE")
+    model_registry.require_authorization(authorization, model_key="MULTIFACTOR@2",
+        scope=ModelScope.PRICING_BASELINE_RETURN, at=inputs['as_of'])
     result = _multifactor_numeric(**inputs)
     return _authorized_pricing_baseline_payload(result, currency=currency, currency_basis=currency_basis,
         formula_version="multifactor-pricing-baseline@2", model_key="MULTIFACTOR@2", asset_scope=asset_scope,
