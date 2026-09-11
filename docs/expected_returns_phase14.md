@@ -4,7 +4,10 @@
 buyback을 별도 합산하지 않는다. aggregate 모드는 명시적으로 선택한다. 최신 의미와
 호환성·잔여 작업은 [AMA-101 보정 문서](economic_semantics_remediation.md)를 따른다.
 
-요구수익률은 단계 13의 위험 보상 기준이며 기대수익률과 별도로 저장한다. 개별주, 주식 ETF, 채권 ETF, 현금성 자산, 원자재 ETF는 각각 고정된 component 계약을 사용한다. 다른 자산군의 component를 섞으면 계산을 거부한다.
+정규 기대수익률은 pricing baseline과 별도이며, 개별주, 주식 ETF, 채권 ETF, 현금성
+자산, 원자재 ETF는 각각 고정된 component 계약을 사용한다. 다른 자산군의 component를
+섞으면 계산을 거부한다. 채권·현금·원자재 경로는 equity pricing model의 부재를 이유로
+실패하지 않으며, pricing이 적용되지 않는 자산에 `model_relative_alpha`를 만들지 않는다.
 
 각 component는 이름, point estimate, uncertainty, confidence, 입력 feature ID와 horizon을 보존한다. 최종 gross 값은 component 합과 반드시 일치한다. 거래비용, 세금 drag, FX 비용을 각각 차감해 net 값을 만들며 confidence interval을 함께 저장한다. `shrink_component`는 신뢰도가 낮은 원시 전망을 `confidence*estimate + (1-confidence)*prior`로 prior 쪽에 수축한 뒤 그 값을 저장한다.
 
@@ -13,7 +16,15 @@ buyback을 별도 합산하지 않는다. aggregate 모드는 명시적으로 �
 LINEAR, EXPONENTIAL decay는 시간이 지날수록 weight를 유지 또는 감소시키며 미래
 시각 평가와 서로 다른 horizon의 직접 결합은 실패로 닫힌다.
 
-Component 오차의 상관행렬이 없을 때는 독립성을 임의 가정하지 않고 uncertainty 합을 보수적 상한으로 쓴다. Alpha는 `net expected return - required return`이며 두 원본 값을 함께 보존한다. 기대수익 하한에서 요구수익 상한을 뺀 값과 기대수익 상한에서 요구수익 하한을 뺀 값이 alpha 구간이다. 이 구간이 0을 포함하거나 데이터 품질 저하, 모델 불일치, 이벤트 직전, feature 충돌, 비용과 불확실성 buffer를 넘지 못하는 경우 `ABSTAIN`과 복수 reason code를 반환한다. 결과는 주문 방향이나 주문을 만들지 않는다.
+Component 오차의 상관행렬이 없을 때는 독립성을 임의 가정하지 않고 uncertainty 합을
+보수적 상한으로 쓴다. 정규 `model_relative_alpha`는 적용 가능한
+`net_forecast - pricing_baseline_return`이며, 같은 통화·basis·horizon과 모델 승인·lineage를
+요구한다. 기대수익 하한에서 baseline 상한을 뺀 값과 기대수익 상한에서 baseline 하한을
+뺀 값이 잔차 구간이다. 이 구간이 0을 포함하거나 데이터 품질 저하, 모델 불일치, 이벤트
+직전, feature 충돌, 비용과 불확실성 buffer를 넘지 못하는 경우 `ABSTAIN`과 복수 reason
+code를 반환한다. `calculate_alpha`와 `AlphaEstimate`는 `alpha-estimate@1` replay/migration
+호환 경로이며 정규 asset-scope entry point나 benchmark-active return이 아니다. 결과는 주문
+방향이나 주문을 만들지 않는다.
 
 ## 완료조건 점검
 

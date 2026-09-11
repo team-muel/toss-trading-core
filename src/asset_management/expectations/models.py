@@ -102,6 +102,11 @@ class ExpectedReturnEstimate:
 
 @dataclass(frozen=True)
 class AlphaEstimate:
+    """Legacy ``alpha-estimate@1`` shape retained for deterministic replay.
+
+    It is not a generic alpha, benchmark-active return, or current decision
+    input; use ``ModelRelativeAlphaAssessment`` for new canonical work.
+    """
     instrument_id: str
     horizon: int
     net_expected_return: Decimal

@@ -98,6 +98,12 @@ class FactorPremium:
 
 @dataclass(frozen=True)
 class PricingResult:
+    """Legacy ``pricing-result@1`` value retained only for replay/migration.
+
+    New calculations expose :meth:`economic_payload` through the v2 canonical
+    pricing-baseline entry points.  This class deliberately retains its
+    historical hash body and field names so stored v1 evidence is not rewritten.
+    """
     instrument_id: str
     horizon: int
     required_return: Decimal
