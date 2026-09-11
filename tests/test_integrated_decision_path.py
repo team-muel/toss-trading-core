@@ -9,9 +9,8 @@ from asset_management.decisions.governor import (
 from asset_management.domain.horizon import DecayProfile, SignalValidity
 from asset_management.features.models import FeatureSnapshot
 from asset_management.orchestration import (
-    DecisionKernel, DecisionParityLedger, DecisionRuntime, DecisionRuntimeAdapter,
-    FrozenDecisionInput, PreExecutionDecision, PricingApplicabilityEvidence,
-    RuntimeAdapterDescriptor,
+    CanonicalDecisionRequest, DecisionKernel, DecisionParityLedger, DecisionRuntime, FrozenDecisionInput,
+    PricingApplicabilityEvidence, RuntimeAdapterDescriptor,
 )
 from asset_management.portfolio.allocator import select_securities
 from asset_management.quality.models import QualityStatus
@@ -140,25 +139,28 @@ def test_real_modules_form_one_deterministic_replay_and_paper_decision_path(tmp_
         pricing_applicability_evidence=PRICING_EVIDENCE,
     )
 
-    def calculate(_inputs):
-        return PreExecutionDecision(
-            feature_values={feature.feature_id: Decimal(feature.value)},
-            signal_values={key: Decimal(value) for key, value in signal.values.items()},
-            forecast_values=forecast_values, pricing_outputs={"pricing-baseline": Decimal(".06")},
-            pricing_applicable=True, pricing_non_applicability_reason=None,
-            pricing_applicability_evidence_id=PRICING_EVIDENCE.evidence_id,
-            risk_outputs={"exposure_multiplier": risk.exposure_multiplier}, target_weights=approved_weights,
-            risk_decision_id=risk.risk_decision_id, risk_decision_hash=risk.content_hash,
-            risk_state=risk.state, risk_reason_codes=tuple(reason.value for reason in risk.reason_codes),
-            order_intent_economics={"objective": "rebalance-to-risk-approved-target@1"},
-            data_lineage_ids=(MANIFEST, FEATURE_MANIFEST, HISTORY_MANIFEST),
-            calculation_lineage_ids=(combined_id, risk.content_hash),
-        )
+    decision_request = CanonicalDecisionRequest._from_persisted_pipeline(
+        inputs=inputs, feature_values={feature.feature_id: Decimal(feature.value)},
+        signal_values={key: Decimal(value) for key, value in signal.values.items()},
+        forecast_values=forecast_values, pricing_outputs={"pricing-baseline": Decimal(".06")},
+        pricing_applicable=True, pricing_non_applicability_reason=None,
+        pricing_applicability_evidence_id=PRICING_EVIDENCE.evidence_id,
+        risk_outputs={"exposure_multiplier": risk.exposure_multiplier}, target_weights=approved_weights,
+        risk_decision_id=risk.risk_decision_id, risk_decision_hash=risk.content_hash,
+        risk_state=risk.state, risk_reason_codes=tuple(reason.value for reason in risk.reason_codes),
+        order_intent_economics={"objective": "rebalance-to-risk-approved-target@1"},
+        data_lineage_ids=(MANIFEST, FEATURE_MANIFEST, HISTORY_MANIFEST),
+        calculation_lineage_ids=(combined_id, risk.content_hash),
+    )
 
-    kernel = DecisionKernel("decision-kernel@1", calculate)
     ledger = DecisionParityLedger()
-    replay = ledger.record(DecisionRuntimeAdapter(kernel, adapter(DecisionRuntime.HISTORICAL_REPLAY)).decide(inputs))
-    paper = ledger.record(DecisionRuntimeAdapter(kernel, adapter(DecisionRuntime.PAPER)).decide(inputs))
+    kernel = DecisionKernel("decision-kernel@1")
+    replay = ledger.record(kernel._evaluate_assembled(
+        decision_request, adapter(DecisionRuntime.HISTORICAL_REPLAY)
+    ))
+    paper = ledger.record(kernel._evaluate_assembled(
+        decision_request, adapter(DecisionRuntime.PAPER)
+    ))
     assert replay.semantic_hash == paper.semantic_hash
     assert ledger.require_parity(inputs.input_hash, runtimes=(DecisionRuntime.HISTORICAL_REPLAY, DecisionRuntime.PAPER)) == replay.semantic_hash
     assert replay.decision.pricing_applicable is True

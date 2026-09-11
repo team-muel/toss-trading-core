@@ -9,8 +9,8 @@ from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.decisions.governor import DecisionState
 from asset_management.domain.errors import InvariantViolation
 from asset_management.orchestration import (
-    DecisionKernel, DecisionParityLedger, DecisionRuntime, DecisionRuntimeAdapter,
-    FrozenDecisionInput, PreExecutionDecision, PricingApplicabilityEvidence,
+    CanonicalDecisionRequest, DecisionKernel, DecisionParityLedger, DecisionRuntime,
+    FrozenDecisionInput, PricingApplicabilityEvidence,
     RuntimeAdapterDescriptor,
 )
 
@@ -42,8 +42,9 @@ def frozen_input(**changes):
     return FrozenDecisionInput(**values)
 
 
-def decision(**changes):
+def request(inputs=None, **changes):
     values = dict(
+        inputs=frozen_input() if inputs is None else inputs,
         feature_values={"quality@1": Decimal("1.2")}, signal_values={"quality-signal@1": Decimal(".4")},
         forecast_values={"SPY": Decimal(".08")}, pricing_outputs={"pricing-baseline": Decimal(".06")},
         risk_outputs={"volatility": Decimal(".12")}, target_weights={"SPY": Decimal(".6"), "CASH": Decimal(".4")},
@@ -53,7 +54,7 @@ def decision(**changes):
         pricing_applicability_evidence_id=PRICING_EVIDENCE.evidence_id,
     )
     values.update(changes)
-    return PreExecutionDecision(**values)
+    return CanonicalDecisionRequest._from_persisted_pipeline(**values)
 
 
 def adapter(runtime):
@@ -65,9 +66,9 @@ def adapter(runtime):
 
 def test_one_kernel_produces_identical_pre_execution_semantics_for_all_runtimes(tmp_path):
     inputs = frozen_input()
-    kernel = DecisionKernel("decision-kernel@1", lambda _: decision())
+    kernel = DecisionKernel("decision-kernel@1")
     ledger = DecisionParityLedger()
-    results = [ledger.record(DecisionRuntimeAdapter(kernel, adapter(runtime)).decide(inputs))
+    results = [ledger.record(kernel._evaluate_assembled(request(inputs), adapter(runtime)))
                for runtime in DecisionRuntime]
     assert len({item.semantic_hash for item in results}) == 1
     assert ledger.require_parity(inputs.input_hash) == results[0].semantic_hash
@@ -81,13 +82,15 @@ def test_one_kernel_produces_identical_pre_execution_semantics_for_all_runtimes(
 def test_runtime_specific_semantic_change_and_evidence_overwrite_fail_closed():
     inputs = frozen_input()
     ledger = DecisionParityLedger()
-    standard = DecisionKernel("decision-kernel@1", lambda _: decision())
-    ledger.record(DecisionRuntimeAdapter(standard, adapter(DecisionRuntime.HISTORICAL_REPLAY)).decide(inputs))
-    divergent = DecisionKernel("decision-kernel@1", lambda _: decision(risk_outputs={"volatility": Decimal(".20")}))
+    standard = DecisionKernel("decision-kernel@1")
+    ledger.record(standard._evaluate_assembled(request(inputs), adapter(DecisionRuntime.HISTORICAL_REPLAY)))
+    divergent = DecisionKernel("decision-kernel@1")
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PARITY_MISMATCH"):
-        ledger.record(DecisionRuntimeAdapter(divergent, adapter(DecisionRuntime.PAPER)).decide(inputs))
+        ledger.record(divergent._evaluate_assembled(
+            request(inputs, risk_outputs={"volatility": Decimal(".20")}), adapter(DecisionRuntime.PAPER)))
     with pytest.raises(InvariantViolation, match="DECISION_RUNTIME_EVIDENCE_CONFLICT"):
-        ledger.record(DecisionRuntimeAdapter(divergent, adapter(DecisionRuntime.HISTORICAL_REPLAY)).decide(inputs))
+        ledger.record(divergent._evaluate_assembled(
+            request(inputs, risk_outputs={"volatility": Decimal(".20")}), adapter(DecisionRuntime.HISTORICAL_REPLAY)))
     with pytest.raises(InvariantViolation, match="DECISION_PARITY_EVIDENCE_INCOMPLETE"):
         ledger.require_parity(inputs.input_hash)
 
@@ -98,36 +101,39 @@ def test_missing_frozen_inputs_invalid_target_and_runtime_order_economics_fail_c
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_MANIFESTS_INVALID"):
         frozen_input(input_manifest_ids=("bad",))
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_TARGET_INVALID"):
-        decision(target_weights={"SPY": Decimal(".8"), "CASH": Decimal(".1")})
+        request(target_weights={"SPY": Decimal(".8"), "CASH": Decimal(".1")}).build_decision()
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_ORDER_ECONOMICS_INVALID"):
-        decision(risk_state=DecisionState.BLOCK)
+        request(risk_state=DecisionState.BLOCK).build_decision()
+    with pytest.raises(InvariantViolation, match="CANONICAL_DECISION_INPUT_INVALID"):
+        request(inputs="not-frozen-input").build_decision()
+    with pytest.raises(TypeError):
+        DecisionKernel("decision-kernel@1", lambda _: None)
 
 
 def test_pricing_non_applicability_cannot_authorize_a_target():
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_REQUIRED_FOR_AUTHORIZED_TARGET"):
-        decision(
+        request(
             pricing_outputs={},
             pricing_applicable=False,
             pricing_non_applicability_reason="asset-class-has-no-approved-pricing-model",
             pricing_applicability_evidence_id=NON_APPLICABLE_EVIDENCE.evidence_id,
-        )
+        ).build_decision()
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
-        decision(pricing_outputs={}, pricing_applicable=False)
+        request(pricing_outputs={}, pricing_applicable=False).build_decision()
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
-        decision(pricing_applicable=False, pricing_non_applicability_reason="not-applicable")
+        request(pricing_applicable=False, pricing_non_applicability_reason="not-applicable").build_decision()
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_OUTPUT_INVALID"):
-        decision(pricing_outputs={})
+        request(pricing_outputs={}).build_decision()
     with pytest.raises(InvariantViolation, match="DECISION_KERNEL_PRICING_APPLICABILITY_INVALID"):
-        decision(pricing_non_applicability_reason="not-applicable")
+        request(pricing_non_applicability_reason="not-applicable").build_decision()
 
 
 def test_schema_covers_published_parity_evidence():
     inputs = frozen_input()
     ledger = DecisionParityLedger()
-    result = ledger.record(DecisionRuntimeAdapter(
-        DecisionKernel("decision-kernel@1", lambda _: decision()),
-        adapter(DecisionRuntime.HISTORICAL_REPLAY),
-    ).decide(inputs))
+    result = ledger.record(DecisionKernel("decision-kernel@1")._evaluate_assembled(
+        request(inputs), adapter(DecisionRuntime.HISTORICAL_REPLAY),
+    ))
     schema = json.loads((Path(__file__).parents[1] / "schemas/decision_kernel_parity.schema.json").read_text())
     payload = ledger.payload()
     assert set(schema["required"]) == set(payload)

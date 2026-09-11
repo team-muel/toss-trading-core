@@ -1,13 +1,13 @@
 """Runtime-independent pre-execution decision kernel and parity evidence."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import StrEnum
 import re
 from types import MappingProxyType
-from typing import Callable, Mapping
+from typing import Mapping
 
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.decisions.governor import DecisionState
@@ -15,6 +15,7 @@ from asset_management.domain.errors import InvariantViolation
 
 
 _HASH = re.compile(r"[0-9a-f]{64}")
+_PERSISTED_PIPELINE_ASSEMBLER = object()
 
 
 def _text(value: str, reason: str) -> str:
@@ -169,6 +170,76 @@ class FrozenDecisionInput:
 
 
 @dataclass(frozen=True, slots=True)
+class CanonicalDecisionRequest:
+    """Typed, runtime-independent assembly for one pre-execution decision.
+
+    Callers provide immutable input and the authoritative outputs produced by
+    the canonical pipeline.  They cannot inject a calculation callback or
+    select a different calculation for a runtime adapter.
+    """
+
+    inputs: FrozenDecisionInput
+    feature_values: Mapping[str, Decimal]
+    signal_values: Mapping[str, Decimal]
+    forecast_values: Mapping[str, Decimal]
+    pricing_outputs: Mapping[str, Decimal]
+    risk_outputs: Mapping[str, Decimal]
+    target_weights: Mapping[str, Decimal]
+    risk_decision_id: str
+    risk_decision_hash: str
+    risk_state: DecisionState
+    risk_reason_codes: tuple[str, ...]
+    order_intent_economics: Mapping[str, str]
+    data_lineage_ids: tuple[str, ...]
+    calculation_lineage_ids: tuple[str, ...]
+    pricing_applicability_evidence_id: str
+    pricing_applicable: bool = True
+    pricing_non_applicability_reason: str | None = None
+    _assembler: object | None = field(default=None, repr=False, compare=False)
+    _assembly_hash: str | None = field(default=None, repr=False, compare=False)
+
+    @classmethod
+    def _from_persisted_pipeline(cls, **values: object) -> "CanonicalDecisionRequest":
+        """Capability used only by the persistent pipeline assembler."""
+        request = cls(**values, _assembler=_PERSISTED_PIPELINE_ASSEMBLER)
+        decision = request.build_decision()
+        return replace(request, _assembly_hash=digest(canonical({
+            "input_hash": request.inputs.input_hash,
+            "decision": decision.payload(),
+        })))
+
+    def require_persisted_assembly(self) -> None:
+        if self._assembler is not _PERSISTED_PIPELINE_ASSEMBLER or self._assembly_hash is None:
+            raise InvariantViolation("CANONICAL_DECISION_ASSEMBLY_REQUIRED")
+        decision = self.build_decision()
+        expected = digest(canonical({"input_hash": self.inputs.input_hash, "decision": decision.payload()}))
+        if self._assembly_hash != expected:
+            raise InvariantViolation("CANONICAL_DECISION_ASSEMBLY_TAMPERED")
+
+    def build_decision(self) -> "PreExecutionDecision":
+        if not isinstance(self.inputs, FrozenDecisionInput):
+            raise InvariantViolation("CANONICAL_DECISION_INPUT_INVALID")
+        return PreExecutionDecision(
+            feature_values=self.feature_values,
+            signal_values=self.signal_values,
+            forecast_values=self.forecast_values,
+            pricing_outputs=self.pricing_outputs,
+            risk_outputs=self.risk_outputs,
+            target_weights=self.target_weights,
+            risk_decision_id=self.risk_decision_id,
+            risk_decision_hash=self.risk_decision_hash,
+            risk_state=self.risk_state,
+            risk_reason_codes=self.risk_reason_codes,
+            order_intent_economics=self.order_intent_economics,
+            data_lineage_ids=self.data_lineage_ids,
+            calculation_lineage_ids=self.calculation_lineage_ids,
+            pricing_applicability_evidence_id=self.pricing_applicability_evidence_id,
+            pricing_applicable=self.pricing_applicable,
+            pricing_non_applicability_reason=self.pricing_non_applicability_reason,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PreExecutionDecision:
     feature_values: Mapping[str, Decimal]
     signal_values: Mapping[str, Decimal]
@@ -300,21 +371,35 @@ class DecisionKernelEvaluation:
 
 
 class DecisionKernel:
-    """Runs the same pre-execution calculation callable for every runtime adapter."""
+    """Evaluates the one typed canonical decision assembly for every adapter."""
 
-    def __init__(self, kernel_version: str,
-                 calculate: Callable[[FrozenDecisionInput], PreExecutionDecision]) -> None:
+    def __init__(self, kernel_version: str) -> None:
         self.kernel_version = _text(kernel_version, "DECISION_KERNEL_VERSION_INVALID")
-        if not callable(calculate):
-            raise InvariantViolation("DECISION_KERNEL_CALCULATOR_INVALID")
-        self._calculate = calculate
 
-    def evaluate(self, inputs: FrozenDecisionInput, adapter: RuntimeAdapterDescriptor) -> DecisionKernelEvaluation:
-        if not isinstance(inputs, FrozenDecisionInput) or not isinstance(adapter, RuntimeAdapterDescriptor):
+    def evaluate(self, *, repository: object, runtime_run_id: str,
+                 pricing_applicability_evidence: PricingApplicabilityEvidence,
+                 adapter: RuntimeAdapterDescriptor) -> DecisionKernelEvaluation:
+        """Evaluate only a request freshly assembled from persisted evidence."""
+        from .pipelines import PipelineEvidenceRepository
+
+        if (not isinstance(repository, PipelineEvidenceRepository) or
+                not isinstance(pricing_applicability_evidence, PricingApplicabilityEvidence)):
+            raise InvariantViolation("DECISION_KERNEL_REPOSITORY_REQUIRED")
+        _text(runtime_run_id, "DECISION_KERNEL_REPOSITORY_REQUIRED")
+        request = repository.assemble_canonical_decision_request(
+            runtime_run_id,
+            pricing_applicability_evidence=pricing_applicability_evidence,
+        )
+        return self._evaluate_assembled(request, adapter)
+
+    def _evaluate_assembled(self, request: CanonicalDecisionRequest,
+                            adapter: RuntimeAdapterDescriptor) -> DecisionKernelEvaluation:
+        """Internal pure evaluator retained for focused parity unit tests."""
+        if not isinstance(request, CanonicalDecisionRequest) or not isinstance(adapter, RuntimeAdapterDescriptor):
             raise InvariantViolation("DECISION_KERNEL_EVALUATION_INVALID")
-        decision = self._calculate(inputs)
-        if not isinstance(decision, PreExecutionDecision):
-            raise InvariantViolation("DECISION_KERNEL_CALCULATOR_INVALID")
+        request.require_persisted_assembly()
+        inputs = request.inputs
+        decision = request.build_decision()
         evidence = inputs.pricing_applicability_evidence
         if (decision.pricing_applicability_evidence_id != evidence.evidence_id or
                 decision.pricing_applicable != evidence.applicable or
@@ -327,16 +412,33 @@ class DecisionKernel:
 
 
 class DecisionRuntimeAdapter:
-    """Adapter boundary: it identifies runtime I/O but cannot alter kernel inputs or outputs."""
+    """Public runtime entry point backed exclusively by persisted pipeline evidence."""
 
-    def __init__(self, kernel: DecisionKernel, descriptor: RuntimeAdapterDescriptor) -> None:
-        if not isinstance(kernel, DecisionKernel) or not isinstance(descriptor, RuntimeAdapterDescriptor):
+    def __init__(self, kernel: DecisionKernel, descriptor: RuntimeAdapterDescriptor, *,
+                 repository: object, runtime_run_id: str,
+                 pricing_applicability_evidence: PricingApplicabilityEvidence) -> None:
+        from .pipelines import PipelineEvidenceRepository
+
+        if (not isinstance(kernel, DecisionKernel) or not isinstance(descriptor, RuntimeAdapterDescriptor) or
+                not isinstance(repository, PipelineEvidenceRepository) or
+                not isinstance(pricing_applicability_evidence, PricingApplicabilityEvidence)):
             raise InvariantViolation("DECISION_RUNTIME_ADAPTER_INVALID")
+        _text(runtime_run_id, "DECISION_RUNTIME_ADAPTER_INVALID")
         self._kernel = kernel
         self.descriptor = descriptor
+        self._repository = repository
+        self._runtime_run_id = runtime_run_id
+        self._pricing_applicability_evidence = pricing_applicability_evidence
 
-    def decide(self, inputs: FrozenDecisionInput) -> DecisionKernelEvaluation:
-        return self._kernel.evaluate(inputs, self.descriptor)
+    def decide(self) -> DecisionKernelEvaluation:
+        """Assemble and evaluate; callers cannot supply economic values or a request."""
+
+        return self._kernel.evaluate(
+            repository=self._repository,
+            runtime_run_id=self._runtime_run_id,
+            pricing_applicability_evidence=self._pricing_applicability_evidence,
+            adapter=self.descriptor,
+        )
 
 
 class DecisionParityLedger:
