@@ -1,0 +1,36 @@
+# Gate D2 runtime evidence protocol
+
+The three checks initially blocked at Gate D2 are derived from artifacts, not
+caller-provided booleans:
+
+- USD risk-free evidence requires one immutable FRED/ALFRED bronze
+  `risk-free-curve` manifest for all 21, 63, 126, and 252 business-day
+  horizons. The manifest and each point must be available at the requested
+  information cutoff and use the approved currency,
+  `BUS/252`, and `EFFECTIVE_ANNUAL` conventions.
+- Factor/specific-risk evidence requires a USD-base assessment, PSD covariance,
+  and a positive specific-risk floor. It is published as an immutable Tiingo
+  EOD gold evidence artifact with the exact assessment/policy payload and a
+  complete immutable Tiingo EOD source-manifest parent set.
+  the validated specific-risk floor/decomposition already enforced by the
+  assessment contract.
+- Model-lineage evidence requires an active registry authorization, a matching
+  model-calculation binding, and a calculation graph whose raw manifests verify
+  in the immutable store. It is published as a gold `model-lineage-evidence`
+  artifact containing the exact registry, authorization, binding, and graph
+  payloads, with all traced raw manifests retained as immutable parents.
+
+`build_d2_gate_input` accepts the remaining static checks separately and
+derives these three runtime checks from `assemble_d2_runtime_evidence`. It
+rejects a caller that attempts to supply a runtime check directly. Missing,
+stale, malformed, or unverifiable inputs remain failed checks and preserve
+`permits_m5_execution=false`.
+
+No collector run, FRED credential use, model activation, paper order, or live
+trading authority is performed by this protocol.
+
+`materialize_usd_fred_risk_free_curve` is the pure input boundary for the
+risk-free artifact. It opens one verified `fred-alfred` bronze
+`risk-free-curve` manifest and requires exactly DGS1MO, DGS3MO, DGS6MO, and
+DGS1 observations with common `as_of`, explicit availability, and decimal-safe
+percent values. It does not interpolate tenors or backfill missing observations.
