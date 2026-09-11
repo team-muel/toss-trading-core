@@ -22,8 +22,8 @@ version-bound `model_key`, factor loading, 추정불확실성, 품질, `as_of`, 
 명시적 오류로 종료한다.
 
 `required_return` 필드와 `capm_required_return`/`multifactor_required_return` 함수는
-`pricing-result@1`의 replay·명시적 migration 전용 호환 경로다. 이들은 새 계산, 새 저장,
-새 모델 승인 또는 공통 결정 경로의 권한이 아니며, v2 baseline과 혼용할 수 없다.
+`pricing-result@1`의 호환·replay 경로다. 그 결과는 v2 권한이나 공통 결정 경로 입력이
+아니며, v2 baseline으로 변환하려면 canonical entry point의 scope·asset 검사를 통과해야 한다.
 
 각 결과는 forecast/holding horizon, `valid_until`, decay profile을 포함하는 signal
 validity 계약도 보존한다. 계산 horizon과 forecast horizon이 다르면 결과 생성을

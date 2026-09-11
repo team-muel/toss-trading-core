@@ -2,7 +2,8 @@
 
 ``*_pricing_baseline_return`` is the only current pricing authority.  The
 ``*_required_return`` exports retain pricing-result@1 replay and migration
-compatibility; they must not be used for new decision assembly.
+compatibility; their outputs cannot create a v2 decision input without the
+canonical scope and asset checks.
 """
 from .black_litterman import BlackLittermanView, equilibrium_returns, posterior_returns
 from .capm import ReturnObservation, capm_required_return, capm_pricing_baseline_from_risk_free, capm_pricing_baseline_return, estimate_beta

@@ -12,11 +12,11 @@ from .models import AlphaEstimate, ExpectedReturnEstimate, ModelRelativeAlphaAss
 def calculate_alpha(expected: ExpectedReturnEstimate, required: PricingResult, *,
                     as_of: datetime, model_conflict: bool = False, event_risk: bool = False,
                     feature_conflict: bool = False, uncertainty_buffer: Decimal = Decimal(0)) -> AlphaEstimate:
-    """Replay-only ``alpha-estimate@1`` compatibility calculation.
+    """``alpha-estimate@1`` compatibility calculation.
 
     It preserves the historical ``required_return``/``alpha`` fields.  New
-    paths must use :func:`assess_model_relative_alpha`, which requires typed
-    economic inputs and explicit model-scope authorization.
+    paths needing canonical authority must use :func:`assess_model_relative_alpha`,
+    which requires typed economic inputs and explicit model-scope authorization.
     """
     if (expected.instrument_id != required.instrument_id or expected.horizon != required.horizon or
             expected.validity != required.validity or

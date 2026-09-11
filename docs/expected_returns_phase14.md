@@ -23,7 +23,7 @@ Component 오차의 상관행렬이 없을 때는 독립성을 임의 가정하�
 뺀 값이 잔차 구간이다. 이 구간이 0을 포함하거나 데이터 품질 저하, 모델 불일치, 이벤트
 직전, feature 충돌, 비용과 불확실성 buffer를 넘지 못하는 경우 `ABSTAIN`과 복수 reason
 code를 반환한다. `calculate_alpha`와 `AlphaEstimate`는 `alpha-estimate@1` replay/migration
-호환 경로이며 정규 asset-scope entry point나 benchmark-active return이 아니다. 결과는 주문
+호환 경로이며 정규 asset-scope entry point나 benchmark-active return 권한이 아니다. 결과는 주문
 방향이나 주문을 만들지 않는다.
 
 ## 완료조건 점검

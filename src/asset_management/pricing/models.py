@@ -13,6 +13,7 @@ from asset_management.quality.models import QualityStatus
 from asset_management.domain.horizon import DECISION_HORIZONS, SignalValidity
 from asset_management.domain.economics import EconomicValue, ReturnSemanticType, ReturnMetricStatus, ReturnUnit
 from asset_management.domain.errors import DataQualityError
+from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
 
 
 HORIZONS = DECISION_HORIZONS
@@ -98,11 +99,11 @@ class FactorPremium:
 
 @dataclass(frozen=True)
 class PricingResult:
-    """Legacy ``pricing-result@1`` value retained only for replay/migration.
+    """Legacy ``pricing-result@1`` value retained for compatibility and replay.
 
-    New calculations expose :meth:`economic_payload` through the v2 canonical
-    pricing-baseline entry points.  This class deliberately retains its
-    historical hash body and field names so stored v1 evidence is not rewritten.
+    This class deliberately retains its historical hash body and field names so
+    stored v1 evidence is not rewritten.  It has no public v2 conversion: only
+    the canonical CAPM/multifactor entry points may produce a v2 baseline.
     """
     instrument_id: str
     horizon: int
@@ -154,13 +155,32 @@ class PricingResult:
     def payload(self) -> dict:
         return {**self._payload_without_hash(), "output_hash": self.output_hash}
 
-    def economic_payload(self, *, currency, currency_basis, formula_version, model_key):
-        if self.quality_status not in (QualityStatus.VALID, QualityStatus.ESTIMATED):
-            raise DataQualityError("PRICING_SEMANTIC_QUALITY_NOT_ELIGIBLE")
-        baseline = EconomicValue(ReturnSemanticType.PRICING_BASELINE_RETURN, self.required_return,
-            ReturnMetricStatus.AVAILABLE, currency, currency_basis, self.horizon,
-            ReturnUnit.TOTAL_RETURN, formula_version, model_key)
-        body = {**self._payload_without_hash(), "schema_version": "pricing-result@2",
-                "pricing_baseline_return": baseline.payload(), "model_key": model_key}
-        del body['required_return']
-        return body | {"output_hash": digest(canonical(body))}
+
+_CANONICAL_PRICING_MODELS = {
+    "CAPM": ("CAPM@2", "capm-pricing-baseline@2"),
+    "MULTIFACTOR": ("MULTIFACTOR@2", "multifactor-pricing-baseline@2"),
+}
+
+
+def _authorized_pricing_baseline_payload(result: PricingResult, *, currency, currency_basis,
+                                         formula_version: str, model_key: str, asset_scope: str,
+                                         model_registry: ModelRegistry,
+                                         authorization: ModelAuthorization) -> dict:
+    """Internal v2 bridge; it cannot borrow v1 authority or an arbitrary model key."""
+    if not isinstance(result, PricingResult):
+        raise DataQualityError("PRICING_SEMANTIC_RESULT_INVALID")
+    if asset_scope not in ("EQUITY", "EQUITY_ETF"):
+        raise DataQualityError("PRICING_ASSET_SCOPE_NOT_APPLICABLE")
+    if _CANONICAL_PRICING_MODELS.get(result.model_name) != (model_key, formula_version):
+        raise DataQualityError("PRICING_CANONICAL_MODEL_IDENTITY_INVALID")
+    model_registry.require_authorization(authorization, model_key=model_key,
+        scope=ModelScope.PRICING_BASELINE_RETURN, at=result.as_of)
+    if result.quality_status not in (QualityStatus.VALID, QualityStatus.ESTIMATED):
+        raise DataQualityError("PRICING_SEMANTIC_QUALITY_NOT_ELIGIBLE")
+    baseline = EconomicValue(ReturnSemanticType.PRICING_BASELINE_RETURN, result.required_return,
+        ReturnMetricStatus.AVAILABLE, currency, currency_basis, result.horizon,
+        ReturnUnit.TOTAL_RETURN, formula_version, model_key)
+    body = {**result._payload_without_hash(), "schema_version": "pricing-result@2",
+            "pricing_baseline_return": baseline.payload(), "model_key": model_key}
+    del body['required_return']
+    return body | {"output_hash": digest(canonical(body))}

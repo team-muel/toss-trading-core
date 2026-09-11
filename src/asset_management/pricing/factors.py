@@ -9,7 +9,7 @@ from typing import Mapping
 from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityStatus
 
-from .models import FactorPremium, PricingResult
+from .models import FactorPremium, PricingResult, _authorized_pricing_baseline_payload
 from .risk_free import RiskFreeReturn, annual_to_horizon, require_risk_free_alignment
 from asset_management.domain.horizon import SignalValidity
 from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
@@ -51,14 +51,11 @@ def _multifactor_numeric(*, instrument_id, risk_free_rate, loadings, premiums, h
 
 
 def multifactor_pricing_baseline_return(*, currency, currency_basis, asset_scope,
-                                       model_registry, authorization, **inputs):
-    if asset_scope not in ("EQUITY", "EQUITY_ETF"):
-        raise DataQualityError("PRICING_ASSET_SCOPE_NOT_APPLICABLE")
-    model_registry.require_authorization(authorization, model_key="MULTIFACTOR@2",
-        scope=ModelScope.PRICING_BASELINE_RETURN, at=inputs['as_of'])
+                                        model_registry, authorization, **inputs):
     result = _multifactor_numeric(**inputs)
-    return result.economic_payload(currency=currency, currency_basis=currency_basis,
-        formula_version="multifactor-pricing-baseline@2", model_key="MULTIFACTOR@2")
+    return _authorized_pricing_baseline_payload(result, currency=currency, currency_basis=currency_basis,
+        formula_version="multifactor-pricing-baseline@2", model_key="MULTIFACTOR@2", asset_scope=asset_scope,
+        model_registry=model_registry, authorization=authorization)
 
 
 def multifactor_pricing_baseline_from_risk_free(*, risk_free: RiskFreeReturn,

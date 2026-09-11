@@ -102,7 +102,7 @@ class ExpectedReturnEstimate:
 
 @dataclass(frozen=True)
 class AlphaEstimate:
-    """Legacy ``alpha-estimate@1`` shape retained for deterministic replay.
+    """Legacy ``alpha-estimate@1`` shape retained for compatibility and replay.
 
     It is not a generic alpha, benchmark-active return, or current decision
     input; use ``ModelRelativeAlphaAssessment`` for new canonical work.

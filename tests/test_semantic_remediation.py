@@ -125,6 +125,25 @@ def test_canonical_capm_requires_new_scope_and_preserves_equation():
         capm_pricing_baseline_return(**(arguments | dict(beta=replace(arguments['beta'], quality=QualityStatus.STALE))))
 
 
+def test_legacy_pricing_result_cannot_mint_a_v2_payload():
+    """A v1 result has no public conversion bypass around the v2 wrapper."""
+    from asset_management.pricing.models import _authorized_pricing_baseline_payload
+    from asset_management.domain.errors import InvariantViolation
+    from test_phase14_expected_returns import CAPM_REGISTRY, CAPM_AUTH
+
+    legacy = required()
+    assert not hasattr(legacy, 'economic_payload')
+    with pytest.raises(AttributeError):
+        legacy.economic_payload(
+            currency=Currency.USD, currency_basis=CurrencyBasis.BASE,
+            formula_version='capm-pricing-baseline@2', model_key='CAPM@2')
+    with pytest.raises(InvariantViolation):
+        _authorized_pricing_baseline_payload(
+            legacy, currency=Currency.USD, currency_basis=CurrencyBasis.BASE,
+            formula_version='capm-pricing-baseline@2', model_key='CAPM@2',
+            asset_scope='EQUITY', model_registry=CAPM_REGISTRY, authorization=CAPM_AUTH)
+
+
 def test_canonical_multifactor_requires_pricing_only_authority():
     from asset_management.pricing.factors import FACTORS, multifactor_pricing_baseline_return
     from asset_management.pricing.models import FactorPremium
