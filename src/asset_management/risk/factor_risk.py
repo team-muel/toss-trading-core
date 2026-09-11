@@ -82,6 +82,7 @@ class FactorRiskAssessment:
                 "systematic_variance": [str(value) for value in self.systematic_variance],
                 "specific_variance": [str(value) for value in self.specific_variance],
                 "total_variance": [str(value) for value in self.total_variance],
+                "covariance": [[str(value) for value in row] for row in self.covariance],
                 "currency_basis": self.currency_basis.value, "as_of": self.as_of.isoformat(),
                 "estimation_version": self.estimation_version,
                 "model_disagreement": str(self.model_disagreement),
