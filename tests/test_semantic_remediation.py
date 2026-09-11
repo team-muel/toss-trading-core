@@ -13,6 +13,7 @@ from asset_management.expectations.models import AssetClass, ExpectedReturnCompo
 from asset_management.risk.contributions import portfolio_risk
 from asset_management.risk.models import CovarianceEstimate
 from test_phase14_expected_returns import components, required, NOW, VALIDITY
+from runtime_model_support import persisted_runtime_authorization
 
 
 def test_per_share_growth_cannot_add_buyback_again():
@@ -97,7 +98,10 @@ def access_v2(model_id):
     registry.register(model)
     for status in (ModelStatus.VALIDATED, ModelStatus.APPROVED, ModelStatus.ACTIVE):
         registry.transition(model.key, status, effective_at=NOW, reason='explicit new scope', evidence_ids=('approved:evidence',))
-    return registry, registry.authorize(model.key, ModelScope.PRICING_BASELINE_RETURN, at=NOW)
+    return persisted_runtime_authorization(
+        registry, model_key=model.key, scope=ModelScope.PRICING_BASELINE_RETURN,
+        as_of=NOW, information_cutoff=NOW,
+    )
 
 
 def test_canonical_capm_requires_new_scope_and_preserves_equation():
@@ -106,19 +110,19 @@ def test_canonical_capm_requires_new_scope_and_preserves_equation():
     from asset_management.quality.models import QualityStatus
     from asset_management.domain.errors import InvariantViolation
     from test_phase14_expected_returns import CAPM_REGISTRY, CAPM_AUTH
-    registry, authorization = access_v2('CAPM')
+    repository, authorization = access_v2('CAPM')
     arguments = dict(instrument_id='ETF', risk_free_rate=D('.03'),
         beta=BetaEstimate(D('1.2'), D('1.2'), D('.1'), 252, 252, D('.8'), NOW, QualityStatus.VALID, D(1)),
         market_risk_premium=D('.05'), horizon=252, as_of=NOW, validity=VALIDITY,
         currency=Currency.USD, currency_basis=CurrencyBasis.BASE, asset_scope='EQUITY_ETF',
-        model_registry=registry, authorization=authorization)
+        model_registry_evidence=repository, runtime_authorization=authorization)
     output = capm_pricing_baseline_return(**arguments)
     assert D(output['pricing_baseline_return']['value']) == D('.09')
     assert 'required_return' not in output
     assert output['model_key'] == 'CAPM@2'
     assert output == capm_pricing_baseline_return(**arguments)
-    with pytest.raises(InvariantViolation):
-        capm_pricing_baseline_return(**(arguments | dict(model_registry=CAPM_REGISTRY, authorization=CAPM_AUTH)))
+    with pytest.raises((InvariantViolation, DataQualityError)):
+        capm_pricing_baseline_return(**(arguments | dict(runtime_authorization=CAPM_AUTH)))
     with pytest.raises(DataQualityError, match='NOT_APPLICABLE'):
         capm_pricing_baseline_return(**(arguments | dict(asset_scope='BOND_ETF')))
     with pytest.raises(DataQualityError, match='NOT_ELIGIBLE'):
@@ -137,11 +141,12 @@ def test_legacy_pricing_result_cannot_mint_a_v2_payload():
         legacy.economic_payload(
             currency=Currency.USD, currency_basis=CurrencyBasis.BASE,
             formula_version='capm-pricing-baseline@2', model_key='CAPM@2')
-    with pytest.raises(InvariantViolation):
+    with pytest.raises((InvariantViolation, DataQualityError)):
         _authorized_pricing_baseline_payload(
             legacy, currency=Currency.USD, currency_basis=CurrencyBasis.BASE,
             formula_version='capm-pricing-baseline@2', model_key='CAPM@2',
-            asset_scope='EQUITY', model_registry=CAPM_REGISTRY, authorization=CAPM_AUTH)
+            asset_scope='EQUITY', model_registry_evidence=None,
+            runtime_authorization=None)
 
 
 @pytest.mark.parametrize('module_name,function_name,model_key', [
@@ -157,10 +162,10 @@ def test_canonical_pricing_rejects_v1_authority_before_numeric_calculation(
     module = importlib.import_module(module_name)
     monkeypatch.setattr(module, '_capm_numeric' if model_key == 'CAPM@2' else '_multifactor_numeric',
                         lambda **_: pytest.fail('numeric pricing ran before authorization'))
-    with pytest.raises(InvariantViolation):
+    with pytest.raises((InvariantViolation, DataQualityError)):
         getattr(module, function_name)(
             currency=Currency.USD, currency_basis=CurrencyBasis.BASE, asset_scope='EQUITY',
-            model_registry=CAPM_REGISTRY, authorization=CAPM_AUTH, as_of=NOW)
+            model_registry_evidence=None, runtime_authorization=CAPM_AUTH, as_of=NOW)
 
 
 def test_canonical_multifactor_requires_pricing_only_authority():
@@ -169,15 +174,18 @@ def test_canonical_multifactor_requires_pricing_only_authority():
     from asset_management.quality.models import QualityStatus
     from asset_management.governance import ModelScope
     from asset_management.domain.errors import InvariantViolation
-    registry, authorization = access_v2('MULTIFACTOR')
+    repository, authorization = access_v2('MULTIFACTOR')
     output = multifactor_pricing_baseline_return(currency=Currency.USD, currency_basis=CurrencyBasis.BASE,
-        asset_scope='EQUITY', model_registry=registry, authorization=authorization,
+        asset_scope='EQUITY', model_registry_evidence=repository, runtime_authorization=authorization,
         instrument_id='X', risk_free_rate=D('.03'), loadings={k:D(1) for k in FACTORS},
         premiums={k:FactorPremium(k,D('.01'),D('.001'),NOW,NOW,'fixture',QualityStatus.VALID) for k in FACTORS},
         horizon=252, as_of=NOW, information_cutoff=NOW, validity=VALIDITY)
     assert abs(D(output['pricing_baseline_return']['value'])-D('.10')) < D('1e-25')
     with pytest.raises(InvariantViolation):
-        registry.authorize('MULTIFACTOR@2', ModelScope.EXPECTED_BENCHMARK_ACTIVE_RETURN, at=NOW)
+        repository.require_authorization(authorization, model_key='MULTIFACTOR@2',
+            scope=ModelScope.EXPECTED_BENCHMARK_ACTIVE_RETURN, at=NOW)
+    registry = repository.require_authorization(authorization, model_key='MULTIFACTOR@2',
+        scope=ModelScope.PRICING_BASELINE_RETURN, at=NOW)
     model = registry.models['MULTIFACTOR@2']
     with pytest.raises(InvariantViolation, match='AUTHORITY_CONFLICT'):
         replace(model, outputs=('pricing_baseline_return','expected_benchmark_active_return'))

@@ -4,6 +4,9 @@ from .model_registry import (
     ModelAuthorization, ModelDefinition, ModelRegistry, ModelScope, ModelStatus,
     ModelTransition,
 )
+from .runtime_registry_evidence import (
+    RuntimeModelAuthorization, RuntimeModelRegistryEvidenceRepository,
+)
 from .strategy_registry import (
     CapitalRiskBudget, StrategyAttribution, StrategyAuthorization, StrategyDefinition,
     StrategyRegistry, StrategyRuntimeMode, StrategyStatus, StrategyTransition,
@@ -14,7 +17,8 @@ from .investor_mandate import (
 )
 
 __all__ = ["ModelAuthorization", "ModelDefinition", "ModelRegistry", "ModelScope",
-           "ModelStatus", "ModelTransition", "CapitalRiskBudget", "StrategyAttribution",
+           "ModelStatus", "ModelTransition", "RuntimeModelAuthorization",
+           "RuntimeModelRegistryEvidenceRepository", "CapitalRiskBudget", "StrategyAttribution",
            "StrategyAuthorization", "StrategyDefinition", "StrategyRegistry",
            "StrategyRuntimeMode", "StrategyStatus", "StrategyTransition", "BenchmarkDefinition",
            "InvestorMandate", "InvestorMandateRegistry", "MandateObjective",

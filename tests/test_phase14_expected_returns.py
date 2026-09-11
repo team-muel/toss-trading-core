@@ -9,6 +9,7 @@ from asset_management.expectations.engine import COMPONENTS
 from asset_management.pricing.models import BetaEstimate
 from asset_management.pricing.capm import capm_required_return
 from asset_management.quality.models import QualityStatus
+from runtime_model_support import persisted_runtime_authorization
 
 D=Decimal; NOW=datetime(2026,1,2,tzinfo=timezone.utc)
 VALIDITY=SignalValidity(252,63,NOW+timedelta(days=30),DecayProfile.LINEAR)
@@ -20,7 +21,9 @@ CAPM_REGISTRY.register(CAPM_MODEL)
 for _status in (ModelStatus.VALIDATED,ModelStatus.APPROVED,ModelStatus.ACTIVE):
     CAPM_REGISTRY.transition(CAPM_MODEL.key,_status,effective_at=NOW,
                              reason="test promotion",evidence_ids=("test:evidence",))
-CAPM_AUTH=CAPM_REGISTRY.authorize(CAPM_MODEL.key,ModelScope.REQUIRED_RETURN,at=NOW)
+CAPM_EVIDENCE,CAPM_AUTH=persisted_runtime_authorization(
+    CAPM_REGISTRY, model_key=CAPM_MODEL.key, scope=ModelScope.REQUIRED_RETURN,
+    as_of=NOW, information_cutoff=NOW)
 def components(kind, point=D(".01"), uncertainty=D(".001"), confidence=D(".8")):
     return {name: ExpectedReturnComponent(name,point,uncertainty,confidence,(f"feature:{name}",),252,VALIDITY) for name in COMPONENTS[kind]}
 
@@ -52,7 +55,7 @@ def test_uncertainty_is_conservative_without_correlation_matrix():
 
 def required(rate=D(".02")):
     beta=BetaEstimate(D(0),D(0),D(".001"),252,252,D(1),NOW,QualityStatus.VALID,D(1))
-    return capm_required_return(instrument_id="X",risk_free_rate=rate,beta=beta,market_risk_premium=D(".05"),horizon=252,as_of=NOW,validity=VALIDITY,model_registry=CAPM_REGISTRY,authorization=CAPM_AUTH)
+    return capm_required_return(instrument_id="X",risk_free_rate=rate,beta=beta,market_risk_premium=D(".05"),horizon=252,as_of=NOW,validity=VALIDITY,model_registry_evidence=CAPM_EVIDENCE,runtime_authorization=CAPM_AUTH)
 
 def test_alpha_keeps_inputs_separate():
     exp=expected_return(instrument_id="X",asset_class=AssetClass.CASH,components=components(AssetClass.CASH),horizon=252,as_of=NOW)

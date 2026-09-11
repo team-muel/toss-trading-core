@@ -12,7 +12,10 @@ from asset_management.quality.models import QualityStatus
 from .models import FactorPremium, PricingResult, _authorized_pricing_baseline_payload
 from .risk_free import RiskFreeReturn, annual_to_horizon, require_risk_free_alignment
 from asset_management.domain.horizon import SignalValidity
-from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
+from asset_management.governance import (
+    ModelScope, RuntimeModelAuthorization,
+    RuntimeModelRegistryEvidenceRepository,
+)
 
 
 FACTORS = ("MKT", "VALUE", "MOMENTUM", "QUALITY", "SIZE", "PROFITABILITY", "INVESTMENT")
@@ -22,10 +25,13 @@ def multifactor_required_return(*, instrument_id: str, risk_free_rate: Decimal,
                                 loadings: Mapping[str, Decimal],
                                 premiums: Mapping[str, FactorPremium], horizon: int,
                                 as_of: datetime, information_cutoff: datetime, validity: SignalValidity,
-                                model_registry: ModelRegistry, authorization: ModelAuthorization,
+                                model_registry_evidence: RuntimeModelRegistryEvidenceRepository,
+                                runtime_authorization: RuntimeModelAuthorization,
                                 uncertainty_z: Decimal = Decimal("1.96")) -> PricingResult:
-    model_registry.require_authorization(
-        authorization, model_key="MULTIFACTOR@1", scope=ModelScope.REQUIRED_RETURN, at=as_of)
+    if not isinstance(model_registry_evidence, RuntimeModelRegistryEvidenceRepository):
+        raise DataQualityError("MODEL_RUNTIME_EVIDENCE_REQUIRED")
+    model_registry_evidence.require_authorization(
+        runtime_authorization, model_key="MULTIFACTOR@1", scope=ModelScope.REQUIRED_RETURN, at=as_of)
     return _multifactor_numeric(instrument_id=instrument_id, risk_free_rate=risk_free_rate,
         loadings=loadings, premiums=premiums, horizon=horizon, as_of=as_of,
         information_cutoff=information_cutoff, validity=validity, uncertainty_z=uncertainty_z)
@@ -51,15 +57,20 @@ def _multifactor_numeric(*, instrument_id, risk_free_rate, loadings, premiums, h
 
 
 def multifactor_pricing_baseline_return(*, currency, currency_basis, asset_scope,
-                                        model_registry, authorization, **inputs):
+                                        model_registry_evidence: RuntimeModelRegistryEvidenceRepository,
+                                        runtime_authorization: RuntimeModelAuthorization, **inputs):
+    if not isinstance(model_registry_evidence, RuntimeModelRegistryEvidenceRepository):
+        raise DataQualityError("MODEL_RUNTIME_EVIDENCE_REQUIRED")
     if asset_scope not in ("EQUITY", "EQUITY_ETF"):
         raise DataQualityError("PRICING_ASSET_SCOPE_NOT_APPLICABLE")
-    model_registry.require_authorization(authorization, model_key="MULTIFACTOR@2",
-        scope=ModelScope.PRICING_BASELINE_RETURN, at=inputs['as_of'])
+    model_registry_evidence.require_authorization(
+        runtime_authorization, model_key="MULTIFACTOR@2", scope=ModelScope.PRICING_BASELINE_RETURN,
+        at=inputs['as_of'])
     result = _multifactor_numeric(**inputs)
     return _authorized_pricing_baseline_payload(result, currency=currency, currency_basis=currency_basis,
         formula_version="multifactor-pricing-baseline@2", model_key="MULTIFACTOR@2", asset_scope=asset_scope,
-        model_registry=model_registry, authorization=authorization)
+        model_registry_evidence=model_registry_evidence,
+        runtime_authorization=runtime_authorization)
 
 
 def multifactor_pricing_baseline_from_risk_free(*, risk_free: RiskFreeReturn,

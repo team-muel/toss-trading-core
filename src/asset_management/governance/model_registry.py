@@ -254,5 +254,58 @@ class ModelRegistry:
     def payload(self) -> dict[str, object]:
         return {**self._body(), "registry_hash": self.registry_hash}
 
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, object]) -> "ModelRegistry":
+        """Reconstruct one exact, content-addressed registry snapshot.
+
+        This intentionally accepts no abbreviated configuration.  Runtime
+        selection must preserve the complete lifecycle and prove the supplied
+        hash is the hash of the reconstructed authority, not merely a caller
+        label.
+        """
+        if not isinstance(payload, Mapping) or set(payload) != {"models", "transitions", "registry_hash"}:
+            raise InvariantViolation("MODEL_REGISTRY_SNAPSHOT_INVALID")
+        models = payload["models"]
+        transitions = payload["transitions"]
+        expected_hash = payload["registry_hash"]
+        if (not isinstance(models, list) or not isinstance(transitions, list) or
+                not isinstance(expected_hash, str) or len(expected_hash) != 64 or
+                any(character not in "0123456789abcdef" for character in expected_hash)):
+            raise InvariantViolation("MODEL_REGISTRY_SNAPSHOT_INVALID")
+        registry = cls()
+        try:
+            for raw in models:
+                if not isinstance(raw, Mapping) or set(raw) != {
+                    "model_id", "version", "purpose", "inputs", "outputs", "approved_scope",
+                    "known_failure_modes", "validation_date", "review_date", "owner", "status",
+                }:
+                    raise InvariantViolation("MODEL_REGISTRY_SNAPSHOT_INVALID")
+                definition = ModelDefinition(
+                    str(raw["model_id"]), str(raw["version"]), str(raw["purpose"]),
+                    tuple(raw["inputs"]), tuple(raw["outputs"]),
+                    tuple(ModelScope(value) for value in raw["approved_scope"]),
+                    tuple(raw["known_failure_modes"]), date.fromisoformat(str(raw["validation_date"])),
+                    date.fromisoformat(str(raw["review_date"])), str(raw["owner"]),
+                )
+                registry.register(definition)
+            for raw in transitions:
+                if not isinstance(raw, Mapping) or set(raw) != {
+                    "model_key", "from_status", "to_status", "effective_at", "reason", "evidence_ids",
+                }:
+                    raise InvariantViolation("MODEL_REGISTRY_SNAPSHOT_INVALID")
+                effective_at = datetime.fromisoformat(str(raw["effective_at"]))
+                registry.transition(
+                    str(raw["model_key"]), ModelStatus(str(raw["to_status"])),
+                    effective_at=effective_at, reason=str(raw["reason"]),
+                    evidence_ids=tuple(raw["evidence_ids"]),
+                )
+        except (TypeError, ValueError, InvariantViolation) as exc:
+            if isinstance(exc, InvariantViolation) and str(exc) != "MODEL_REGISTRY_SNAPSHOT_INVALID":
+                raise InvariantViolation("MODEL_REGISTRY_SNAPSHOT_INVALID") from exc
+            raise InvariantViolation("MODEL_REGISTRY_SNAPSHOT_INVALID") from exc
+        if registry.registry_hash != expected_hash or registry.payload() != dict(payload):
+            raise InvariantViolation("MODEL_REGISTRY_SNAPSHOT_INVALID")
+        return registry
+
     def publish(self, store: ImmutableDatasetStore) -> str:
         return store.catalog("model-registry", self.payload())
