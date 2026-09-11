@@ -6,7 +6,7 @@ from asset_management.calculations.semantic_migration import migrate_legacy_retu
 from asset_management.data.immutable import canonical, digest
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.domain.scalars import Currency
-from asset_management.domain.errors import DataQualityError
+from asset_management.domain.errors import DataQualityError, InvariantViolation
 from asset_management.expectations.engine import expected_return
 from asset_management.expectations.equity import EquityGrowthBasis, AGGREGATE_EQUITY_COMPONENTS
 from asset_management.expectations.models import AssetClass, ExpectedReturnComponent
@@ -123,6 +123,44 @@ def test_canonical_capm_requires_new_scope_and_preserves_equation():
         capm_pricing_baseline_return(**(arguments | dict(asset_scope='BOND_ETF')))
     with pytest.raises(DataQualityError, match='NOT_ELIGIBLE'):
         capm_pricing_baseline_return(**(arguments | dict(beta=replace(arguments['beta'], quality=QualityStatus.STALE))))
+
+
+def test_legacy_pricing_result_cannot_mint_a_v2_payload():
+    """A v1 result has no public conversion bypass around the v2 wrapper."""
+    from asset_management.pricing.models import _authorized_pricing_baseline_payload
+    from asset_management.domain.errors import InvariantViolation
+    from test_phase14_expected_returns import CAPM_REGISTRY, CAPM_AUTH
+
+    legacy = required()
+    assert not hasattr(legacy, 'economic_payload')
+    with pytest.raises(AttributeError):
+        legacy.economic_payload(
+            currency=Currency.USD, currency_basis=CurrencyBasis.BASE,
+            formula_version='capm-pricing-baseline@2', model_key='CAPM@2')
+    with pytest.raises(InvariantViolation):
+        _authorized_pricing_baseline_payload(
+            legacy, currency=Currency.USD, currency_basis=CurrencyBasis.BASE,
+            formula_version='capm-pricing-baseline@2', model_key='CAPM@2',
+            asset_scope='EQUITY', model_registry=CAPM_REGISTRY, authorization=CAPM_AUTH)
+
+
+@pytest.mark.parametrize('module_name,function_name,model_key', [
+    ('asset_management.pricing.capm', 'capm_pricing_baseline_return', 'CAPM@2'),
+    ('asset_management.pricing.factors', 'multifactor_pricing_baseline_return', 'MULTIFACTOR@2'),
+])
+def test_canonical_pricing_rejects_v1_authority_before_numeric_calculation(
+        monkeypatch, module_name, function_name, model_key):
+    """No pricing arithmetic may run before the public v2 authority gate."""
+    import importlib
+    from test_phase14_expected_returns import CAPM_REGISTRY, CAPM_AUTH
+
+    module = importlib.import_module(module_name)
+    monkeypatch.setattr(module, '_capm_numeric' if model_key == 'CAPM@2' else '_multifactor_numeric',
+                        lambda **_: pytest.fail('numeric pricing ran before authorization'))
+    with pytest.raises(InvariantViolation):
+        getattr(module, function_name)(
+            currency=Currency.USD, currency_basis=CurrencyBasis.BASE, asset_scope='EQUITY',
+            model_registry=CAPM_REGISTRY, authorization=CAPM_AUTH, as_of=NOW)
 
 
 def test_canonical_multifactor_requires_pricing_only_authority():
