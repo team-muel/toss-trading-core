@@ -13,7 +13,9 @@ from asset_management.quality.models import QualityStatus
 from asset_management.domain.horizon import DECISION_HORIZONS, SignalValidity
 from asset_management.domain.economics import EconomicValue, ReturnSemanticType, ReturnMetricStatus, ReturnUnit
 from asset_management.domain.errors import DataQualityError
-from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
+from asset_management.governance import (
+    ModelScope, RuntimeModelAuthorization, RuntimeModelRegistryEvidenceRepository,
+)
 
 
 HORIZONS = DECISION_HORIZONS
@@ -164,8 +166,8 @@ _CANONICAL_PRICING_MODELS = {
 
 def _authorized_pricing_baseline_payload(result: PricingResult, *, currency, currency_basis,
                                          formula_version: str, model_key: str, asset_scope: str,
-                                         model_registry: ModelRegistry,
-                                         authorization: ModelAuthorization) -> dict:
+                                         model_registry_evidence: RuntimeModelRegistryEvidenceRepository,
+                                         runtime_authorization: RuntimeModelAuthorization) -> dict:
     """Internal v2 bridge; it cannot borrow v1 authority or an arbitrary model key."""
     if not isinstance(result, PricingResult):
         raise DataQualityError("PRICING_SEMANTIC_RESULT_INVALID")
@@ -173,14 +175,20 @@ def _authorized_pricing_baseline_payload(result: PricingResult, *, currency, cur
         raise DataQualityError("PRICING_ASSET_SCOPE_NOT_APPLICABLE")
     if _CANONICAL_PRICING_MODELS.get(result.model_name) != (model_key, formula_version):
         raise DataQualityError("PRICING_CANONICAL_MODEL_IDENTITY_INVALID")
-    model_registry.require_authorization(authorization, model_key=model_key,
-        scope=ModelScope.PRICING_BASELINE_RETURN, at=result.as_of)
+    if not isinstance(model_registry_evidence, RuntimeModelRegistryEvidenceRepository):
+        raise DataQualityError("MODEL_RUNTIME_EVIDENCE_REQUIRED")
+    model_registry_evidence.require_authorization(
+        runtime_authorization, model_key=model_key, scope=ModelScope.PRICING_BASELINE_RETURN,
+        at=result.as_of)
     if result.quality_status not in (QualityStatus.VALID, QualityStatus.ESTIMATED):
         raise DataQualityError("PRICING_SEMANTIC_QUALITY_NOT_ELIGIBLE")
     baseline = EconomicValue(ReturnSemanticType.PRICING_BASELINE_RETURN, result.required_return,
         ReturnMetricStatus.AVAILABLE, currency, currency_basis, result.horizon,
         ReturnUnit.TOTAL_RETURN, formula_version, model_key)
     body = {**result._payload_without_hash(), "schema_version": "pricing-result@2",
-            "pricing_baseline_return": baseline.payload(), "model_key": model_key}
+            "pricing_baseline_return": baseline.payload(), "model_key": model_key,
+            "runtime_run_id": runtime_authorization.runtime_run_id,
+            "model_registry_snapshot_id": runtime_authorization.model_registry_snapshot_id,
+            "model_registry_binding_hash": runtime_authorization.binding_hash}
     del body['required_return']
     return body | {"output_hash": digest(canonical(body))}

@@ -8,6 +8,7 @@ from asset_management.calculations import (
 )
 from asset_management.domain.errors import InvariantViolation
 from asset_management.governance import ModelDefinition, ModelRegistry, ModelScope, ModelStatus
+from runtime_model_support import persisted_runtime_authorization
 
 
 NOW = datetime(2026, 9, 8, tzinfo=timezone.utc)
@@ -21,7 +22,10 @@ def authorization():
     registry.register(model)
     for status in (ModelStatus.VALIDATED, ModelStatus.APPROVED, ModelStatus.ACTIVE):
         registry.transition(model.key, status, effective_at=NOW, reason="test", evidence_ids=("evidence:test",))
-    return registry, registry.authorize(model.key, ModelScope.PRICING_BASELINE_RETURN, at=NOW)
+    return persisted_runtime_authorization(
+        registry, model_key=model.key, scope=ModelScope.PRICING_BASELINE_RETURN,
+        as_of=NOW, information_cutoff=NOW,
+    )
 
 
 def lineage(*, declared=True):
@@ -40,17 +44,17 @@ def lineage(*, declared=True):
 
 
 def test_authorized_scope_and_complete_lineage_create_reproducible_binding():
-    registry, token = authorization()
-    first = bind_authorized_model_calculation(model_registry=registry, authorization=token,
+    repository, token = authorization()
+    first = bind_authorized_model_calculation(model_registry_evidence=repository, runtime_authorization=token,
         model_key="CAPM@2", scope=ModelScope.PRICING_BASELINE_RETURN, lineage=lineage(), bound_at=NOW)
-    second = bind_authorized_model_calculation(model_registry=registry, authorization=token,
+    second = bind_authorized_model_calculation(model_registry_evidence=repository, runtime_authorization=token,
         model_key="CAPM@2", scope=ModelScope.PRICING_BASELINE_RETURN, lineage=lineage(), bound_at=NOW)
     assert first.binding_id == second.binding_id and len(first.binding_id) == 64
 
 
 def test_binding_rejects_lineage_that_does_not_declare_authorized_scope():
-    registry, token = authorization()
+    repository, token = authorization()
     with pytest.raises(InvariantViolation, match="LINEAGE_SCOPE_MISMATCH"):
-        bind_authorized_model_calculation(model_registry=registry, authorization=token,
+        bind_authorized_model_calculation(model_registry_evidence=repository, runtime_authorization=token,
             model_key="CAPM@2", scope=ModelScope.PRICING_BASELINE_RETURN,
             lineage=lineage(declared=False), bound_at=NOW)

@@ -19,6 +19,25 @@ registry publication은 content-addressed catalog에 저장한다. 이 기능은
 권한만 통제하며 실주문 권한을 활성화하지 않는다. `live_trading_enabled=false`를
 유지한다.
 
+## Runtime-selected registry evidence (AMA-38 follow-up)
+
+계산 테스트가 만든 임의의 in-memory registry는 production authority가 아니다. 실제
+runtime은 먼저 append-only `am_model_governance_review_evidence`에 owner와 각
+lifecycle 전이에 대응하는 review artifact를 기록해야 한다. 그 뒤 repository clock이
+기록한 ingestion time과 review content hash를 포함해 `am_model_registry_snapshot`에
+저장되고, content hash와 registry hash가 검증된 snapshot만 선택할 수 있다. 호출자는
+published/bound timestamp를 제공할 수 없다. snapshot은 해당 `runtime_run_id`의
+`information_cutoff` 이전에 발행돼야 하며, 선택은 runtime의 append-only time facts에
+hash로 결속되고 어떤 pipeline stage evidence보다 먼저 완료돼야 한다.
+
+`RuntimeModelRegistryEvidenceRepository.authorize`는 이 persisted binding에서만
+authorization을 발급한다. CAPM/multifactor의 legacy required-return API와 canonical v2
+pricing-baseline API, 그리고 calculation lineage binding은 모두 이 runtime token과
+repository revalidation을 요구한다. snapshot이 없거나, cutoff 이후에 발행됐거나,
+payload/review/runtime hash가 바뀌었거나, scope/lifecycle/review가 맞지 않으면
+fail-closed다. 이 경계는 실제 model validation evidence를 만들어내지 않으며, 배포 전에
+실제 review artifact와 snapshot을 반드시 수집해야 한다.
+
 ## Canonical return authority (AMA-38 / AMA-101)
 
 `pricing_baseline_return`, `model_relative_alpha`,

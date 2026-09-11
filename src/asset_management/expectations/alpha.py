@@ -5,7 +5,9 @@ from asset_management.domain.errors import DataQualityError
 from asset_management.pricing.models import PricingResult
 from asset_management.quality.models import QualityStatus
 from asset_management.domain.economics import EconomicValue, ReturnSemanticType, model_relative_alpha
-from asset_management.governance import ModelAuthorization, ModelRegistry, ModelScope
+from asset_management.governance import (
+    ModelScope, RuntimeModelAuthorization, RuntimeModelRegistryEvidenceRepository,
+)
 from .confidence import shrink_estimate
 from .models import AlphaEstimate, ExpectedReturnEstimate, ModelRelativeAlphaAssessment
 
@@ -51,8 +53,10 @@ def assess_model_relative_alpha(*, net_forecast: EconomicValue,
                                 baseline_uncertainty: Decimal,
                                 uncertainty_threshold: Decimal,
                                 formula_version: str, model_key: str,
-                                as_of: datetime, model_registry: ModelRegistry,
-                                authorization: ModelAuthorization) -> ModelRelativeAlphaAssessment:
+                                as_of: datetime,
+                                model_registry_evidence: RuntimeModelRegistryEvidenceRepository,
+                                runtime_authorization: RuntimeModelAuthorization
+                                ) -> ModelRelativeAlphaAssessment:
     """Create an approved, typed residual from a combined signal forecast only.
 
     Confidence shrinks the net forecast toward ``baseline + prior`` before the
@@ -66,7 +70,10 @@ def assess_model_relative_alpha(*, net_forecast: EconomicValue,
             baseline_uncertainty < 0 or uncertainty_threshold < 0 or
             net_forecast.semantic_type is not ReturnSemanticType.FORECAST_TOTAL_RETURN_NET):
         raise DataQualityError("MODEL_RELATIVE_ALPHA_INPUT_INVALID")
-    model_registry.require_authorization(authorization, model_key=model_key,
+    if not isinstance(model_registry_evidence, RuntimeModelRegistryEvidenceRepository):
+        raise DataQualityError("MODEL_RUNTIME_EVIDENCE_REQUIRED")
+    model_registry_evidence.require_authorization(
+        runtime_authorization, model_key=model_key,
         scope=ModelScope.MODEL_RELATIVE_ALPHA, at=as_of)
     raw = model_relative_alpha(net_forecast, pricing_baseline, formula_version=formula_version)
     shrunk_forecast = EconomicValue(ReturnSemanticType.FORECAST_TOTAL_RETURN_NET,

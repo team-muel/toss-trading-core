@@ -8,10 +8,11 @@ import pytest
 from asset_management.domain.economics import (
     CurrencyBasis, EconomicValue, ReturnMetricStatus, ReturnSemanticType, ReturnUnit,
 )
-from asset_management.domain.errors import DataQualityError
+from asset_management.domain.errors import DataQualityError, InvariantViolation
 from asset_management.domain.scalars import Currency
 from asset_management.expectations import assess_model_relative_alpha
 from asset_management.governance import ModelDefinition, ModelRegistry, ModelScope, ModelStatus
+from tests.runtime_model_support import persisted_runtime_authorization
 
 
 D = Decimal
@@ -34,18 +35,22 @@ def authorization():
     registry.register(model)
     for status in (ModelStatus.VALIDATED, ModelStatus.APPROVED, ModelStatus.ACTIVE):
         registry.transition(model.key, status, effective_at=NOW, reason="test", evidence_ids=("evidence:test",))
-    return registry, registry.authorize(model.key, ModelScope.MODEL_RELATIVE_ALPHA, at=NOW)
+    repository, token = persisted_runtime_authorization(
+        registry, model_key=model.key, scope=ModelScope.MODEL_RELATIVE_ALPHA,
+        as_of=NOW, information_cutoff=NOW,
+    )
+    return registry, repository, token
 
 
 def test_assessment_shrinks_forecast_before_preserving_alpha_identity():
-    registry, token = authorization()
+    _, repository, token = authorization()
     assessment = assess_model_relative_alpha(
         net_forecast=metric(ReturnSemanticType.FORECAST_TOTAL_RETURN_NET, ".12"),
         pricing_baseline=metric(ReturnSemanticType.PRICING_BASELINE_RETURN, ".04", "CAPM@2"),
         combined_signal_forecast_id=FORECAST_ID, confidence=D(".5"), prior=D("0"),
         forecast_uncertainty=D(".001"), baseline_uncertainty=D(".001"),
         uncertainty_threshold=D(".02"), formula_version="model-alpha@1", model_key="MODEL_ALPHA@1",
-        as_of=NOW, model_registry=registry, authorization=token)
+        as_of=NOW, model_registry_evidence=repository, runtime_authorization=token)
     assert assessment.raw_alpha == D(".08")
     assert assessment.value.value == D(".04")
     assert assessment.shrinkage_amount == D(".04")
@@ -57,13 +62,13 @@ def test_assessment_shrinks_forecast_before_preserving_alpha_identity():
 
 
 def test_assessment_abstains_and_rejects_noncanonical_or_misaligned_inputs():
-    registry, token = authorization()
+    _, repository, token = authorization()
     arguments = dict(net_forecast=metric(ReturnSemanticType.FORECAST_TOTAL_RETURN_NET, ".041"),
         pricing_baseline=metric(ReturnSemanticType.PRICING_BASELINE_RETURN, ".04", "CAPM@2"),
         combined_signal_forecast_id=FORECAST_ID, confidence=D(1), prior=D(0),
         forecast_uncertainty=D(".01"), baseline_uncertainty=D(".01"),
         uncertainty_threshold=D(".005"), formula_version="model-alpha@1", model_key="MODEL_ALPHA@1",
-        as_of=NOW, model_registry=registry, authorization=token)
+        as_of=NOW, model_registry_evidence=repository, runtime_authorization=token)
     assessment = assess_model_relative_alpha(**arguments)
     assert assessment.abstain
     assert set(assessment.reason_codes) == {"MODEL_RELATIVE_ALPHA_INTERVAL_CROSSES_ZERO", "MODEL_RELATIVE_ALPHA_UNCERTAINTY_HIGH"}
@@ -73,3 +78,17 @@ def test_assessment_abstains_and_rejects_noncanonical_or_misaligned_inputs():
         assess_model_relative_alpha(**(arguments | {"pricing_baseline": EconomicValue(
             ReturnSemanticType.PRICING_BASELINE_RETURN, D(".04"), ReturnMetricStatus.AVAILABLE,
             Currency.KRW, CurrencyBasis.BASE, 252, ReturnUnit.TOTAL_RETURN, "formula@1", "CAPM@2")}))
+
+
+def test_assessment_rejects_deleted_persisted_review_evidence():
+    _, repository, token = authorization()
+    arguments = dict(net_forecast=metric(ReturnSemanticType.FORECAST_TOTAL_RETURN_NET, ".12"),
+        pricing_baseline=metric(ReturnSemanticType.PRICING_BASELINE_RETURN, ".04", "CAPM@2"),
+        combined_signal_forecast_id=FORECAST_ID, confidence=D(".5"), prior=D("0"),
+        forecast_uncertainty=D(".001"), baseline_uncertainty=D(".001"),
+        uncertainty_threshold=D(".02"), formula_version="model-alpha@1", model_key="MODEL_ALPHA@1",
+        as_of=NOW, model_registry_evidence=repository, runtime_authorization=token)
+    repository._conn.execute("DROP TRIGGER am_model_governance_review_evidence_no_delete")
+    repository._conn.execute("DELETE FROM am_model_governance_review_evidence")
+    with pytest.raises(InvariantViolation, match="MODEL_RUNTIME_EVIDENCE_INVALID"):
+        assess_model_relative_alpha(**arguments)

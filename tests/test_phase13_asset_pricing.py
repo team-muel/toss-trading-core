@@ -12,6 +12,7 @@ from asset_management.governance import ModelDefinition, ModelRegistry, ModelSco
 from asset_management.pricing import *
 from asset_management.pricing.factors import require_separate_timing_overlay
 from asset_management.quality.models import QualityStatus
+from runtime_model_support import persisted_runtime_authorization
 
 D = Decimal
 NOW = datetime(2026, 1, 2, tzinfo=timezone.utc)
@@ -24,10 +25,11 @@ def model_access(model_id):
     registry.register(model)
     for status in (ModelStatus.VALIDATED,ModelStatus.APPROVED,ModelStatus.ACTIVE):
         registry.transition(model.key,status,effective_at=NOW,reason="test promotion",evidence_ids=("test:evidence",))
-    return registry,registry.authorize(model.key,ModelScope.REQUIRED_RETURN,at=NOW)
+    return persisted_runtime_authorization(registry, model_key=model.key,
+        scope=ModelScope.REQUIRED_RETURN, as_of=NOW, information_cutoff=NOW)
 
-CAPM_REGISTRY,CAPM_AUTH=model_access("CAPM")
-MULTIFACTOR_REGISTRY,MULTIFACTOR_AUTH=model_access("MULTIFACTOR")
+CAPM_EVIDENCE,CAPM_AUTH=model_access("CAPM")
+MULTIFACTOR_EVIDENCE,MULTIFACTOR_AUTH=model_access("MULTIFACTOR")
 
 def _observations(values, *, manifest="a"*64):
     start = NOW - timedelta(days=len(values))
@@ -86,8 +88,8 @@ def test_manual_capm_and_output_is_not_an_order():
     beta = BetaEstimate(D("1.2"), D("1.2"), D("0.1"), 252, 252, D("0.8"), NOW, QualityStatus.VALID, D(1))
     result = capm_required_return(instrument_id="ETF", risk_free_rate=D("0.03"), beta=beta,
                                   market_risk_premium=D("0.05"), horizon=252, as_of=NOW,
-                                  validity=VALIDITY,model_registry=CAPM_REGISTRY,
-                                  authorization=CAPM_AUTH)
+                                  validity=VALIDITY,model_registry_evidence=CAPM_EVIDENCE,
+                                  runtime_authorization=CAPM_AUTH)
     assert result.required_return == D("0.09")
     assert result.model_key == "CAPM@1" and len(result.output_hash) == 64
     assert not ({"order", "side", "BUY", "SELL"} & set(result.payload()))
@@ -100,7 +102,7 @@ def test_pricing_output_hash_is_deterministic_and_bound_to_model_version():
     arguments = dict(
         instrument_id="ETF", risk_free_rate=D("0.03"), beta=beta,
         market_risk_premium=D("0.05"), horizon=252, as_of=NOW, validity=VALIDITY,
-        model_registry=CAPM_REGISTRY, authorization=CAPM_AUTH,
+        model_registry_evidence=CAPM_EVIDENCE, runtime_authorization=CAPM_AUTH,
     )
     first = capm_required_return(**arguments)
     second = capm_required_return(**arguments)
@@ -110,11 +112,11 @@ def test_pricing_output_hash_is_deterministic_and_bound_to_model_version():
 def test_capm_cannot_run_without_matching_registry_authorization():
     beta = BetaEstimate(D("1.2"), D("1.2"), D("0.1"), 252, 252, D("0.8"), NOW,
                         QualityStatus.VALID, D(1))
-    with pytest.raises(InvariantViolation, match="MODEL_AUTHORIZATION_MISSING"):
+    with pytest.raises(InvariantViolation, match="MODEL_RUNTIME_AUTHORIZATION_MISSING"):
         capm_required_return(
             instrument_id="ETF", risk_free_rate=D("0.03"), beta=beta,
             market_risk_premium=D("0.05"), horizon=252, as_of=NOW, validity=VALIDITY,
-            model_registry=CAPM_REGISTRY, authorization=None)
+            model_registry_evidence=CAPM_EVIDENCE, runtime_authorization=None)
 
 def test_beta_missing_fails_unstable_estimate_shrinks_and_duplicates_reject():
     with pytest.raises(DataQualityError): estimate_beta([D(".01")]*3, [D(".01")]*3, as_of=NOW)
@@ -144,11 +146,11 @@ def test_multifactor_is_pit_and_preserves_uncertainty():
     result = multifactor_required_return(instrument_id="ETF", risk_free_rate=D(".03"), loadings=loadings,
                                          premiums=_premiums(), horizon=252, as_of=NOW,
                                          information_cutoff=NOW, validity=VALIDITY,
-                                         model_registry=MULTIFACTOR_REGISTRY,
-                                         authorization=MULTIFACTOR_AUTH)
+                                         model_registry_evidence=MULTIFACTOR_EVIDENCE,
+                                         runtime_authorization=MULTIFACTOR_AUTH)
     assert result.required_return == D(".10") and result.estimation_uncertainty > 0
     future = _premiums(); future["VALUE"] = replace(future["VALUE"], available_at=NOW+timedelta(seconds=1))
-    with pytest.raises(DataQualityError): multifactor_required_return(instrument_id="ETF", risk_free_rate=D(".03"), loadings=loadings, premiums=future, horizon=252, as_of=NOW, information_cutoff=NOW, validity=VALIDITY, model_registry=MULTIFACTOR_REGISTRY, authorization=MULTIFACTOR_AUTH)
+    with pytest.raises(DataQualityError): multifactor_required_return(instrument_id="ETF", risk_free_rate=D(".03"), loadings=loadings, premiums=future, horizon=252, as_of=NOW, information_cutoff=NOW, validity=VALIDITY, model_registry_evidence=MULTIFACTOR_EVIDENCE, runtime_authorization=MULTIFACTOR_AUTH)
 
 def test_overlays_cannot_double_count_and_timing_stays_separate():
     with pytest.raises(DataQualityError): require_distinct_factor_roles(required_return_factors={"MKT"}, expected_return_overlay_factors={"MKT"})
