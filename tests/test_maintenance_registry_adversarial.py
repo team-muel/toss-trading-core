@@ -55,6 +55,7 @@ class MaintenanceAdversarialTests(unittest.TestCase):
             ("src/asset_management/domain/economics.py", {"AMA-139", "AMA-141", "AMA-143", "AMA-146"}),
             ("schemas/migrations/deleted.sql", {"AMA-136", "AMA-140", "AMA-141", "AMA-143", "AMA-144", "AMA-145"}),
             ("src/asset_management/execution/orders.py", {"AMA-140", "AMA-141", "AMA-145"}),
+            ("src/asset_management/orchestration/__init__.py", {"AMA-140", "AMA-141", "AMA-145"}),
             ("pyproject.toml", {"AMA-144", "AMA-145"}),
             ("src/asset_management/orchestration/research_bridge.py", {"AMA-136", "AMA-137", "AMA-138", "AMA-139", "AMA-145"}),
         )
