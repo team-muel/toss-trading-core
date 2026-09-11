@@ -9,6 +9,7 @@ from .accounting import MoneyTranslation
 
 class NavComponentKind(StrEnum):
     CASH = 'CASH'
+    UNSETTLED_CASH = 'UNSETTLED_CASH'
     SECURITIES = 'SECURITIES'
     SETTLEMENT_RECEIVABLE = 'SETTLEMENT_RECEIVABLE'
     SETTLEMENT_PAYABLE = 'SETTLEMENT_PAYABLE'
