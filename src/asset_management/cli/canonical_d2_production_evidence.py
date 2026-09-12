@@ -23,7 +23,6 @@ def _arguments() -> argparse.ArgumentParser:
     parser.add_argument("--immutable-store", type=Path, required=True,
                         help="existing immutable FRED/ALFRED object-store root")
     parser.add_argument("--runtime-run-id", required=True)
-    parser.add_argument("--risk-free-manifest-id", help="content-addressed FRED/ALFRED bronze manifest")
     parser.add_argument("--replay-only", action="store_true",
                         help="replay an existing canonical bundle; do not write a new one")
     return parser
@@ -43,24 +42,19 @@ def _result(value) -> dict[str, str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = _arguments().parse_args(argv)
-    if args.replay_only == bool(args.risk_free_manifest_id):
-        print(json.dumps({"status": "BLOCKED", "reason": "CANONICAL_D2_CLI_ARGUMENTS_INVALID"}, sort_keys=True))
-        return 2
     if not args.database.is_file():
         print(json.dumps({"status": "BLOCKED", "reason": "CANONICAL_D2_EVIDENCE_DATABASE_MISSING"}, sort_keys=True))
         return 2
     conn = sqlite3.connect(args.database)
     try:
-        migrated = conn.execute("SELECT 1 FROM schema_migration WHERE version=18").fetchone()
+        migrated = conn.execute("SELECT 1 FROM schema_migration WHERE version=19").fetchone()
         if migrated is None:
             raise ConfigurationError("CANONICAL_D2_EVIDENCE_SCHEMA_MISSING")
         repository = CanonicalD2ProductionEvidenceRepository(conn, SystemClock())
         store = ImmutableDatasetStore(args.immutable_store)
         value = (repository.replay(runtime_run_id=args.runtime_run_id, store=store)
                  if args.replay_only else repository.record(
-                     runtime_run_id=args.runtime_run_id,
-                     risk_free_manifest_id=args.risk_free_manifest_id,
-                     store=store))
+                     runtime_run_id=args.runtime_run_id, store=store))
     except (AssetManagementError, ValueError, sqlite3.DatabaseError) as exc:
         print(json.dumps({"status": "BLOCKED", "reason": str(exc)}, sort_keys=True))
         return 2
