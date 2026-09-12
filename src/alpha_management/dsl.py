@@ -117,7 +117,7 @@ OPERATOR_REGISTRY.update({
     name: _spec(name, (ValueType.PANEL, ValueType.INTEGER), Axis.TIME)
     for name in (
         "ts_delay", "ts_delta", "ts_sum", "ts_mean", "ts_stddev",
-        "ts_zscore", "ts_rank", "ts_decay_linear", "ts_max", "ts_min",
+        "ts_zscore", "ts_rank", "ts_decay_linear", "ts_max", "ts_min", "ts_return",
     )
 })
 OPERATOR_REGISTRY.update({
@@ -335,6 +335,8 @@ class RepositoryPanelResolver:
 
 
 def _copy_panel(value: Panel) -> PanelValue:
+    if any(isinstance(item, bool) for series in value.values() for item in series):
+        raise ExpressionError("boolean values are not numeric datafields")
     lengths = {len(series) for series in value.values()}
     if len(lengths) > 1:
         raise ExpressionError("panel series must have equal length")
