@@ -11,3 +11,4 @@ from .factors import FACTORS, multifactor_pricing_baseline_from_risk_free, multi
 from .models import BetaEstimate, FactorPremium, HORIZONS, PricingResult, RiskFreePoint
 from .reverse_dcf import DcfAssumptions, ReverseDcfResult, dcf_price, solve_implied
 from .risk_free import RiskFreeCurve, RiskFreeReturn, annual_to_horizon, require_risk_free_alignment
+from .fred_risk_free import FRED_USD_RISK_FREE_SERIES, materialize_usd_fred_risk_free_curve

@@ -259,6 +259,60 @@ class FactorRiskCalculationRepository:
             raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
         return assessment
 
+    def replay(self, factor_risk_calculation_id: str, *,
+               model_registry_evidence: RuntimeModelRegistryEvidenceRepository
+               ) -> PersistedFactorRiskAssessment:
+        """Replay a stored calculation without accepting a caller-built assessment.
+
+        Production consumers have only the immutable calculation identifier.  The
+        model key, runtime, estimator, observations, and assessment are all read
+        back from the evidence store, then recomputed.  This is intentionally a
+        separate entry point from :meth:`require`: callers cannot replace the
+        persisted assessment with an in-memory value while asking for replay.
+        """
+        if (not isinstance(factor_risk_calculation_id, str) or
+                _HASH.fullmatch(factor_risk_calculation_id) is None or
+                not isinstance(model_registry_evidence, RuntimeModelRegistryEvidenceRepository) or
+                model_registry_evidence._conn is not self._conn):
+            raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
+        row = self._conn.execute(
+            """SELECT runtime_run_id, input_lineage_json, estimator_payload_json,
+                      assessment_payload_json, content_hash
+               FROM am_factor_risk_calculation WHERE factor_risk_calculation_id=?""",
+            (factor_risk_calculation_id,),
+        ).fetchone()
+        if row is None or row[4] != factor_risk_calculation_id:
+            raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
+        try:
+            lineage = json.loads(str(row[1])); estimator = json.loads(str(row[2])); stored = json.loads(str(row[3]))
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED") from exc
+        if (not isinstance(lineage, Mapping) or not isinstance(estimator, Mapping) or
+                not isinstance(stored, Mapping) or
+                digest(canonical({"input_lineage": lineage, "estimator": estimator,
+                                  "assessment": stored})) != row[4]):
+            raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
+        context = self._context_from_lineage(lineage)
+        model_key = lineage.get("model_key")
+        if context.run_id != row[0] or not isinstance(model_key, str) or not model_key.strip():
+            raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
+        self._require_runtime(context)
+        authorization = model_registry_evidence.authorize(
+            context.run_id, model_key=model_key, scope=ModelScope.RISK_ESTIMATION)
+        self._require_model(model_registry_evidence, authorization, model_key, context)
+        estimator_evidence_id = lineage.get("estimator_evidence_id")
+        if not isinstance(estimator_evidence_id, str):
+            raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
+        if self._estimator_evidence(context, estimator_evidence_id, model_key) != estimator:
+            raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
+        panel = self._replay_panel(lineage, context)
+        assessment = self._assess(panel=panel, estimator=estimator,
+                                  currency_basis=CurrencyBasis(lineage["currency_basis"]), context=context)
+        if assessment.payload() != stored:
+            raise InvariantViolation("FACTOR_RISK_ESTIMATION_LINEAGE_UNVERIFIED")
+        return PersistedFactorRiskAssessment(
+            factor_risk_calculation_id, context.run_id, str(row[4]), assessment)
+
     def _require_runtime(self, context: AsOfContext) -> None:
         row = self._conn.execute(
             "SELECT as_of_utc, information_cutoff_utc, code_revision FROM am_runtime_run WHERE runtime_run_id=?",
