@@ -31,6 +31,9 @@ from .pricing_expectation_risk_integrity import (
 from .backtest_run_specification import (
     BacktestPeriod, BacktestRunEvent, BacktestRunRegistry, BacktestRunSpec, BacktestRunStatus,
 )
+from .canonical_production_evidence import (
+    CanonicalD2ProductionEvidence, CanonicalD2ProductionEvidenceRepository,
+)
 
 __all__ = [
     "REQUIRED_CHECKS", "AcceptanceDecision", "AccountTruthGateInput",
@@ -49,4 +52,5 @@ __all__ = [
     "PricingExpectationRiskIntegrityGateResult", "evaluate_pricing_expectation_risk_integrity_gate",
     "BacktestPeriod", "BacktestRunEvent", "BacktestRunRegistry", "BacktestRunSpec",
     "BacktestRunStatus",
+    "CanonicalD2ProductionEvidence", "CanonicalD2ProductionEvidenceRepository",
 ]

@@ -117,6 +117,8 @@ def test_persisted_raw_return_to_factor_risk_replays_deterministically():
     arguments = calculation_inputs(conn, evidence)
     persisted = evidence.calculate(context=context(), **arguments)
     assert evidence.require(persisted, model_registry_evidence=arguments["model_registry_evidence"], runtime_authorization=arguments["runtime_authorization"]) == persisted.assessment
+    assert evidence.replay(persisted.factor_risk_calculation_id,
+                           model_registry_evidence=arguments["model_registry_evidence"]) == persisted
     assert persisted.assessment.covariance
     assert conn.execute("SELECT COUNT(*) FROM am_factor_risk_calculation").fetchone()[0] == 1
 
