@@ -192,12 +192,6 @@ gcloud secrets add-iam-policy-binding "${CALIBRATION_SECRET}" \
   --member="serviceAccount:${SERVICE_ACCOUNT}" \
   --role="roles/secretmanager.secretAccessor" \
   --condition=None
-FOUNDATION_SERVICE_ACCOUNT="toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com"
-gcloud secrets add-iam-policy-binding "${CALIBRATION_SECRET}" \
-  --project="${PROJECT_ID}" \
-  --member="serviceAccount:${FOUNDATION_SERVICE_ACCOUNT}" \
-  --role="roles/secretmanager.secretVersionAdder" \
-  --condition=None
 METRIC_DIR="${WORK_DIR}/metrics"
 "${PYTHON_BIN}" scripts/render_research_log_metrics.py \
   --output-dir "${METRIC_DIR}"

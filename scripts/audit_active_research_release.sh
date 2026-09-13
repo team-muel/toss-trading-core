@@ -6,7 +6,6 @@ ROOT="${TOSS_RUNTIME_ROOT:-/home/seoje/toss-trading}"
 CURRENT="$(readlink -f "${ROOT}/current")"
 CURRENT_REVISION="$(basename "${CURRENT}")"
 RUNTIME="${RESEARCH_RUNTIME_ROOT:-${ROOT}/research-runtime}"
-REQUIRE_PAPER="${RESEARCH_AUDIT_REQUIRE_PAPER:-0}"
 
 if [[ ! "${CURRENT_REVISION}" =~ ^[0-9a-f]{40}$ ]]; then
   echo "research_release_audit=failed reason=invalid_current_release" >&2
@@ -60,23 +59,4 @@ if [[ "$(systemctl show toss-research-prune.service -p Result --value)" != "succ
   exit 1
 fi
 
-if [[ "${REQUIRE_PAPER}" == "1" ]]; then
-  paper_report="${ROOT}/paper-runtime/latest-report"
-  if [[ ! -f "${paper_report}" ]]; then
-    echo "research_release_audit=failed reason=paper_report_missing" >&2
-    exit 1
-  fi
-  python3 - "${paper_report}" "${CURRENT_REVISION}" <<'PY'
-import json
-import sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-if payload.get("source_code_revision") != sys.argv[2]:
-    raise SystemExit("paper report revision mismatch")
-if payload.get("live_orders_enabled") is not False:
-    raise SystemExit("paper report enabled live orders")
-if payload.get("reconciliation", {}).get("status") != "ok":
-    raise SystemExit("paper reconciliation is not ok")
-PY
-fi
-
-echo "research_release_audit=ok revision=${CURRENT_REVISION} paper_required=${REQUIRE_PAPER}"
+echo "research_release_audit=ok revision=${CURRENT_REVISION}"

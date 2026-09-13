@@ -41,18 +41,15 @@ The handoff back into portfolio decisions is intentionally not implemented in th
 
 | Concern | Owner | Compatibility boundary |
 | --- | --- | --- |
-| Alpha expressions, operators, simulation, metrics | `alpha_management` | `toss_trading.alpha` re-exports the canonical objects |
+| Alpha expressions, operators, simulation, metrics | `alpha_management` | No compatibility runtime is packaged |
 | Validated point-in-time alpha inputs | `asset_management.data/time/reference` | `alpha_management.PointInTimeDataSource` is read-only |
 | Operational research collection, backtests, reports | `toss_trading.research` | May consume canonical alpha outputs; it does not redefine alpha operators |
-| Legacy runtime signal proposal | `toss_trading.alpha.expression.to_signals` | Outer adapter only; proposals still pass risk and execution gates |
+| Research-to-decision proposal | Governed bridge (not implemented) | Proposals must pass canonical risk and execution gates |
 | Account, ledger, portfolio, risk, execution truth | `asset_management` | Legacy runtime migration adapters must not become new domain owners |
 
-`toss_trading.alpha.operators` and `toss_trading.alpha.metrics` contain no
-implementation. They are compatibility modules so existing imports continue to
-work while all behavior comes from `alpha_management`. Provider-specific legacy
-datafields remain isolated under `toss_trading.alpha.datafields`; they are not a
-second data-truth boundary and must be normalized through `asset_management`
-before new alpha-management research consumes them.
+`alpha_management` is the sole alpha-expression implementation. Provider data
+must be normalized through `asset_management` before alpha-management research
+consumes it; no compatibility datafield or execution adapter is packaged.
 
 ## Initial operator vocabulary
 
