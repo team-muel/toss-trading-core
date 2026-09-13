@@ -4,6 +4,11 @@
 buyback을 별도 합산하지 않는다. aggregate 모드는 명시적으로 선택한다. 최신 의미와
 호환성·잔여 작업은 [AMA-101 보정 문서](economic_semantics_remediation.md)를 따른다.
 
+AMA-150의 production component generation boundary and acceptance are fixed in
+[asset_class_forecast_generation.md](asset_class_forecast_generation.md). The
+current aggregation API alone does not satisfy that contract because it accepts
+caller-constructed components.
+
 정규 기대수익률은 pricing baseline과 별도이며, 개별주, 주식 ETF, 채권 ETF, 현금성
 자산, 원자재 ETF는 각각 고정된 component 계약을 사용한다. 다른 자산군의 component를
 섞으면 계산을 거부한다. 채권·현금·원자재 경로는 equity pricing model의 부재를 이유로
