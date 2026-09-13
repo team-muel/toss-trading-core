@@ -10,6 +10,7 @@ an allocation instruction, or an order authority.
 PIT input repository -> approved component model -> raw component estimate
   -> uncertainty/confidence + horizon/currency/compounding validation
   -> immutable input/model lineage -> ExpectedReturnComponent
+  -> GrossComponentForecast -> separately evidenced cost assembly
   -> ExpectedReturnEstimate -> governed downstream forecast consumer
 ```
 
@@ -33,9 +34,16 @@ returns an explicit unavailable result. It must not produce a zero component,
 fall back to a caller value, or emit an `ExpectedReturnComponent`.
 
 The generated result records the selected artifact IDs/hashes, repository
-selection identity, model/version, formula version, cutoff, and calculation
-hash. The output is immutable and replay re-selects the same approved input
-versions; it does not rediscover a newer value.
+selection identity, model/version, formula version, cutoff, raw/prior
+calibration inputs, availability time, economic exposure identity, and model
+authorization binding. The stable calculation ID is the SHA-256 hash of that
+entire canonical artifact. Replay and production consumption accept only this
+ID, reload the artifact and its exact observations, and recompute every
+component and aggregate; callers cannot provide context, authorization, or
+economic values to the replay boundary. The input
+manifest must belong to the exact runtime through its persisted ingestion
+lineage, and the component model must be active for `EXPECTED_RETURN` through
+the runtime's immutable model-registry snapshot.
 
 ## Asset-class component applicability
 
@@ -78,9 +86,10 @@ economic exposure cannot be counted twice.
    horizon/compounding conversion.
 4. A physical GLD input rejects roll yield; a futures-backed commodity permits
    it only with independent persisted roll evidence.
-5. The sum of generated components exactly reconciles to
-   `ExpectedReturnEstimate.gross_expected_return`; separately evidenced costs
-   are the only path to the net forecast.
+5. The sum of generated components exactly reconciles to a typed
+   `GrossComponentForecast`; separately evidenced costs are the only path to
+   an `ExpectedReturnEstimate.net_expected_return`. The component assembler
+   cannot synthesize zero costs or emit a net forecast.
 6. Mutation, cross-run mixing, post-cutoff selection, stale evidence, manual
    values, pricing-baseline substitution, alpha substitution, and component
    double-counting have negative tests.

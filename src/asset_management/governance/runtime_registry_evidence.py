@@ -64,6 +64,11 @@ class RuntimeModelRegistryEvidenceRepository:
         self._clock = clock
         self._conn.execute("PRAGMA foreign_keys=ON")
 
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """Identity of the append-only store that owns registry evidence."""
+        return self._conn
+
     def record_review_evidence(self, evidence_id: str, *, model_key: str,
                                from_status: ModelStatus, to_status: ModelStatus,
                                owner: str, evidence: Mapping[str, object]) -> str:
