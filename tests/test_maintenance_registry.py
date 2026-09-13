@@ -39,6 +39,11 @@ class MaintenanceRegistryTests(unittest.TestCase):
         result = check.classify(REGISTRY, ['config/toss_openapi_contract.json'])
         self.assertTrue({'AMA-135', 'AMA-136', 'AMA-143', 'AMA-145'} <= set(result['umbrellas']))
 
+    def test_kms_authority_preparation_cli_routes_to_required_review_surfaces(self):
+        result = check.classify(REGISTRY, ['src/asset_management/cli/registry_governance_authorization.py'])
+        self.assertTrue({'AMA-139', 'AMA-144', 'AMA-145'} <= set(result['umbrellas']))
+        self.assertTrue(result['cross_surface'])
+
     def test_unknown_path_is_not_silently_classified(self):
         result = check.classify(REGISTRY, ['new_package/unknown.py'])
         self.assertEqual(result['unmapped'], ['new_package/unknown.py'])
