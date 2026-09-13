@@ -101,7 +101,7 @@ investment policy -> account truth -> time truth -> data truth
 
 근거: `docs/toss_read_only.md`, `src/toss_trading/broker/toss.py`,
 `src/asset_management/broker/toss_read.py`, `src/asset_management/data/raw_store.py`,
-`tests/test_phase2_toss_read_only.py`, `tests/test_foundation_account_state.py`.
+`tests/test_phase2_toss_read_only.py`, canonical account-truth acceptance tests.
 
 판정: **완료**. 실운영 호출에는 Toss 자격증명과 허용 IP가 필요하지만 쓰기 권한은 없다.
 

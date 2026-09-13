@@ -6,7 +6,7 @@
 외부 데이터와 전략을 그 위의 의사결정 계층으로 분리한 구조는 유지합니다.
 다만 연구 기능의 폭보다 주문 안전성과 회계 완결성을 먼저 완성해야 합니다.
 
-현재 저장소는 **read-only Foundation 및 research/paper 단계**입니다.
+현재 저장소는 **canonical asset-management 및 upstream research 단계**입니다.
 `live_trading_enabled`와 모든 전략별 `live_orders_enabled`는 계속 `false`이며,
 아래 증거가 모두 쌓여도 운영자의 별도 검토와 명시적 승인 없이 live로
 전환하지 않습니다.
@@ -67,14 +67,14 @@ Toss API가 더 넓은 상품을 기술적으로 지원하는 것과 이 시스�
 - FRED/ALFRED는 series별 재배포·보관·표시 의무를 검토하기 전까지 비활성화합니다.
 - Tiingo는 내부 사용 약관 승인 후 활성화됐으며 원본·파생 데이터를 외부에
   재배포하지 않습니다.
-- 현재 공유 VM 연구 런타임은 Toss 교차검증 때문에 Foundation client secret을
-  사용합니다. 목표 구조에서는 별도 research client secret만 허용합니다.
+- Legacy Foundation secrets and a shared VM identity are not an approved
+  research or production boundary. The retired runtime is not a supported
+  deployment path.
 - GCS 런타임은 `objectCreator`만 가지며 run-id 경로에 새 객체만 씁니다.
   최신 상태는 덮어쓰는 GCS 객체가 아니라 BigQuery view와 로컬 symlink로 봅니다.
-- 현재 Foundation과 research가 같은 VM service account를 공유하므로 완전한
-  secret 격리는 아닙니다. `docs/27_p0_identity_and_holdout_remediation.md`의
-  별도 VM/service account 전환과 7 daily + 1 weekly 관찰을 완료하기 전에는
-  이 게이트가 통과되지 않습니다.
+- A retained research process must have an identity limited to its canonical
+  upstream data role; it cannot read broker execution secrets or establish
+  accounting truth. Without that boundary, the corresponding gate fails closed.
 - GCS retention lock은 되돌릴 수 있으므로 자동 적용하지 않습니다. 보존기간과
   규제 요구를 운영자가 확정한 뒤 별도 change로 적용합니다.
 

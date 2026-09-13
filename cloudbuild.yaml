@@ -16,7 +16,6 @@ steps:
         python -m build --wheel
         shellcheck \
           scripts/load_gcp_secrets.sh \
-          scripts/run_foundation_gcp.sh \
           scripts/run_research_automation_gcp.sh \
           scripts/provision_research_automation_gcp.sh \
           scripts/install_research_automation_vm.sh \

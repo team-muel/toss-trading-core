@@ -379,8 +379,8 @@ class ResearchAutomationTest(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("toss-foundation.service", installer)
         self.assertNotIn("toss-foundation.timer", installer)
-        self.assertIn("toss-paper-operation.service", installer)
-        self.assertIn("toss-paper-operation.timer", installer)
+        self.assertNotIn("toss-paper-operation.service", installer)
+        self.assertNotIn("toss-paper-operation.timer", installer)
 
         research_service = Path(
             "deploy/systemd/toss-research-automation@.service"
@@ -393,6 +393,12 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertNotIn(":/snap/bin:", research_service)
         self.assertNotIn("TOSS_ACCOUNT_SEQ_SECRET", research_service)
         self.assertNotIn("TOSS_BROKER_BASE_URL_SECRET", research_service)
+
+        research_agent = Path("deploy/ops-agent/toss-research.yaml").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("paper-runtime", research_agent)
+        self.assertNotIn("toss_paper", research_agent)
 
         provisioner = Path(
             "scripts/provision_research_automation_gcp.sh"
@@ -412,6 +418,9 @@ class ResearchAutomationTest(unittest.TestCase):
         )
         self.assertIn("apt-get install", cloudbuild)
         self.assertIn("shellcheck", cloudbuild)
+        self.assertNotIn("run_foundation_gcp.sh", cloudbuild)
+        cloudbuild_research = Path("cloudbuild.research.yaml").read_text(encoding="utf-8")
+        self.assertNotIn("run_foundation_gcp.sh", cloudbuild_research)
         self.assertIn("id: upload-wheel", cloudbuild)
         self.assertIn("gcloud auth print-access-token", cloudbuild)
         self.assertIn("storage.googleapis.com/upload", cloudbuild)
@@ -435,6 +444,9 @@ class ResearchAutomationTest(unittest.TestCase):
         self.assertIn("CLOUD_BUILD_SOURCE_BUCKET", provisioner)
         self.assertIn("roles/storage.objectViewer", provisioner)
         self.assertIn("BuildArtifactsPrefix", provisioner)
+        self.assertIn("research provisioning refuses the Foundation service account", provisioner)
+        self.assertNotIn("FOUNDATION_SERVICE_ACCOUNT", provisioner)
+        self.assertNotIn("secretVersionAdder", provisioner)
         self.assertIn(
             "objects/builds/",
             provisioner,

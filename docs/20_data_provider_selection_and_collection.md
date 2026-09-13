@@ -143,9 +143,9 @@ python -m toss_trading.cli.research_validate_bars `
 
 ## 2026-07-24 실제 수집 결과
 
-승인된 고정 IP VM에서 운영 서비스와 분리된 임시 경로를 사용했다.
-`toss-foundation.timer`, 현재 release symlink와 Cloud Monitoring 경보는 변경하지
-않았다.
+승인된 고정 IP VM에서 운영 서비스와 분리된 임시 경로를 사용했다. 당시의
+legacy Foundation service는 이 수집으로 변경하지 않았으며, 그 service definition은
+현재 repository에서 제거되었다.
 
 - 요청 universe: 15개 ETF
 - 수집 성공: 14개
