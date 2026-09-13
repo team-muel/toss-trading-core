@@ -240,7 +240,7 @@ def _require_authorization_evidence_binding(*, authority_id: str, payload: objec
         raise DataQualityError("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED")
     binding = matches[0].authorization_evidence
     if binding is None:
-        return  # Isolated test authorities have no production evidence binding.
+        raise DataQualityError("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED")
     if not isinstance(binding, RegistryAuthorizationEvidenceBinding):
         raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_INVALID")
     try:
