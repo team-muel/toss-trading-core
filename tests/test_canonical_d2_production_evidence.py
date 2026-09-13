@@ -394,16 +394,21 @@ def test_self_signed_attestor_registry_is_not_a_trust_root():
             conn=conn, runtime_run_id="forged-run", cutoff=now)
 
 
-def test_registered_kms_public_material_cannot_authorize_without_effective_history():
-    """The real v1 public key is code-bound but deliberately inactive until owner evidence arrives."""
+def test_registered_kms_public_material_is_bound_to_owner_signed_authorization_evidence():
+    """The real v1 record is active only with its immutable signed evidence binding."""
     record = attestation_module._REGISTRY_GOVERNANCE_AUTHORITY_HISTORY[0]
     assert record.kms_key_version_resource.endswith("cryptoKeyVersions/1")
     assert record.signing_algorithm == "EC_SIGN_ED25519"
     assert record.public_key_fingerprint_sha256 == "e49ea0d6ae429017125ecdb2cae298bf5d82ae5d1b6a565b9a95d4ab6bc71084"
-    now = datetime(2026, 9, 13, tzinfo=timezone.utc)
-    with pytest.raises(DataQualityError, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED"):
-        attestation_module._select_registry_authority(
-            authority_id=record.authority_id, published_at=now, cutoff=now)
+    now = datetime(2026, 9, 13, 7, tzinfo=timezone.utc)
+    assert record.effective_from_utc == "2026-09-13T06:18:00+00:00"
+    assert record.effective_to_utc is None
+    assert record.authorization_evidence is not None
+    assert record.authorization_evidence.attestor_id == "muel-production-evidence-attestor-v1"
+    assert record.authorization_evidence.verification_evidence_sha256 == (
+        "d91666332bf144f11d9725c8d533f105080619d352c3b05440484a31be1072a6")
+    assert attestation_module._select_registry_authority(
+        authority_id=record.authority_id, published_at=now, cutoff=now)
 
 
 def test_registry_governance_authority_history_rejects_ambiguous_revoked_and_post_cutoff_records(monkeypatch):
