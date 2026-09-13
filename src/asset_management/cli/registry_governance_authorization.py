@@ -70,6 +70,28 @@ def _write_once(path: Path, body: bytes) -> None:
     path.write_bytes(body)
 
 
+def _base64_conversion_script(*, binary_signature_path: Path,
+                              base64_signature_path: Path) -> bytes:
+    """Return an owner-run conversion script for Cloud KMS raw signature bytes."""
+    return f'''"""Encode the owner-produced raw Cloud KMS signature as RFC4648 Base64."""
+from base64 import b64encode
+from pathlib import Path
+
+source = Path({str(binary_signature_path)!r})
+destination = Path({str(base64_signature_path)!r})
+if not source.is_file():
+    raise FileNotFoundError(f"missing raw Cloud KMS signature: {{source}}")
+if destination.exists():
+    raise FileExistsError(f"refusing to overwrite Base64 signature: {{destination}}")
+destination.write_text(b64encode(source.read_bytes()).decode("ascii") + "\\n", encoding="ascii", newline="\\n")
+'''.encode("utf-8")
+
+
+def _command_path(path: Path) -> str:
+    """Quote local paths in the owner-run command file."""
+    return f'"{path}"'
+
+
 def prepare(*, registry_path: Path, output_dir: Path, authority_id: str,
             effective_from: str, published_at: str) -> dict[str, str]:
     """Write exact canonical authorization bytes; no Cloud KMS call is made."""
@@ -91,11 +113,19 @@ def prepare(*, registry_path: Path, output_dir: Path, authority_id: str,
     _write_once(output_dir / "registry_authorization.payload.json", authorization_bytes)
     _write_once(output_dir / "authority_activation_candidate.json", canonical(candidate))
     _write_once(output_dir / "registry_authorization.sha256", (digest(authorization_bytes) + "\n").encode())
+    binary_signature_path = output_dir / "registry_authorization.signature.bin"
+    base64_signature_path = output_dir / "registry_authorization.signature.base64"
+    converter_path = output_dir / "ENCODE_SIGNATURE_BASE64.py"
+    _write_once(converter_path, _base64_conversion_script(
+        binary_signature_path=binary_signature_path,
+        base64_signature_path=base64_signature_path))
     command = (
+        "# Owner-only: Cloud KMS writes raw signature bytes. The verifier consumes only the Base64 output.\n"
         "gcloud kms asymmetric-sign --project=toss-trading-core-lab-508411 --location=global "
         "--keyring=toss-governance --key=canonical-governance-authority --version=1 "
-        f"--input-file={output_dir / 'registry_authorization.payload.json'} "
-        f"--signature-file={output_dir / 'registry_authorization.signature.base64'}\n"
+        f"--input-file={_command_path(output_dir / 'registry_authorization.payload.json')} "
+        f"--signature-file={_command_path(binary_signature_path)}\n"
+        f"python {_command_path(converter_path)}\n"
     )
     _write_once(output_dir / "SIGN_WITH_USER_OWNED_KMS.txt", command.encode())
     return {
@@ -104,6 +134,8 @@ def prepare(*, registry_path: Path, output_dir: Path, authority_id: str,
         "registry_hash": snapshot_id,
         "snapshot_id": snapshot_id,
         "authorization_payload_sha256": digest(authorization_bytes),
+        "binary_signature_path": str(binary_signature_path),
+        "base64_signature_path": str(base64_signature_path),
     }
 
 
