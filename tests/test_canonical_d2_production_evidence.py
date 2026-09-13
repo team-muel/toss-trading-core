@@ -1,6 +1,7 @@
 from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 import json
 from pathlib import Path
 import sqlite3
@@ -41,9 +42,14 @@ D = Decimal
 def _attestor(monkeypatch, conn, bound_at):
     authority_id = "test-registry-governance"
     authority_key = Ed25519PrivateKey.generate()
-    monkeypatch.setattr(attestation_module, "_TRUSTED_REGISTRY_AUTHORITIES", {
-        authority_id: authority_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw),
-    })
+    authority_der = authority_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (
+        attestation_module.RegistryGovernanceAuthority(
+            authority_id=authority_id, kms_key_version_resource=authority_id,
+            signing_algorithm="EC_SIGN_ED25519", public_key_der_spki_base64=b64encode(authority_der).decode(),
+            public_key_fingerprint_sha256=sha256(authority_der).hexdigest(),
+            effective_from_utc="2020-01-01T00:00:00+00:00", effective_to_utc=None),
+    ))
     private_key = Ed25519PrivateKey.generate()
     payload = {"schema_version": "canonical-evidence-attestor-registry@1", "attestors": [{
         "attestor_id": "test-attestor", "algorithm": "ed25519",
@@ -383,9 +389,64 @@ def test_self_signed_attestor_registry_is_not_a_trust_root():
                "bound_at": now.isoformat()}
     conn.execute("INSERT INTO am_runtime_evidence_attestor_registry VALUES (?, ?, ?, ?)",
                  ("forged-run", snapshot_id, now.isoformat(), digest(canonical(binding))))
-    with pytest.raises(DataQualityError, match="CANONICAL_D2_ATTESTOR_REGISTRY_UNTRUSTED"):
+    with pytest.raises(DataQualityError, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED"):
         attestation_module.require_runtime_attestor_registry(
             conn=conn, runtime_run_id="forged-run", cutoff=now)
+
+
+def test_registered_kms_public_material_cannot_authorize_without_effective_history():
+    """The real v1 public key is code-bound but deliberately inactive until owner evidence arrives."""
+    record = attestation_module._REGISTRY_GOVERNANCE_AUTHORITY_HISTORY[0]
+    assert record.kms_key_version_resource.endswith("cryptoKeyVersions/1")
+    assert record.signing_algorithm == "EC_SIGN_ED25519"
+    assert record.public_key_fingerprint_sha256 == "e49ea0d6ae429017125ecdb2cae298bf5d82ae5d1b6a565b9a95d4ab6bc71084"
+    now = datetime(2026, 9, 13, tzinfo=timezone.utc)
+    with pytest.raises(DataQualityError, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED"):
+        attestation_module._select_registry_authority(
+            authority_id=record.authority_id, published_at=now, cutoff=now)
+
+
+def test_registry_governance_authority_history_rejects_ambiguous_revoked_and_post_cutoff_records(monkeypatch):
+    now = datetime(2026, 9, 13, tzinfo=timezone.utc)
+    key = Ed25519PrivateKey.generate()
+    der = key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+
+    def record(version, *, revoked_at=None, fingerprint=None):
+        resource = f"projects/test/locations/global/keyRings/ring/cryptoKeys/key/cryptoKeyVersions/{version}"
+        return attestation_module.RegistryGovernanceAuthority(
+            authority_id=resource, kms_key_version_resource=resource, signing_algorithm="EC_SIGN_ED25519",
+            public_key_der_spki_base64=b64encode(der).decode(),
+            public_key_fingerprint_sha256=sha256(der).hexdigest() if fingerprint is None else fingerprint,
+            effective_from_utc="2026-01-01T00:00:00+00:00", effective_to_utc=None,
+            revoked_at_utc=revoked_at)
+
+    active = record("1")
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (active,))
+    assert attestation_module._select_registry_authority(
+        authority_id=active.authority_id, published_at=now, cutoff=now) == key.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw)
+
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (active, record("2")))
+    with pytest.raises(DataQualityError, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_AMBIGUOUS"):
+        attestation_module._select_registry_authority(
+            authority_id=active.authority_id, published_at=now, cutoff=now)
+
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (
+        record("1", revoked_at=now.isoformat()),))
+    with pytest.raises(DataQualityError, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED"):
+        attestation_module._select_registry_authority(
+            authority_id=active.authority_id, published_at=now, cutoff=now)
+
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (
+        record("1", fingerprint="0" * 64),))
+    with pytest.raises(InvariantViolation, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID"):
+        attestation_module._select_registry_authority(
+            authority_id=active.authority_id, published_at=now, cutoff=now)
+
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (active,))
+    with pytest.raises(InvariantViolation, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID"):
+        attestation_module._select_registry_authority(
+            authority_id=active.authority_id, published_at=now + timedelta(seconds=1), cutoff=now)
 
 
 def test_canonical_evidence_rejects_a_stale_fred_curve_despite_valid_raw_provenance(monkeypatch, tmp_path):
