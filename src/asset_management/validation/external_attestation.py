@@ -5,12 +5,14 @@ from base64 import b64decode
 from binascii import Error as Base64Error
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
 import json
 import sqlite3
 from typing import Mapping
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_der_public_key
 
 from asset_management.data.immutable import canonical, digest
 from asset_management.data.raw_store import RawApiResponse
@@ -21,11 +23,46 @@ _SCHEMA = "canonical-evidence-attestor-registry@1"
 _REGISTRY_AUTHORIZATION_SCHEMA = "canonical-evidence-attestor-registry-authorization@1"
 _PAYLOAD_SCHEMA = "external-evidence-attestation@1"
 
-# This is deliberately not deployment configuration.  Adding or rotating a
-# registry authority is a reviewed code change and is bound by code_revision.
-# Until an operational governance authority is approved here, canonical runs
-# fail closed instead of trusting a caller-provided registry or key.
-_TRUSTED_REGISTRY_AUTHORITIES: Mapping[str, bytes] = {}
+@dataclass(frozen=True, slots=True)
+class RegistryGovernanceAuthority:
+    """A reviewed, version-specific Cloud KMS registry-signing authority.
+
+    This is deliberately code-bound rather than deployment configuration.  A
+    rotation appends another immutable record in a reviewed change; it never
+    replaces historical material.  A record with no effective interval is only
+    registered public material, not an authority a runtime may use.
+    """
+
+    authority_id: str
+    kms_key_version_resource: str
+    signing_algorithm: str
+    public_key_der_spki_base64: str
+    public_key_fingerprint_sha256: str
+    effective_from_utc: str | None
+    effective_to_utc: str | None
+    revoked_at_utc: str | None = None
+
+
+# This public material was retrieved from the user-created Cloud KMS key
+# version.  Its authority interval and registry authorization deliberately
+# remain absent until independently supplied by the owner, so it cannot make a
+# canonical run trust a registry by itself.  There is no private key, signing
+# capability, or authority creation path in this repository or CI.
+_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY: tuple[RegistryGovernanceAuthority, ...] = (
+    RegistryGovernanceAuthority(
+        authority_id=("projects/toss-trading-core-lab-508411/locations/global/keyRings/"
+                      "toss-governance/cryptoKeys/canonical-governance-authority/"
+                      "cryptoKeyVersions/1"),
+        kms_key_version_resource=("projects/toss-trading-core-lab-508411/locations/global/keyRings/"
+                                  "toss-governance/cryptoKeys/canonical-governance-authority/"
+                                  "cryptoKeyVersions/1"),
+        signing_algorithm="EC_SIGN_ED25519",
+        public_key_der_spki_base64="MCowBQYDK2VwAyEAvqj5Z/4W4MJN/qVPs+qv+1mHdP4WaNmRyeRMvsX9lO0=",
+        public_key_fingerprint_sha256="e49ea0d6ae429017125ecdb2cae298bf5d82ae5d1b6a565b9a95d4ab6bc71084",
+        effective_from_utc=None,
+        effective_to_utc=None,
+    ),
+)
 
 
 def _utc(value: object) -> datetime:
@@ -35,6 +72,92 @@ def _utc(value: object) -> datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError
     return parsed.astimezone(timezone.utc)
+
+
+def _optional_utc(value: object) -> datetime | None:
+    return None if value is None else _utc(value)
+
+
+def _authority_public_key(authority: RegistryGovernanceAuthority) -> bytes:
+    """Return only a fingerprint-verified Ed25519 public key, never key material from a caller."""
+    if (not isinstance(authority.authority_id, str) or not authority.authority_id.strip() or
+            authority.authority_id != authority.kms_key_version_resource or
+            authority.signing_algorithm != "EC_SIGN_ED25519" or
+            not isinstance(authority.public_key_fingerprint_sha256, str) or
+            len(authority.public_key_fingerprint_sha256) != 64 or
+            any(char not in "0123456789abcdef" for char in authority.public_key_fingerprint_sha256)):
+        raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+    try:
+        der = b64decode(authority.public_key_der_spki_base64, validate=True)
+        key = load_der_public_key(der)
+        if not isinstance(key, Ed25519PublicKey):
+            raise ValueError
+        raw = key.public_bytes(Encoding.Raw, PublicFormat.Raw)
+    except (TypeError, ValueError, Base64Error) as exc:
+        raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID") from exc
+    if sha256(der).hexdigest() != authority.public_key_fingerprint_sha256:
+        raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+    return raw
+
+
+def _select_registry_authority(*, authority_id: str, published_at: datetime,
+                               cutoff: datetime) -> bytes:
+    """Select exactly one immutable authority valid at publication and runtime cutoff."""
+    if (not isinstance(authority_id, str) or not authority_id.strip() or
+            published_at.tzinfo is None or published_at.utcoffset() is None or
+            cutoff.tzinfo is None or cutoff.utcoffset() is None):
+        raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+    if published_at.astimezone(timezone.utc) > cutoff.astimezone(timezone.utc):
+        raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+    if not isinstance(_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY, tuple):
+        raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+    published_candidates: list[tuple[RegistryGovernanceAuthority, bytes]] = []
+    cutoff_candidates: list[tuple[RegistryGovernanceAuthority, bytes]] = []
+    seen_resources: set[str] = set()
+    for record in _REGISTRY_GOVERNANCE_AUTHORITY_HISTORY:
+        if not isinstance(record, RegistryGovernanceAuthority):
+            raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+        key = _authority_public_key(record)
+        try:
+            effective_from = _optional_utc(record.effective_from_utc)
+            effective_to = _optional_utc(record.effective_to_utc)
+            revoked_at = _optional_utc(record.revoked_at_utc)
+        except ValueError as exc:
+            raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID") from exc
+        if record.kms_key_version_resource in seen_resources:
+            raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+        seen_resources.add(record.kms_key_version_resource)
+        if effective_from is None:
+            if effective_to is not None or revoked_at is not None:
+                raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+            continue
+        if ((effective_to is not None and effective_to <= effective_from) or
+                (revoked_at is not None and revoked_at <= effective_from)):
+            raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_INVALID")
+
+        def active_at(instant: datetime) -> bool:
+            return (instant >= effective_from and
+                    (effective_to is None or instant < effective_to) and
+                    (revoked_at is None or instant < revoked_at))
+
+        if active_at(published_at.astimezone(timezone.utc)):
+            published_candidates.append((record, key))
+        if active_at(cutoff.astimezone(timezone.utc)):
+            cutoff_candidates.append((record, key))
+
+    def require_single(candidates: list[tuple[RegistryGovernanceAuthority, bytes]]) -> tuple[RegistryGovernanceAuthority, bytes]:
+        if len(candidates) == 1:
+            return candidates[0]
+        reason = ("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_AMBIGUOUS"
+                  if len(candidates) > 1 else "CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED")
+        raise DataQualityError(reason)
+
+    published_record, _ = require_single(published_candidates)
+    cutoff_record, key = require_single(cutoff_candidates)
+    if (published_record.kms_key_version_resource != cutoff_record.kms_key_version_resource or
+            cutoff_record.authority_id != authority_id):
+        raise DataQualityError("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED")
+    return key
 
 
 def _registry(payload: object) -> dict[str, tuple[bytes, datetime, datetime | None]]:
@@ -136,9 +259,8 @@ def require_runtime_attestor_registry(*, conn: sqlite3.Connection, runtime_run_i
                 "bound_at": bound.isoformat(),
             }))):
         raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_INVALID")
-    authority_key = _TRUSTED_REGISTRY_AUTHORITIES.get(str(authority_id))
-    if authority_key is None:
-        raise DataQualityError("CANONICAL_D2_ATTESTOR_REGISTRY_UNTRUSTED")
+    authority_key = _select_registry_authority(
+        authority_id=str(authority_id), published_at=published, cutoff=cutoff_time)
     try:
         Ed25519PublicKey.from_public_bytes(authority_key).verify(signature, canonical(authorization_payload))
     except (ValueError, InvalidSignature) as exc:
