@@ -1,4 +1,5 @@
 from base64 import b64encode
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
@@ -43,13 +44,11 @@ def _attestor(monkeypatch, conn, bound_at):
     authority_id = "test-registry-governance"
     authority_key = Ed25519PrivateKey.generate()
     authority_der = authority_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
-    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (
-        attestation_module.RegistryGovernanceAuthority(
-            authority_id=authority_id, kms_key_version_resource=authority_id,
-            signing_algorithm="EC_SIGN_ED25519", public_key_der_spki_base64=b64encode(authority_der).decode(),
-            public_key_fingerprint_sha256=sha256(authority_der).hexdigest(),
-            effective_from_utc="2020-01-01T00:00:00+00:00", effective_to_utc=None),
-    ))
+    authority = attestation_module.RegistryGovernanceAuthority(
+        authority_id=authority_id, kms_key_version_resource=authority_id,
+        signing_algorithm="EC_SIGN_ED25519", public_key_der_spki_base64=b64encode(authority_der).decode(),
+        public_key_fingerprint_sha256=sha256(authority_der).hexdigest(),
+        effective_from_utc="2020-01-01T00:00:00+00:00", effective_to_utc=None)
     private_key = Ed25519PrivateKey.generate()
     payload = {"schema_version": "canonical-evidence-attestor-registry@1", "attestors": [{
         "attestor_id": "test-attestor", "algorithm": "ed25519",
@@ -60,9 +59,21 @@ def _attestor(monkeypatch, conn, bound_at):
     authorization = attestation_module.registry_authorization_payload(
         authority_id=authority_id, snapshot_id=snapshot_id, registry_hash=snapshot_id,
         published_at=bound_at)
-    authority_signature = b64encode(authority_key.sign(canonical(authorization))).decode()
+    authority_signature_bytes = authority_key.sign(canonical(authorization))
+    authority_signature = b64encode(authority_signature_bytes).decode()
     authorization_hash = digest(canonical({"payload": authorization,
                                            "signature_base64": authority_signature}))
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (
+        replace(authority, authorization_evidence=attestation_module.RegistryAuthorizationEvidenceBinding(
+            snapshot_id=snapshot_id, registry_hash=snapshot_id,
+            authorization_payload_sha256=digest(canonical(authorization)),
+            signature_sha256=sha256(authority_signature_bytes).hexdigest(),
+            verification_evidence_sha256=digest(canonical({"test": "verification-evidence"})),
+            published_at_utc=bound_at.isoformat(), attestor_id="test-attestor",
+            attestor_public_key_base64=payload["attestors"][0]["public_key_base64"],
+            attestor_effective_from_utc="2020-01-01T00:00:00+00:00",
+            attestor_effective_to_utc=None)),
+    ))
     snapshot_hash = digest(canonical({"registry": payload, "published_at": bound_at.isoformat(),
                                       "registry_authorization_hash": authorization_hash}))
     conn.execute("INSERT INTO am_evidence_attestor_registry_snapshot VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -394,16 +405,33 @@ def test_self_signed_attestor_registry_is_not_a_trust_root():
             conn=conn, runtime_run_id="forged-run", cutoff=now)
 
 
-def test_registered_kms_public_material_cannot_authorize_without_effective_history():
-    """The real v1 public key is code-bound but deliberately inactive until owner evidence arrives."""
+def test_registered_kms_public_material_is_bound_to_owner_signed_authorization_evidence():
+    """The real v1 record is active only with its immutable signed evidence binding."""
     record = attestation_module._REGISTRY_GOVERNANCE_AUTHORITY_HISTORY[0]
     assert record.kms_key_version_resource.endswith("cryptoKeyVersions/1")
     assert record.signing_algorithm == "EC_SIGN_ED25519"
     assert record.public_key_fingerprint_sha256 == "e49ea0d6ae429017125ecdb2cae298bf5d82ae5d1b6a565b9a95d4ab6bc71084"
-    now = datetime(2026, 9, 13, tzinfo=timezone.utc)
+    now = datetime(2026, 9, 13, 7, tzinfo=timezone.utc)
+    assert record.effective_from_utc == "2026-09-13T06:18:00+00:00"
+    assert record.effective_to_utc is None
+    assert record.authorization_evidence is not None
+    assert record.authorization_evidence.attestor_id == "muel-production-evidence-attestor-v1"
+    assert record.authorization_evidence.verification_evidence_sha256 == (
+        "d91666332bf144f11d9725c8d533f105080619d352c3b05440484a31be1072a6")
+    assert attestation_module._select_registry_authority(
+        authority_id=record.authority_id, published_at=now, cutoff=now)
+
+
+def test_authority_without_immutable_authorization_evidence_fails_closed(monkeypatch):
+    """An active KMS public key is not itself registry-authorization evidence."""
+    record = attestation_module._REGISTRY_GOVERNANCE_AUTHORITY_HISTORY[0]
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (
+        replace(record, authorization_evidence=None),))
     with pytest.raises(DataQualityError, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED"):
-        attestation_module._select_registry_authority(
-            authority_id=record.authority_id, published_at=now, cutoff=now)
+        attestation_module._require_authorization_evidence_binding(
+            authority_id=record.authority_id, payload={}, snapshot_id="0" * 64,
+            registry_hash="0" * 64, authorization_payload={}, signature=b"",
+            published_at=datetime(2026, 9, 13, 7, tzinfo=timezone.utc))
 
 
 def test_registry_governance_authority_history_rejects_ambiguous_revoked_and_post_cutoff_records(monkeypatch):

@@ -23,6 +23,22 @@ _SCHEMA = "canonical-evidence-attestor-registry@1"
 _REGISTRY_AUTHORIZATION_SCHEMA = "canonical-evidence-attestor-registry-authorization@1"
 _PAYLOAD_SCHEMA = "external-evidence-attestation@1"
 
+
+@dataclass(frozen=True, slots=True)
+class RegistryAuthorizationEvidenceBinding:
+    """Code-reviewed immutable authorization and attestor identity for one KMS version."""
+
+    snapshot_id: str
+    registry_hash: str
+    authorization_payload_sha256: str
+    signature_sha256: str
+    verification_evidence_sha256: str
+    published_at_utc: str
+    attestor_id: str
+    attestor_public_key_base64: str
+    attestor_effective_from_utc: str
+    attestor_effective_to_utc: str | None
+
 @dataclass(frozen=True, slots=True)
 class RegistryGovernanceAuthority:
     """A reviewed, version-specific Cloud KMS registry-signing authority.
@@ -41,13 +57,14 @@ class RegistryGovernanceAuthority:
     effective_from_utc: str | None
     effective_to_utc: str | None
     revoked_at_utc: str | None = None
+    authorization_evidence: RegistryAuthorizationEvidenceBinding | None = None
 
 
 # This public material was retrieved from the user-created Cloud KMS key
-# version.  Its authority interval and registry authorization deliberately
-# remain absent until independently supplied by the owner, so it cannot make a
-# canonical run trust a registry by itself.  There is no private key, signing
-# capability, or authority creation path in this repository or CI.
+# version. Its effective interval, approved attestor identity, signed registry
+# authorization, and independent verification evidence are code-bound below.
+# There is no private key, signing capability, or authority creation path in
+# this repository or CI.
 _REGISTRY_GOVERNANCE_AUTHORITY_HISTORY: tuple[RegistryGovernanceAuthority, ...] = (
     RegistryGovernanceAuthority(
         authority_id=("projects/toss-trading-core-lab-508411/locations/global/keyRings/"
@@ -59,8 +76,20 @@ _REGISTRY_GOVERNANCE_AUTHORITY_HISTORY: tuple[RegistryGovernanceAuthority, ...] 
         signing_algorithm="EC_SIGN_ED25519",
         public_key_der_spki_base64="MCowBQYDK2VwAyEAvqj5Z/4W4MJN/qVPs+qv+1mHdP4WaNmRyeRMvsX9lO0=",
         public_key_fingerprint_sha256="e49ea0d6ae429017125ecdb2cae298bf5d82ae5d1b6a565b9a95d4ab6bc71084",
-        effective_from_utc=None,
+        effective_from_utc="2026-09-13T06:18:00+00:00",
         effective_to_utc=None,
+        authorization_evidence=RegistryAuthorizationEvidenceBinding(
+            snapshot_id="a5e9d09c75657c13eaf963fa4845fff06d43d07e99debd844a10113ba43db037",
+            registry_hash="a5e9d09c75657c13eaf963fa4845fff06d43d07e99debd844a10113ba43db037",
+            authorization_payload_sha256="6174d15f0768b3ad12ba1914ac8e493ee59ea4254daaba91a5d997c1a1ea3b6b",
+            signature_sha256="cba213a1b5d1c1dfa94c4afea89c1cee1e2ebb639097f159fab463ff63f55639",
+            verification_evidence_sha256="d91666332bf144f11d9725c8d533f105080619d352c3b05440484a31be1072a6",
+            published_at_utc="2026-09-13T06:18:00+00:00",
+            attestor_id="muel-production-evidence-attestor-v1",
+            attestor_public_key_base64="7fQHZFusjH3474YCkR2XWRkHx5qRbg7bZo7wgpheTSw=",
+            attestor_effective_from_utc="2026-09-13T06:18:00+00:00",
+            attestor_effective_to_utc=None,
+        ),
     ),
 )
 
@@ -200,6 +229,43 @@ def registry_authorization_payload(*, authority_id: str, snapshot_id: str,
     }
 
 
+def _require_authorization_evidence_binding(*, authority_id: str, payload: object,
+                                            snapshot_id: str, registry_hash: str,
+                                            authorization_payload: object,
+                                            signature: bytes, published_at: datetime) -> None:
+    """Require an approved production registry to exactly match immutable KMS evidence."""
+    matches = [record for record in _REGISTRY_GOVERNANCE_AUTHORITY_HISTORY
+               if record.authority_id == authority_id]
+    if len(matches) != 1:
+        raise DataQualityError("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED")
+    binding = matches[0].authorization_evidence
+    if binding is None:
+        raise DataQualityError("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED")
+    if not isinstance(binding, RegistryAuthorizationEvidenceBinding):
+        raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_INVALID")
+    try:
+        approved_key = b64decode(binding.attestor_public_key_base64, validate=True)
+        approved_start = _utc(binding.attestor_effective_from_utc)
+        approved_end = _optional_utc(binding.attestor_effective_to_utc)
+        approved_published = _utc(binding.published_at_utc)
+    except (TypeError, ValueError, Base64Error) as exc:
+        raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_INVALID") from exc
+    expected_hashes = (binding.snapshot_id, binding.registry_hash,
+                       binding.authorization_payload_sha256, binding.signature_sha256,
+                       binding.verification_evidence_sha256)
+    if (any(not isinstance(value, str) or len(value) != 64 or
+            any(char not in "0123456789abcdef" for char in value) for value in expected_hashes) or
+            snapshot_id != binding.snapshot_id or registry_hash != binding.registry_hash or
+            digest(canonical(authorization_payload)) != binding.authorization_payload_sha256 or
+            digest(signature) != binding.signature_sha256 or published_at != approved_published):
+        raise DataQualityError("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED")
+    registry = _registry(payload)
+    rule = registry.get(binding.attestor_id)
+    if (len(registry) != 1 or rule is None or rule[0] != approved_key or rule[1] != approved_start or
+            rule[2] != approved_end):
+        raise DataQualityError("CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED")
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeAttestorRegistry:
     snapshot_id: str
@@ -261,6 +327,10 @@ def require_runtime_attestor_registry(*, conn: sqlite3.Connection, runtime_run_i
         raise InvariantViolation("CANONICAL_D2_ATTESTOR_REGISTRY_INVALID")
     authority_key = _select_registry_authority(
         authority_id=str(authority_id), published_at=published, cutoff=cutoff_time)
+    _require_authorization_evidence_binding(
+        authority_id=str(authority_id), payload=payload, snapshot_id=str(snapshot_id),
+        registry_hash=registry_hash, authorization_payload=authorization_payload,
+        signature=signature, published_at=published)
     try:
         Ed25519PublicKey.from_public_bytes(authority_key).verify(signature, canonical(authorization_payload))
     except (ValueError, InvalidSignature) as exc:
