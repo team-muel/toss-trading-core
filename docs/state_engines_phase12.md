@@ -24,9 +24,14 @@ Every `StateComponent` records:
 - confidence, quality and freshness
 - immutable evidence IDs
 - parameter-set and formula versions
-- source feature IDs, feature-run IDs and feature-manifest IDs when the component is
-  feature-derived
+- zero or more typed `StateFeatureInput` references
 - an optional calculation-lineage graph ID
+
+A `StateFeatureInput` binds one complete `FeatureSnapshot` to the immutable gold manifest
+that published it. The feature ID, instrument, feature-run ID, feature cutoff, source data
+manifests, parameter set, code revision and validity therefore cannot be detached from the
+manifest reference by sorting unrelated ID arrays. Snapshot-level feature/run/manifest/data
+manifest arrays are derived summaries; the component-level typed reference is authoritative.
 
 This is a new internal contract generation. Existing historical v1 catalog objects remain
 historical evidence; they are not silently reinterpreted as v2 and they do not acquire the
@@ -35,9 +40,10 @@ new semantic guarantees retroactively.
 ## Feature-derived continuous states
 
 Market and Company state are continuous feature-derived representations. Their components
-must therefore carry source feature ID, feature-run ID and feature-manifest lineage, and
-must use a continuous normalization rather than `STRUCTURED` or `CATEGORICAL`. A caller
-cannot satisfy the contract merely by inventing a feature name.
+must therefore carry at least one `StateFeatureInput` and must use a continuous normalization
+rather than `STRUCTURED` or `CATEGORICAL`. Feature snapshots that are expired or known only
+after the State cutoff are rejected. A caller cannot satisfy the contract merely by inventing
+a feature name.
 
 The current Market state still preserves the nine named dimensions: growth, inflation,
 liquidity, rates, credit, volatility, trend, breadth and valuation. This contract does not
@@ -87,16 +93,18 @@ Changing semantic metadata such as normalization changes that identity even when
 value is unchanged.
 
 FeatureStore already verifies source manifests against the information cutoff. State v2
-preserves the feature run/manifest references instead of collapsing them to feature names.
-Where a `CalculationLineageGraph` exists, a component can also cite its graph ID; the State
-contract does not falsely claim that a graph exists when one has not been materialized.
+retains the complete referenced FeatureSnapshot plus its publishing manifest instead of
+collapsing provenance to a feature name. Where a `CalculationLineageGraph` exists, a
+component can also cite its graph ID; the State contract does not falsely claim that a graph
+exists when one has not been materialized.
 
 ## Completion criteria
 
 - the four state engines and component contracts remain separate
 - State values have explicit semantic/unit/normalization contracts
 - snapshot and component PIT context agree exactly
-- Market/Company components retain actual feature run and manifest lineage
+- Market/Company components retain atomically bound FeatureSnapshot + manifest lineage
+- expired/future FeatureSnapshot references fail closed
 - Portfolio/System are not forced to fabricate feature lineage
 - System State produces operational restrictions only
 - every component remains visible; there is no single opaque state score
