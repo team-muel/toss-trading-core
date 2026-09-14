@@ -80,7 +80,8 @@ class StateEngine:
                     continue
                 if (component.value is not None or
                         component.quality_status not in _UNAVAILABLE_WITHOUT_FEATURE or
-                        component.reason_code is None):
+                        component.reason_code is None or
+                        component.confidence != Decimal(0)):
                     raise DataQualityError("STATE_COMPONENT_UNAVAILABLE_INVALID")
             if any(component.quality_status is QualityStatus.VALID and
                    (not isinstance(component.value, Decimal) or not component.value.is_finite())
