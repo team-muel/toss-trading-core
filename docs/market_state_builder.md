@@ -11,16 +11,29 @@ not prove that a component came from a Feature that was actually published and k
 the State cutoff.
 
 `MarketStateBuilder` closes that gap. A feature-derived component is accepted only when its
-`StateFeatureInput` can be independently reverified against the immutable store:
+`StateFeatureInput` can be independently reverified against the immutable store and the
+publication still satisfies the canonical `FeatureStore` contract:
 
 1. the spec names the exact source Feature ID and source instrument;
 2. the Feature definition exists in the FeatureRegistry;
 3. the content-addressed Feature-definition catalog object matches that definition;
-4. the supplied publishing manifest is a VALID gold `feature-snapshot` manifest;
+4. the supplied publishing manifest is a VALID gold `feature-snapshot` manifest with the
+   canonical Phase-11 schema;
 5. the gold body exactly equals the supplied `FeatureSnapshot` plus the definition catalog ID;
-6. gold parents exactly equal the FeatureSnapshot source-manifest IDs;
-7. source manifests and the gold manifest were available by their applicable PIT cutoffs;
-8. the Feature validity still covers the State `as_of`.
+6. gold parents exactly equal the sorted FeatureSnapshot source-manifest IDs;
+7. every parent is VALID silver data, all parent source/license contracts agree, and at least
+   one parent is the historical-universe dataset required by `FeatureStore`;
+8. parent manifests were available by the Feature information cutoff;
+9. gold `retrieved_at` and `available_at` equal Feature `as_of`, its provider timestamp equals
+   the latest parent provider timestamp, and its request hash equals the canonical
+   `identity_for_request` hash;
+10. the gold publication is knowable by the MarketState information cutoff;
+11. the Feature validity still covers the State `as_of`.
+
+These checks intentionally reconstruct publication invariants instead of trusting a gold
+object merely because it uses the right dataset/schema names. A manually assembled object
+that resembles a FeatureStore output but has forged publication timing, request identity, or
+non-silver parents is rejected.
 
 The builder then performs only an identity transfer of the already-defined Decimal Feature
 value. AMA-176 deliberately does not implement z-scores, weighted combinations, PCA,
