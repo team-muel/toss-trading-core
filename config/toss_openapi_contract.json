@@ -1,8 +1,8 @@
 {
   "schema_version": "toss-openapi-contract-review-v2",
-  "approved_at": "2026-09-11",
-  "approved_version": "1.2.15",
-  "approved_sha256": "ebaf20df342270274a5f6f5ad3a3d3d67b0ce02f30977da84606f3654924103e",
+  "approved_at": "2026-09-14",
+  "approved_version": "1.2.17",
+  "approved_sha256": "791082da4cb379117ed9fdc29a45bd42746f7a1aec368da1e9f4e1f3bfbff5b4",
   "source": "https://openapi.tossinvest.com/openapi-docs/latest/openapi.json",
   "required_operations": {
     "/oauth2/token": ["post"],
@@ -43,8 +43,8 @@
     "/api/v1/orders/{orderId}/modify": ["post"]
   },
   "review_notes": [
-    "The 2026-09-11 canonical REST document still reports version 1.2.15.",
-    "The 2026-09-11 fresh fetch changed only the document hash; the 36 reviewed operations remain fully classified with no missing, obsolete, duplicated, or unreviewed REST operation reported.",
+    "The 2026-09-14 canonical REST document reports version 1.2.17 and SHA-256 791082da4cb379117ed9fdc29a45bd42746f7a1aec368da1e9f4e1f3bfbff5b4.",
+    "The 2026-09-14 fresh fetch leaves all 36 reviewed operations fully classified with no missing, obsolete, duplicated, or unreviewed REST operation reported.",
     "Required operations remain connected read-only endpoints plus OAuth token issuance.",
     "Standard and conditional order writes remain disabled by runtime policy.",
     "Conditional-order reads remain disabled until an account-state ingestion contract is implemented.",
