@@ -72,6 +72,18 @@ def test_runtime_authorization_requires_preexisting_immutable_registry_snapshot(
     assert selected.registry_hash == registry.registry_hash
 
 
+def test_authorized_model_keys_are_derived_from_the_runtime_snapshot_not_a_caller_key():
+    _, evidence, clock = repository()
+    snapshot = review_and_publish(evidence, clock, active_v2_registry())
+    clock.advance_to(CUTOFF)
+    evidence.bind_runtime_run("runtime@1", snapshot)
+
+    assert evidence.authorized_model_keys(
+        "runtime@1", scope=ModelScope.PRICING_BASELINE_RETURN) == ("CAPM@2",)
+    assert evidence.authorized_model_keys(
+        "runtime@1", scope=ModelScope.EXPECTED_RETURN) == ()
+
+
 def test_caller_created_active_registry_cannot_authorize_without_runtime_binding():
     _, evidence, _ = repository()
     forged = active_v2_registry()
