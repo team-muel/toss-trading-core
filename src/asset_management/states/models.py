@@ -10,6 +10,8 @@ import re
 from typing import Mapping
 
 from asset_management.data.immutable import canonical, digest
+from asset_management.domain.horizon import SignalValidity
+from asset_management.features.models import FeatureSnapshot
 from asset_management.quality.models import BLOCKING_QUALITY, QualityStatus
 
 
@@ -17,6 +19,7 @@ STATE_SNAPSHOT_SCHEMA_VERSION = "state-snapshot-v2"
 _HASH = re.compile(r"[0-9a-f]{64}")
 _COMPONENT_ID = re.compile(r"[a-z][a-z0-9_.-]*")
 _SEMANTIC = re.compile(r"[A-Z][A-Z0-9_]*")
+_CODE_REVISION = re.compile(r"git:[0-9a-f]{7,40}")
 
 
 class StateType(StrEnum):
@@ -65,10 +68,57 @@ def _identifiers(values: tuple[str, ...], *, hashes: bool, reason: str,
     return tuple(sorted(values))
 
 
+def _feature_snapshot_payload(snapshot: FeatureSnapshot) -> dict[str, object]:
+    return {
+        "feature_run_id": snapshot.feature_run_id,
+        "instrument_id": snapshot.instrument_id,
+        "feature_id": snapshot.feature_id,
+        "as_of": snapshot.as_of,
+        "information_cutoff": snapshot.information_cutoff,
+        "value": snapshot.value,
+        "quality_status": snapshot.quality_status,
+        "input_manifest_ids": list(snapshot.input_manifest_ids),
+        "parameter_set_id": snapshot.parameter_set_id,
+        "parent_state_id": snapshot.parent_state_id,
+        "code_revision": snapshot.code_revision,
+        "validity": snapshot.validity.payload(),
+    }
+
+
+@dataclass(frozen=True)
+class StateFeatureInput:
+    """One immutable FeatureSnapshot and the gold manifest that published it."""
+
+    snapshot: FeatureSnapshot
+    manifest_id: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.snapshot, FeatureSnapshot) or not _HASH.fullmatch(self.manifest_id):
+            raise ValueError("STATE_FEATURE_INPUT_INVALID")
+        snapshot = self.snapshot
+        if (not _HASH.fullmatch(snapshot.feature_run_id) or
+                not isinstance(snapshot.instrument_id, str) or not snapshot.instrument_id.strip() or
+                not isinstance(snapshot.feature_id, str) or not snapshot.feature_id.strip() or
+                not isinstance(snapshot.parameter_set_id, str) or not snapshot.parameter_set_id.strip() or
+                not _CODE_REVISION.fullmatch(snapshot.code_revision) or
+                not isinstance(snapshot.validity, SignalValidity) or
+                snapshot.quality_status not in {status.value for status in QualityStatus}):
+            raise ValueError("STATE_FEATURE_SNAPSHOT_INVALID")
+        as_of = _aware(snapshot.as_of, "STATE_FEATURE_TIME_INVALID")
+        cutoff = _aware(snapshot.information_cutoff, "STATE_FEATURE_TIME_INVALID")
+        if cutoff > as_of or snapshot.validity.valid_until <= as_of:
+            raise ValueError("STATE_FEATURE_TIME_INVALID")
+        _identifiers(tuple(snapshot.input_manifest_ids), hashes=True,
+                     reason="STATE_FEATURE_SOURCE_LINEAGE_INVALID")
+
+    def payload(self) -> dict[str, object]:
+        return {"snapshot": _feature_snapshot_payload(self.snapshot), "manifest_id": self.manifest_id}
+
+
 @dataclass(frozen=True)
 class StateComponent:
-    component_id: str
     value: object
+    component_id: str
     semantic_type: str
     unit: str
     normalization: StateNormalization
@@ -80,9 +130,7 @@ class StateComponent:
     input_evidence_ids: tuple[str, ...]
     parameter_set_id: str
     formula_version: str
-    input_feature_ids: tuple[str, ...] = ()
-    input_feature_run_ids: tuple[str, ...] = ()
-    input_feature_manifest_ids: tuple[str, ...] = ()
+    input_features: tuple[StateFeatureInput, ...] = ()
     calculation_lineage_id: str | None = None
 
     def __post_init__(self) -> None:
@@ -90,6 +138,7 @@ class StateComponent:
                 not isinstance(self.semantic_type, str) or not _SEMANTIC.fullmatch(self.semantic_type) or
                 not isinstance(self.unit, str) or not self.unit.strip() or
                 not isinstance(self.normalization, StateNormalization) or
+                not isinstance(self.quality_status, QualityStatus) or
                 not isinstance(self.parameter_set_id, str) or not self.parameter_set_id.strip() or
                 not isinstance(self.formula_version, str) or not self.formula_version.strip()):
             raise ValueError("STATE_COMPONENT_SEMANTICS_INVALID")
@@ -104,15 +153,22 @@ class StateComponent:
             raise ValueError("STATE_FRESHNESS_INVALID")
         object.__setattr__(self, "input_evidence_ids", _identifiers(
             self.input_evidence_ids, hashes=True, reason="STATE_EVIDENCE_LINEAGE_INVALID"))
-        object.__setattr__(self, "input_feature_ids", _identifiers(
-            self.input_feature_ids, hashes=False, reason="STATE_FEATURE_LINEAGE_INVALID",
-            allow_empty=True))
-        object.__setattr__(self, "input_feature_run_ids", _identifiers(
-            self.input_feature_run_ids, hashes=True, reason="STATE_FEATURE_RUN_LINEAGE_INVALID",
-            allow_empty=True))
-        object.__setattr__(self, "input_feature_manifest_ids", _identifiers(
-            self.input_feature_manifest_ids, hashes=True,
-            reason="STATE_FEATURE_MANIFEST_LINEAGE_INVALID", allow_empty=True))
+        if (len(self.input_features) != len({(item.snapshot.feature_run_id, item.manifest_id)
+                                             for item in self.input_features}) or
+                any(not isinstance(item, StateFeatureInput) for item in self.input_features)):
+            raise ValueError("STATE_FEATURE_INPUTS_INVALID")
+        ordered = tuple(sorted(
+            self.input_features,
+            key=lambda item: (item.snapshot.instrument_id, item.snapshot.feature_id,
+                              item.snapshot.feature_run_id, item.manifest_id),
+        ))
+        for item in ordered:
+            feature_as_of = _aware(item.snapshot.as_of, "STATE_FEATURE_TIME_INVALID")
+            feature_cutoff = _aware(item.snapshot.information_cutoff, "STATE_FEATURE_TIME_INVALID")
+            if (feature_as_of > as_of or feature_cutoff > cutoff or
+                    item.snapshot.validity.valid_until <= as_of):
+                raise ValueError("STATE_FEATURE_CONTEXT_INVALID")
+        object.__setattr__(self, "input_features", ordered)
         if self.calculation_lineage_id is not None and not _HASH.fullmatch(self.calculation_lineage_id):
             raise ValueError("STATE_CALCULATION_LINEAGE_INVALID")
         object.__setattr__(self, "as_of", as_of.isoformat())
@@ -133,9 +189,7 @@ class StateComponent:
             "input_evidence_ids": list(self.input_evidence_ids),
             "parameter_set_id": self.parameter_set_id,
             "formula_version": self.formula_version,
-            "input_feature_ids": list(self.input_feature_ids),
-            "input_feature_run_ids": list(self.input_feature_run_ids),
-            "input_feature_manifest_ids": list(self.input_feature_manifest_ids),
+            "input_features": [item.payload() for item in self.input_features],
             "calculation_lineage_id": self.calculation_lineage_id,
         }
 
@@ -152,9 +206,10 @@ class StatePolicy:
     def __post_init__(self) -> None:
         decimals = (self.minimum_confidence, self.caution_confidence,
                     self.reduced_risk_multiplier, self.caution_risk_multiplier)
-        if (not self.policy_version.strip() or any(not value.is_finite() for value in decimals) or
+        if (not self.policy_version.strip() or
+                any(not isinstance(value, Decimal) or not value.is_finite() for value in decimals) or
                 not Decimal(0) <= self.minimum_confidence <= self.caution_confidence <= Decimal(1) or
-                self.stale_after_seconds < 0 or
+                type(self.stale_after_seconds) is not int or self.stale_after_seconds < 0 or
                 not Decimal(0) <= self.reduced_risk_multiplier <= self.caution_risk_multiplier <= Decimal(1)):
             raise ValueError("STATE_POLICY_INVALID")
 
@@ -173,6 +228,7 @@ class StateSnapshot:
     input_feature_ids: tuple[str, ...]
     input_feature_run_ids: tuple[str, ...]
     input_feature_manifest_ids: tuple[str, ...]
+    input_data_manifest_ids: tuple[str, ...]
     calculation_lineage_ids: tuple[str, ...]
     policy_version: str
     code_revision: str
@@ -197,6 +253,7 @@ class StateSnapshot:
             "input_feature_ids": list(self.input_feature_ids),
             "input_feature_run_ids": list(self.input_feature_run_ids),
             "input_feature_manifest_ids": list(self.input_feature_manifest_ids),
+            "input_data_manifest_ids": list(self.input_data_manifest_ids),
             "calculation_lineage_ids": list(self.calculation_lineage_ids),
             "policy_version": self.policy_version,
             "code_revision": self.code_revision,
