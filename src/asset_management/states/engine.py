@@ -16,24 +16,42 @@ from .models import (OperationalState, StateComponent, StateNormalization, State
 
 
 class StateEngine:
-    def __init__(self, *, state_type: StateType, component_names: tuple[str, ...]):
+    def __init__(self, *, state_type: StateType, component_names: tuple[str, ...],
+                 allow_legacy_cutoff_inference: bool = False):
         if not component_names or len(component_names) != len(set(component_names)):
             raise ValueError("STATE_COMPONENT_CONTRACT_INVALID")
         self.state_type = state_type
         self.component_names = component_names
+        self.allow_legacy_cutoff_inference = allow_legacy_cutoff_inference
 
-    def build(self, *, as_of: datetime, information_cutoff: datetime,
-              components: Mapping[str, StateComponent], policy: StatePolicy,
-              code_revision: str, derive_regime: bool = False) -> StateSnapshot:
-        for value in (as_of, information_cutoff):
-            if value.tzinfo is None or value.utcoffset() is None:
-                raise ValueError("STATE_TIME_NOT_AWARE")
-        as_of_utc = as_of.astimezone(timezone.utc)
-        cutoff_utc = information_cutoff.astimezone(timezone.utc)
-        if cutoff_utc > as_of_utc:
-            raise DataQualityError("STATE_CUTOFF_AFTER_AS_OF")
+    def build(self, *, as_of: datetime, components: Mapping[str, StateComponent],
+              policy: StatePolicy, code_revision: str,
+              information_cutoff: datetime | None = None,
+              derive_regime: bool = False) -> StateSnapshot:
         if set(components) != set(self.component_names):
             raise DataQualityError("STATE_COMPONENTS_INCOMPLETE")
+        if as_of.tzinfo is None or as_of.utcoffset() is None:
+            raise ValueError("STATE_TIME_NOT_AWARE")
+        as_of_utc = as_of.astimezone(timezone.utc)
+        if information_cutoff is None:
+            if not self.allow_legacy_cutoff_inference:
+                raise DataQualityError("STATE_INFORMATION_CUTOFF_REQUIRED")
+            try:
+                component_cutoffs = {
+                    datetime.fromisoformat(component.information_cutoff).astimezone(timezone.utc)
+                    for component in components.values()
+                }
+            except (TypeError, ValueError):
+                raise DataQualityError("STATE_LEGACY_CUTOFF_UNAVAILABLE") from None
+            if len(component_cutoffs) != 1:
+                raise DataQualityError("STATE_LEGACY_CUTOFF_AMBIGUOUS")
+            cutoff_utc = next(iter(component_cutoffs))
+        else:
+            if information_cutoff.tzinfo is None or information_cutoff.utcoffset() is None:
+                raise ValueError("STATE_TIME_NOT_AWARE")
+            cutoff_utc = information_cutoff.astimezone(timezone.utc)
+        if cutoff_utc > as_of_utc:
+            raise DataQualityError("STATE_CUTOFF_AFTER_AS_OF")
         if not re.fullmatch(r"git:[0-9a-f]{7,40}", code_revision):
             raise DataQualityError("STATE_CODE_REVISION_INVALID")
         for name, component in components.items():
@@ -107,9 +125,9 @@ class StateEngine:
         )
 
     def recompute_component(self, snapshot: StateSnapshot, *, component_name: str,
-                            component: StateComponent, as_of: datetime,
-                            information_cutoff: datetime, policy: StatePolicy,
-                            code_revision: str, derive_regime: bool = False) -> StateSnapshot:
+                            component: StateComponent, as_of: datetime, policy: StatePolicy,
+                            code_revision: str, information_cutoff: datetime | None = None,
+                            derive_regime: bool = False) -> StateSnapshot:
         if snapshot.state_type is not self.state_type or component_name not in self.component_names:
             raise DataQualityError("STATE_COMPONENT_CONTRACT_MISMATCH")
         values = dict(snapshot.components)
