@@ -4,11 +4,11 @@ runtime:
   tax_reporting_currency: KRW
   live_trading_enabled: false
   broker_base_url: https://openapi.tossinvest.com
-  toss_openapi_schema_version: 1.2.15
-  toss_openapi_schema_hash: ebaf20df342270274a5f6f5ad3a3d3d67b0ce02f30977da84606f3654924103e
+  toss_openapi_schema_version: 1.2.17
+  toss_openapi_schema_hash: 791082da4cb379117ed9fdc29a45bd42746f7a1aec368da1e9f4e1f3bfbff5b4
   toss_openapi_schema_hash_source: https://openapi.tossinvest.com/openapi-docs/latest/openapi.json
   toss_openapi_contract_review: config/toss_openapi_contract.json
-  # OpenAPI 1.2.15 explicitly documents paginated CLOSED order history.
+  # OpenAPI 1.2.17 explicitly documents paginated CLOSED order history.
   # Poll it with a bounded overlap window so fills that disappear from OPEN
   # between six-hour Foundation runs remain observable and replayable.
   closed_order_listing_supported: true
