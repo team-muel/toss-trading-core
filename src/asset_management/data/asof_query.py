@@ -22,6 +22,46 @@ class AsOfRepository:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self._conn = conn
 
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """Repository-owned connection identity for same-store evidence binding."""
+        return self._conn
+
+    def require_manifest_bound_to_runtime(self, *, dataset_manifest_id: str,
+                                          runtime_run_id: str) -> str:
+        """Reject a manifest whose immutable ingestion lineage belongs to another run."""
+        row = self._conn.execute(
+            """SELECT manifest.content_hash FROM am_dataset_manifest manifest
+               JOIN am_ingestion_run ingestion ON ingestion.ingestion_run_id=manifest.ingestion_run_id
+               WHERE manifest.dataset_manifest_id=? AND ingestion.runtime_run_id=?""",
+            (dataset_manifest_id, runtime_run_id),
+        ).fetchone()
+        if row is None:
+            raise DataQualityError("MANIFEST_RUNTIME_BINDING_MISSING")
+        return str(row[0])
+
+    def require_exact_runtime_context(self, context: AsOfContext) -> None:
+        """Caller cutoff/as-of values may never widen a persisted runtime boundary."""
+        row = self._conn.execute(
+            "SELECT as_of_utc, information_cutoff_utc FROM am_runtime_run WHERE runtime_run_id=?",
+            (context.run_id,),
+        ).fetchone()
+        if row is None or str(row[0]) != context.as_of_utc.isoformat() or \
+                str(row[1]) != context.information_cutoff_utc.isoformat():
+            raise DataQualityError("RUNTIME_CONTEXT_CONFLICT")
+
+    def get_by_id(self, observation_id: str) -> TemporalObservation:
+        """Rehydrate one immutable observation for content-addressed replay."""
+        if not isinstance(observation_id, str) or not observation_id.strip():
+            raise DataQualityError("OBSERVATION_ID_INVALID")
+        row = self._conn.execute(
+            f"SELECT {_COLUMNS} FROM am_temporal_observation WHERE observation_id=?",
+            (observation_id,),
+        ).fetchone()
+        if row is None:
+            raise DataQualityError("OBSERVATION_LINEAGE_MISSING")
+        return observation_from_row(row)
+
     def get_latest(
         self, *, entity_id: str, field: str, context: AsOfContext,
         dataset_manifest_id: str | None = None,

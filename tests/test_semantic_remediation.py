@@ -7,7 +7,7 @@ from asset_management.data.immutable import canonical, digest
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.domain.scalars import Currency
 from asset_management.domain.errors import DataQualityError, InvariantViolation
-from asset_management.expectations.engine import expected_return
+from expected_return_legacy_support import aggregate_expected_return as expected_return
 from asset_management.expectations.equity import EquityGrowthBasis, AGGREGATE_EQUITY_COMPONENTS
 from asset_management.expectations.models import AssetClass, ExpectedReturnComponent
 from asset_management.risk.contributions import portfolio_risk

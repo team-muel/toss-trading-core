@@ -6,6 +6,7 @@ from asset_management.domain.horizon import DecayProfile, SignalValidity
 from asset_management.governance import ModelDefinition, ModelRegistry, ModelScope, ModelStatus
 from asset_management.expectations import *
 from asset_management.expectations.engine import COMPONENTS
+from expected_return_legacy_support import aggregate_expected_return
 from asset_management.pricing.models import BetaEstimate
 from asset_management.pricing.capm import capm_required_return
 from asset_management.quality.models import QualityStatus
@@ -13,6 +14,7 @@ from runtime_model_support import persisted_runtime_authorization
 
 D=Decimal; NOW=datetime(2026,1,2,tzinfo=timezone.utc)
 VALIDITY=SignalValidity(252,63,NOW+timedelta(days=30),DecayProfile.LINEAR)
+expected_return = aggregate_expected_return
 CAPM_REGISTRY=ModelRegistry()
 CAPM_MODEL=ModelDefinition("CAPM","1","required return",("input",),("required_return",),
                            (ModelScope.REQUIRED_RETURN,),("unstable",),date(2026,1,1),
