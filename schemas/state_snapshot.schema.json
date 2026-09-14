@@ -27,7 +27,7 @@
           "component_id", "value", "semantic_type", "unit", "normalization", "as_of",
           "information_cutoff", "confidence", "quality_status", "freshness_seconds",
           "input_evidence_ids", "parameter_set_id", "formula_version", "input_features",
-          "calculation_lineage_id", "reason_code"
+          "calculation_lineage_id"
         ],
         "properties": {
           "component_id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"},
