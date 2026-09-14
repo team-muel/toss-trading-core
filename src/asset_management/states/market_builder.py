@@ -15,16 +15,13 @@ from typing import Mapping
 
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.domain.errors import DataQualityError
-from asset_management.features.models import FeatureSnapshot
 from asset_management.features.registry import FeatureRegistry
 from asset_management.quality.models import QualityStatus
 
-from .engine import StateEngine
 from .market import MARKET_COMPONENTS, MarketStateEngine
 from .models import StateComponent, StateFeatureInput, StateNormalization, StatePolicy, StateSnapshot
 
 
-_HASH = re.compile(r"[0-9a-f]{64}")
 _REASON = re.compile(r"[A-Z][A-Z0-9_]*")
 _SEMANTIC = re.compile(r"[A-Z][A-Z0-9_]*")
 
@@ -149,7 +146,8 @@ class MarketStateBuilder:
 
     def build(self, *, spec: MarketStateSpec, as_of: datetime,
               information_cutoff: datetime, policy: StatePolicy, code_revision: str,
-              feature_inputs: Mapping[str, StateFeatureInput] = {}) -> MarketStateBuildResult:
+              feature_inputs: Mapping[str, StateFeatureInput] | None = None
+              ) -> MarketStateBuildResult:
         if not isinstance(spec, MarketStateSpec):
             raise ValueError("MARKET_STATE_SPEC_REQUIRED")
         if as_of.tzinfo is None or as_of.utcoffset() is None or \
@@ -159,12 +157,16 @@ class MarketStateBuilder:
         cutoff_utc = information_cutoff.astimezone(timezone.utc)
         if cutoff_utc > as_of_utc:
             raise DataQualityError("MARKET_STATE_CUTOFF_AFTER_AS_OF")
+        inputs = {} if feature_inputs is None else dict(feature_inputs)
+        if any(not isinstance(key, str) or not isinstance(item, StateFeatureInput)
+               for key, item in inputs.items()):
+            raise DataQualityError("MARKET_STATE_FEATURE_INPUT_INVALID")
         spec_catalog_id = self.store.catalog("market-state-specs", spec.payload())
         if spec_catalog_id != spec.spec_hash:
             raise DataQualityError("MARKET_STATE_SPEC_IDENTITY_INVALID")
 
         active = {item.component_id for item in spec.components if item.source_feature_id is not None}
-        if set(feature_inputs) - active:
+        if set(inputs) - active:
             raise DataQualityError("MARKET_STATE_UNBOUND_FEATURE_INPUT")
         for component_spec in spec.components:
             if component_spec.source_feature_id is not None:
@@ -176,7 +178,7 @@ class MarketStateBuilder:
         components: dict[str, StateComponent] = {}
         for component_id in MARKET_COMPONENTS:
             component_spec = spec.component(component_id)
-            item = feature_inputs.get(component_id)
+            item = inputs.get(component_id)
             if component_spec.source_feature_id is None:
                 components[component_id] = self._unavailable(
                     component_spec, spec, spec_catalog_id, as_of_utc, cutoff_utc,
@@ -251,8 +253,6 @@ class MarketStateBuilder:
     def _verify_feature_input(self, component_spec: MarketStateComponentSpec,
                               item: StateFeatureInput, as_of: datetime,
                               cutoff: datetime) -> None:
-        if not isinstance(item, StateFeatureInput):
-            raise DataQualityError("MARKET_STATE_FEATURE_INPUT_INVALID")
         snapshot = item.snapshot
         if (snapshot.feature_id != component_spec.source_feature_id or
                 snapshot.instrument_id != component_spec.source_instrument_id):
