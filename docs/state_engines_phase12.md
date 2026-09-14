@@ -26,6 +26,7 @@ Every `StateComponent` records:
 - parameter-set and formula versions
 - zero or more typed `StateFeatureInput` references
 - an optional calculation-lineage graph ID
+- an optional machine-readable `reason_code`
 
 A `StateFeatureInput` keeps one complete `FeatureSnapshot` and one claimed publishing gold
 manifest ID in the same typed reference. The feature ID, instrument, feature-run ID, feature
@@ -45,19 +46,32 @@ new semantic guarantees retroactively.
 
 ## Feature-derived continuous states
 
-Market and Company state are continuous feature-derived representations. Their components
-must therefore carry at least one `StateFeatureInput` and must use a continuous normalization
-rather than `STRUCTURED` or `CATEGORICAL`. Feature snapshots that are expired or known only
-after the State cutoff are rejected. Every referenced feature-manifest ID must also appear
-in the component evidence set, and a component may degrade source quality but may not claim
-a better quality status than its worst feature input. A caller cannot satisfy the contract
-merely by inventing a feature name.
+Market and Company state are continuous feature-derived representations. A component that
+claims an available value must carry at least one `StateFeatureInput` and must use a
+continuous normalization rather than `STRUCTURED` or `CATEGORICAL`. Feature snapshots that
+are expired or known only after the State cutoff are rejected. Every referenced
+feature-manifest ID must also appear in the component evidence set, and a component may
+degrade source quality but may not claim a better quality status than its worst feature
+input. A caller cannot satisfy the contract merely by inventing a feature name.
+
+A component may instead be **explicitly unavailable** without fabricating feature lineage.
+For Market/Company this is allowed only when all of the following are true:
+
+- `value` is `None`
+- quality is one of `MISSING`, `PRIMARY_PENDING`, `BLOCKED`, or `QUARANTINED`
+- `reason_code` is present, for example `UNMAPPED_COMPONENT`
+- immutable evidence IDs are still present
+- there are no fake `StateFeatureInput` references
+
+Such a component makes aggregate quality blocking and therefore produces `NO_NEW_TRADES`
+under the existing State policy. `STALE` and `CONFLICT` are not used as feature-less
+shortcuts: those statuses imply evidence that should remain attached to the component.
 
 The current Market state still preserves the nine named dimensions: growth, inflation,
 liquidity, rates, credit, volatility, trend, breadth and valuation. This contract does not
 claim that every dimension already has an approved canonical builder. AMA-173 separately
-maps and constructs those components; an unmapped dimension must remain explicitly
-unavailable rather than being filled with an arbitrary proxy.
+maps and constructs those components; an unmapped dimension remains explicit unavailable
+state rather than being filled with an arbitrary proxy.
 
 Company state follows the same feature-lineage rule but remains inactive for company
 selection in the ETF-first release.
@@ -77,8 +91,9 @@ NO_NEW_TRADES, or HALTED. It cannot emit an instrument direction, BUY, or SELL.
 
 The old optional EXPANSION/CONTRACTION/TRANSITION helper remains temporarily for migration
 only; AMA-173/03 removes regime inference from the generic State engine. Until then the
-helper refuses to interpret raw values. Growth, trend and volatility must explicitly be
-unitless centered/standardized state scores (`Z_SCORE`, `DIRECTIONAL_SCORE`, or
+helper refuses to interpret raw values and fails closed when growth, trend, or volatility is
+unavailable. Available growth, trend and volatility must explicitly be unitless
+centered/standardized state scores (`Z_SCORE`, `DIRECTIONAL_SCORE`, or
 `STANDARDIZED_COMPOSITE`) before the zero thresholds are even eligible to run. Raw realized
 volatility therefore cannot be mistaken for a centered volatility state.
 
@@ -97,8 +112,8 @@ future regime representation to mint portfolio targets, orders, or approved risk
 
 Repeating the same calculation with identical values, semantics, evidence, cutoff, policy,
 parameter/formula versions and code revision produces the same immutable state identity.
-Changing semantic metadata such as normalization changes that identity even when the numeric
-value is unchanged.
+Changing semantic metadata or an unavailable `reason_code` changes that identity even when
+other fields are unchanged.
 
 FeatureStore already verifies its own source manifests against the information cutoff. State
 v2 retains the referenced FeatureSnapshot, its claimed publishing manifest, and the
@@ -113,7 +128,8 @@ does not falsely claim that a graph exists when one has not been materialized.
 - the four state engines and component contracts remain separate
 - State values have explicit semantic/unit/normalization contracts
 - snapshot and component PIT context agree exactly
-- Market/Company components retain atomically grouped FeatureSnapshot + manifest coordinates
+- available Market/Company components retain atomically grouped FeatureSnapshot + manifest coordinates
+- unavailable Market/Company components are explicit, blocking and never fabricate feature lineage
 - expired/future FeatureSnapshot references fail closed
 - component quality cannot silently upgrade worse source-feature quality
 - Portfolio/System are not forced to fabricate feature lineage
