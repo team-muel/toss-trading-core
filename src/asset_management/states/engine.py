@@ -15,6 +15,14 @@ from .models import (OperationalState, StateComponent, StateNormalization, State
                      StateSnapshot, StateType, is_blocking, state_identity, worst_quality)
 
 
+_UNAVAILABLE_WITHOUT_FEATURE = {
+    QualityStatus.MISSING,
+    QualityStatus.PRIMARY_PENDING,
+    QualityStatus.BLOCKED,
+    QualityStatus.QUARANTINED,
+}
+
+
 class StateEngine:
     def __init__(self, *, state_type: StateType, component_names: tuple[str, ...],
                  allow_legacy_cutoff_inference: bool = False):
@@ -67,8 +75,14 @@ class StateEngine:
                                                StateNormalization.CATEGORICAL}
                    for component in components.values()):
                 raise DataQualityError("CONTINUOUS_STATE_NORMALIZATION_INVALID")
-            if any(not component.input_features for component in components.values()):
-                raise DataQualityError("STATE_FEATURE_LINEAGE_INCOMPLETE")
+            for component in components.values():
+                if component.input_features:
+                    continue
+                if (component.value is not None or
+                        component.quality_status not in _UNAVAILABLE_WITHOUT_FEATURE or
+                        component.reason_code is None or
+                        component.confidence != Decimal(0)):
+                    raise DataQualityError("STATE_COMPONENT_UNAVAILABLE_INVALID")
             if any(component.quality_status is QualityStatus.VALID and
                    (not isinstance(component.value, Decimal) or not component.value.is_finite())
                    for component in components.values()):
@@ -177,6 +191,8 @@ class StateEngine:
         if self.state_type is not StateType.MARKET:
             raise DataQualityError("REGIME_ONLY_AVAILABLE_FOR_MARKET_STATE")
         required = (components["growth"], components["trend"], components["volatility"])
+        if any(not component.input_features or component.value is None for component in required):
+            raise DataQualityError("REGIME_INPUT_UNAVAILABLE")
         comparable = {StateNormalization.Z_SCORE, StateNormalization.DIRECTIONAL_SCORE,
                       StateNormalization.STANDARDIZED_COMPOSITE}
         if any(component.normalization not in comparable or component.unit != "1"

@@ -98,6 +98,9 @@
           },
           "calculation_lineage_id": {
             "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"
+          },
+          "reason_code": {
+            "type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]*$"
           }
         }
       }

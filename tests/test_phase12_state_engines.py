@@ -290,7 +290,7 @@ def test_component_time_and_lineage_fail_closed():
 
     values = components(MARKET_COMPONENTS)
     values["growth"] = replace(values["growth"], input_features=())
-    with pytest.raises(DataQualityError, match="STATE_FEATURE_LINEAGE_INCOMPLETE"):
+    with pytest.raises(DataQualityError, match="STATE_COMPONENT_UNAVAILABLE_INVALID"):
         build(MarketStateEngine(), values)
 
     values = components(MARKET_COMPONENTS)

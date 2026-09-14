@@ -19,6 +19,7 @@ STATE_SNAPSHOT_SCHEMA_VERSION = "state-snapshot-v2"
 _HASH = re.compile(r"[0-9a-f]{64}")
 _COMPONENT_ID = re.compile(r"[a-z][a-z0-9_.-]*")
 _SEMANTIC = re.compile(r"[A-Z][A-Z0-9_]*")
+_REASON = re.compile(r"[A-Z][A-Z0-9_]*")
 _CODE_REVISION = re.compile(r"git:[0-9a-f]{7,40}")
 _QUALITY_ORDER = (
     QualityStatus.QUARANTINED, QualityStatus.BLOCKED, QualityStatus.CONFLICT,
@@ -140,6 +141,7 @@ class StateComponent:
     formula_version: str
     input_features: tuple[StateFeatureInput, ...] = ()
     calculation_lineage_id: str | None = None
+    reason_code: str | None = None
 
     def __post_init__(self) -> None:
         if (not isinstance(self.component_id, str) or not _COMPONENT_ID.fullmatch(self.component_id) or
@@ -148,7 +150,9 @@ class StateComponent:
                 not isinstance(self.normalization, StateNormalization) or
                 not isinstance(self.quality_status, QualityStatus) or
                 not isinstance(self.parameter_set_id, str) or not self.parameter_set_id.strip() or
-                not isinstance(self.formula_version, str) or not self.formula_version.strip()):
+                not isinstance(self.formula_version, str) or not self.formula_version.strip() or
+                (self.reason_code is not None and
+                 (not isinstance(self.reason_code, str) or not _REASON.fullmatch(self.reason_code)))):
             raise ValueError("STATE_COMPONENT_SEMANTICS_INVALID")
         as_of = _aware(self.as_of, "STATE_COMPONENT_TIME_INVALID")
         cutoff = _aware(self.information_cutoff, "STATE_COMPONENT_TIME_INVALID")
@@ -212,6 +216,7 @@ class StateComponent:
             "formula_version": self.formula_version,
             "input_features": [item.payload() for item in self.input_features],
             "calculation_lineage_id": self.calculation_lineage_id,
+            "reason_code": self.reason_code,
         }
 
 
