@@ -1,5 +1,7 @@
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from hashlib import sha256
 import json
 
 import pytest
@@ -9,7 +11,8 @@ from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityStatus
 from asset_management.states import (
     CompanyStateEngine, MarketStateEngine, OperationalState, PortfolioStateEngine,
-    StateComponent, StatePolicy, StateRepository, StateType, SystemStateEngine,
+    StateComponent, StateNormalization, StatePolicy, StateRepository, StateType,
+    SystemStateEngine,
 )
 from asset_management.states.company import COMPANY_COMPONENTS
 from asset_management.states.market import MARKET_COMPONENTS
@@ -18,14 +21,64 @@ from asset_management.states.system import SYSTEM_COMPONENTS
 
 
 NOW = datetime(2026, 9, 5, 12, tzinfo=timezone.utc)
+CUTOFF = NOW - timedelta(minutes=1)
 POLICY = StatePolicy("state-policy-v1", Decimal("0.8"), Decimal("0.5"), 300)
 
 
-def components(names, *, confidence="0.9", quality=QualityStatus.VALID, freshness=10,
-               values=None):
+def identifier(*parts: str) -> str:
+    return sha256(":".join(parts).encode("utf-8")).hexdigest()
+
+
+def components(names, *, state_type=StateType.MARKET, confidence="0.9",
+               quality=QualityStatus.VALID, freshness=10, values=None,
+               normalization=None, feature_lineage=None):
     values = values or {}
-    return {name: StateComponent(values.get(name, Decimal("0.1")), Decimal(confidence),
-                                 quality, freshness, (f"feature.{name}",)) for name in names}
+    result = {}
+    for name in names:
+        value = values.get(name, Decimal("0.1"))
+        if state_type is StateType.SYSTEM:
+            norm = StateNormalization.CATEGORICAL
+            semantic_type = "SYSTEM_HEALTH"
+            unit = "status"
+        elif state_type is StateType.PORTFOLIO:
+            norm = (StateNormalization.STRUCTURED
+                    if isinstance(value, (dict, list, tuple)) else StateNormalization.RAW)
+            semantic_type = "PORTFOLIO_STATE"
+            unit = "native"
+        else:
+            norm = normalization or StateNormalization.RAW
+            semantic_type = f"{name.upper()}_STATE"
+            unit = "1"
+        has_feature_lineage = (state_type in {StateType.MARKET, StateType.COMPANY}
+                               if feature_lineage is None else feature_lineage)
+        result[name] = StateComponent(
+            component_id=name,
+            value=value,
+            semantic_type=semantic_type,
+            unit=unit,
+            normalization=norm,
+            as_of=NOW.isoformat(),
+            information_cutoff=CUTOFF.isoformat(),
+            confidence=Decimal(confidence),
+            quality_status=quality,
+            freshness_seconds=freshness,
+            input_evidence_ids=(identifier("evidence", name),),
+            parameter_set_id="state-components-v1",
+            formula_version=f"{name}@1",
+            input_feature_ids=((f"feature.{name}",) if has_feature_lineage else ()),
+            input_feature_run_ids=((identifier("feature-run", name),)
+                                   if has_feature_lineage else ()),
+            input_feature_manifest_ids=((identifier("feature-manifest", name),)
+                                        if has_feature_lineage else ()),
+        )
+    return result
+
+
+def build(engine, values, *, derive_regime=False, code_revision="git:abcdef0"):
+    return engine.build(
+        as_of=NOW, information_cutoff=CUTOFF, components=values, policy=POLICY,
+        code_revision=code_revision, derive_regime=derive_regime,
+    )
 
 
 def test_four_state_engines_are_separate_and_preserve_all_components():
@@ -36,44 +89,51 @@ def test_four_state_engines_are_separate_and_preserve_all_components():
     ids = set()
     for engine, names in zip(engines, contracts):
         values = {name: "NORMAL" for name in names} if engine.state_type is StateType.SYSTEM else None
-        snapshot = engine.build(as_of=NOW, components=components(names, values=values), policy=POLICY,
-                                code_revision="git:abcdef0")
+        snapshot = build(engine, components(names, state_type=engine.state_type, values=values))
         assert tuple(snapshot.components) == names
         assert snapshot.state_type is engine.state_type
         ids.add(snapshot.state_id)
     assert len(ids) == 4
 
 
-def test_market_state_stays_continuous_and_regime_is_optional():
+def test_market_state_stays_continuous_and_regime_requires_declared_centered_semantics():
     values = {"growth": Decimal("0.4"), "inflation": Decimal("-0.2"),
               "credit": Decimal("0.6"), "trend": Decimal("0.8"),
               "volatility": Decimal("-0.1")}
-    state = MarketStateEngine().build(as_of=NOW, components=components(MARKET_COMPONENTS, values=values),
-                                      policy=POLICY, code_revision="git:abcdef0")
+    raw_components = components(MARKET_COMPONENTS, values=values)
+    state = build(MarketStateEngine(), raw_components)
     assert state.regime_label is None
     assert state.components["growth"].value == Decimal("0.4")
-    labelled = MarketStateEngine().build(
-        as_of=NOW, components=components(MARKET_COMPONENTS, values=values), policy=POLICY,
-        code_revision="git:abcdef0", derive_regime=True)
+    with pytest.raises(DataQualityError, match="REGIME_NORMALIZATION_REQUIRED"):
+        build(MarketStateEngine(), raw_components, derive_regime=True)
+
+    standardized = components(
+        MARKET_COMPONENTS, values=values, normalization=StateNormalization.Z_SCORE)
+    labelled = build(MarketStateEngine(), standardized, derive_regime=True)
     assert labelled.regime_label == "EXPANSION"
     assert len(labelled.components) == 9
 
 
 def test_each_component_can_be_recomputed_without_changing_others():
     engine = MarketStateEngine()
-    original = engine.build(as_of=NOW, components=components(MARKET_COMPONENTS),
-                            policy=POLICY, code_revision="git:abcdef0")
-    replacement = StateComponent(Decimal("0.8"), Decimal("0.95"), QualityStatus.VALID,
-                                 5, ("feature.growth.new",))
-    revised = engine.recompute_component(original, component_name="growth", component=replacement,
-                                         as_of=NOW, policy=POLICY, code_revision="git:abcdef1")
+    original = build(engine, components(MARKET_COMPONENTS))
+    replacement = replace(
+        original.components["growth"], value=Decimal("0.8"), confidence=Decimal("0.95"),
+        freshness_seconds=5, input_feature_ids=("feature.growth.new",),
+        input_feature_run_ids=(identifier("feature-run", "growth-new"),),
+        input_feature_manifest_ids=(identifier("feature-manifest", "growth-new"),),
+        input_evidence_ids=(identifier("evidence", "growth-new"),),
+    )
+    revised = engine.recompute_component(
+        original, component_name="growth", component=replacement, as_of=NOW,
+        information_cutoff=CUTOFF, policy=POLICY, code_revision="git:abcdef1")
     assert revised.components["growth"] == replacement
     for name in set(MARKET_COMPONENTS) - {"growth"}:
         assert revised.components[name] == original.components[name]
     assert revised.state_id != original.state_id
 
 
-def test_portfolio_state_preserves_truth_and_risk_structures():
+def test_portfolio_state_preserves_truth_and_risk_structures_without_fake_feature_lineage():
     values = {
         "nav": Decimal("100000"), "cash_by_currency": {"USD": Decimal("1000")},
         "current_weights": {"SPY": Decimal("0.6")}, "sector_exposure": {"TECH": Decimal("0.3")},
@@ -82,92 +142,141 @@ def test_portfolio_state_preserves_truth_and_risk_structures():
         "volatility_contribution": {"SPY": Decimal("0.2")},
         "reserved_cash": Decimal("100"), "unsettled_cash": Decimal("50"),
     }
-    state = PortfolioStateEngine().build(as_of=NOW, components=components(PORTFOLIO_COMPONENTS, values=values),
-                                         policy=POLICY, code_revision="git:abcdef0")
+    state = build(PortfolioStateEngine(), components(
+        PORTFOLIO_COMPONENTS, state_type=StateType.PORTFOLIO, values=values))
     assert state.components["cash_by_currency"].value["USD"] == Decimal("1000")
     assert state.components["open_orders"].value == ["order-1"]
+    assert state.input_feature_ids == ()
+    assert state.input_evidence_ids
 
 
 def test_system_state_only_produces_operational_restrictions():
     engine = SystemStateEngine()
-    normal = engine.build(as_of=NOW, components=components(
-        SYSTEM_COMPONENTS, values={name: "NORMAL" for name in SYSTEM_COMPONENTS}),
-        policy=POLICY, code_revision="git:abcdef0")
+    normal = build(engine, components(
+        SYSTEM_COMPONENTS, state_type=StateType.SYSTEM,
+        values={name: "NORMAL" for name in SYSTEM_COMPONENTS}))
     assert normal.operational_state is OperationalState.NORMAL
     halted_values = {name: "NORMAL" for name in SYSTEM_COMPONENTS} | {"broker_health": "BLOCKED"}
-    halted = engine.build(as_of=NOW, components=components(SYSTEM_COMPONENTS, values=halted_values),
-                          policy=POLICY, code_revision="git:abcdef0")
+    halted = build(engine, components(
+        SYSTEM_COMPONENTS, state_type=StateType.SYSTEM, values=halted_values))
     assert halted.operational_state is OperationalState.HALTED
     assert halted.risk_multiplier == "0"
     encoded = json.dumps(halted.payload())
     assert "BUY" not in encoded and "SELL" not in encoded
     unknown_values = {name: "NORMAL" for name in SYSTEM_COMPONENTS} | {"data_health": "UNKNOWN"}
-    unknown = engine.build(as_of=NOW, components=components(SYSTEM_COMPONENTS, values=unknown_values),
-                           policy=POLICY, code_revision="git:abcdef0")
+    unknown = build(engine, components(
+        SYSTEM_COMPONENTS, state_type=StateType.SYSTEM, values=unknown_values))
     assert unknown.operational_state is OperationalState.NO_NEW_TRADES
     with pytest.raises(DataQualityError, match="SYSTEM_HEALTH_VALUE_INVALID"):
-        engine.build(as_of=NOW, components=components(
-            SYSTEM_COMPONENTS, values={name: "BUY" for name in SYSTEM_COMPONENTS}),
-            policy=POLICY, code_revision="git:abcdef0")
+        build(engine, components(
+            SYSTEM_COMPONENTS, state_type=StateType.SYSTEM,
+            values={name: "BUY" for name in SYSTEM_COMPONENTS}))
 
 
 def test_uncertainty_changes_risk_instead_of_only_describing_it():
-    reduced = MarketStateEngine().build(
-        as_of=NOW, components=components(MARKET_COMPONENTS, confidence="0.4"),
-        policy=POLICY, code_revision="git:abcdef0")
+    reduced = build(MarketStateEngine(), components(MARKET_COMPONENTS, confidence="0.4"))
     assert reduced.operational_state is OperationalState.REDUCED_RISK
     assert reduced.risk_multiplier == "0.50"
-    caution = MarketStateEngine().build(
-        as_of=NOW, components=components(MARKET_COMPONENTS, confidence="0.7"),
-        policy=POLICY, code_revision="git:abcdef0")
+    caution = build(MarketStateEngine(), components(MARKET_COMPONENTS, confidence="0.7"))
     assert caution.operational_state is OperationalState.CAUTION
     assert caution.risk_multiplier == "0.75"
 
 
 def test_stale_or_invalid_component_blocks_new_trades():
-    stale = MarketStateEngine().build(
-        as_of=NOW, components=components(MARKET_COMPONENTS, freshness=301),
-        policy=POLICY, code_revision="git:abcdef0")
+    stale = build(MarketStateEngine(), components(MARKET_COMPONENTS, freshness=301))
     assert stale.operational_state is OperationalState.NO_NEW_TRADES
     assert stale.risk_multiplier == "0"
     invalid = components(MARKET_COMPONENTS)
-    invalid["credit"] = StateComponent(None, Decimal("0"), QualityStatus.CONFLICT, 10,
-                                       ("feature.credit",))
-    blocked = MarketStateEngine().build(as_of=NOW, components=invalid, policy=POLICY,
-                                        code_revision="git:abcdef0")
+    invalid["credit"] = replace(
+        invalid["credit"], value=None, confidence=Decimal("0"),
+        quality_status=QualityStatus.CONFLICT)
+    blocked = build(MarketStateEngine(), invalid)
     assert blocked.quality_status is QualityStatus.CONFLICT
     assert blocked.operational_state is OperationalState.NO_NEW_TRADES
 
 
-def test_common_fields_and_feature_lineage_are_complete():
-    state = CompanyStateEngine().build(as_of=NOW, components=components(COMPANY_COMPONENTS),
-                                       policy=POLICY, code_revision="git:abcdef0")
+def test_common_fields_preserve_pit_and_feature_lineage():
+    state = build(CompanyStateEngine(), components(
+        COMPANY_COMPONENTS, state_type=StateType.COMPANY))
+    assert state.schema_version == "state-snapshot-v2"
     assert state.as_of == NOW.isoformat()
+    assert state.information_cutoff == CUTOFF.isoformat()
     assert state.confidence == "0.9" and state.quality_status is QualityStatus.VALID
     assert state.freshness == 10 and len(state.input_feature_ids) == len(COMPANY_COMPONENTS)
+    assert len(state.input_feature_run_ids) == len(COMPANY_COMPONENTS)
+    assert len(state.input_feature_manifest_ids) == len(COMPANY_COMPONENTS)
+    assert len(state.input_evidence_ids) == len(COMPANY_COMPONENTS)
     assert state.policy_version == "state-policy-v1" and state.code_revision == "git:abcdef0"
 
 
-def test_state_snapshot_is_deterministic_and_immutable(tmp_path):
+def test_state_snapshot_is_deterministic_and_semantic_metadata_changes_identity(tmp_path):
     engine = MarketStateEngine()
     values = components(MARKET_COMPONENTS)
-    first = engine.build(as_of=NOW, components=values, policy=POLICY, code_revision="git:abcdef0")
-    second = engine.build(as_of=NOW, components=values, policy=POLICY, code_revision="git:abcdef0")
+    first = build(engine, values)
+    second = build(engine, values)
     assert first == second
+    changed = dict(values)
+    changed["growth"] = replace(changed["growth"], normalization=StateNormalization.Z_SCORE)
+    assert build(engine, changed).state_id != first.state_id
+
     repository = StateRepository(ImmutableDatasetStore(tmp_path, credentials_classified=True))
     assert repository.publish(first) == repository.publish(second) == first.state_id
     path = tmp_path / "catalog" / "state-snapshots" / f"{first.state_id}.json"
-    assert json.loads(path.read_text(encoding="utf-8"))["components"]["growth"]["value"] == "0.1"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["schema_version"] == "state-snapshot-v2"
+    assert payload["information_cutoff"] == CUTOFF.isoformat()
+    assert payload["components"]["growth"]["normalization"] == "RAW"
+
+
+def test_component_time_and_lineage_fail_closed():
+    with pytest.raises(ValueError, match="STATE_COMPONENT_CUTOFF_AFTER_AS_OF"):
+        StateComponent(
+            component_id="growth", value=Decimal("0.1"), semantic_type="GROWTH_STATE",
+            unit="1", normalization=StateNormalization.RAW, as_of=NOW.isoformat(),
+            information_cutoff=(NOW + timedelta(seconds=1)).isoformat(),
+            confidence=Decimal("0.9"), quality_status=QualityStatus.VALID,
+            freshness_seconds=1, input_evidence_ids=(identifier("evidence", "future"),),
+            parameter_set_id="p@1", formula_version="growth@1",
+            input_feature_ids=("market.return_3m",),
+            input_feature_run_ids=(identifier("run", "future"),),
+            input_feature_manifest_ids=(identifier("manifest", "future"),),
+        )
+
+    values = components(MARKET_COMPONENTS)
+    values["growth"] = replace(values["growth"], input_feature_run_ids=())
+    with pytest.raises(DataQualityError, match="STATE_FEATURE_LINEAGE_INCOMPLETE"):
+        build(MarketStateEngine(), values)
+
+    values = components(MARKET_COMPONENTS)
+    values["growth"] = replace(
+        values["growth"], information_cutoff=(CUTOFF - timedelta(seconds=1)).isoformat())
+    with pytest.raises(DataQualityError, match="STATE_COMPONENT_CONTEXT_MISMATCH"):
+        build(MarketStateEngine(), values)
+
+
+def test_component_id_and_normalization_contracts_fail_closed():
+    values = components(MARKET_COMPONENTS)
+    values["growth"] = replace(values["growth"], component_id="inflation")
+    with pytest.raises(DataQualityError, match="STATE_COMPONENT_ID_MISMATCH"):
+        build(MarketStateEngine(), values)
+
+    system = components(
+        SYSTEM_COMPONENTS, state_type=StateType.SYSTEM,
+        values={name: "NORMAL" for name in SYSTEM_COMPONENTS})
+    system["broker_health"] = replace(
+        system["broker_health"], normalization=StateNormalization.RAW)
+    with pytest.raises(DataQualityError, match="SYSTEM_STATE_NORMALIZATION_INVALID"):
+        build(SystemStateEngine(), system)
 
 
 def test_incomplete_components_and_regime_misuse_fail_closed():
     with pytest.raises(DataQualityError, match="STATE_COMPONENTS_INCOMPLETE"):
-        MarketStateEngine().build(as_of=NOW, components={}, policy=POLICY,
-                                  code_revision="git:abcdef0")
+        MarketStateEngine().build(
+            as_of=NOW, information_cutoff=CUTOFF, components={}, policy=POLICY,
+            code_revision="git:abcdef0")
     with pytest.raises(DataQualityError, match="REGIME_ONLY_AVAILABLE_FOR_MARKET_STATE"):
-        CompanyStateEngine().build(as_of=NOW, components=components(COMPANY_COMPONENTS),
-                                   policy=POLICY, code_revision="git:abcdef0", derive_regime=True)
+        build(CompanyStateEngine(), components(
+            COMPANY_COMPONENTS, state_type=StateType.COMPANY), derive_regime=True)
     invalid = components(MARKET_COMPONENTS, values={"growth": "RISK_ON"})
     with pytest.raises(DataQualityError, match="CONTINUOUS_STATE_VALUE_INVALID"):
-        MarketStateEngine().build(as_of=NOW, components=invalid, policy=POLICY,
-                                  code_revision="git:abcdef0")
+        build(MarketStateEngine(), invalid)
