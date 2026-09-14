@@ -32,6 +32,24 @@ def require_result(body: Any, endpoint: str) -> Any:
     return body["result"]
 
 
+def require_toss_buying_power(body: Any) -> Mapping[str, Any]:
+    """Validate the narrow Toss buying-power envelope at the canonical boundary.
+
+    Buying power remains an order constraint, never an accounting cash or NAV
+    source.  Keeping this parser here prevents cash-evidence validation from
+    importing the legacy ``toss_trading.contracts`` package.
+    """
+
+    result = require_result(body, "/api/v1/buying-power")
+    if not isinstance(result, dict):
+        raise DataQualityError("/api/v1/buying-power: expected result object")
+    if not result.get("currency") or result.get("cashBuyingPower") in (None, ""):
+        raise DataQualityError(
+            "/api/v1/buying-power: currency and cashBuyingPower are required"
+        )
+    return result
+
+
 def require_fields(value: Any, fields: Sequence[str], endpoint: str) -> Mapping[str, Any]:
     if not isinstance(value, dict):
         raise DataQualityError(f"{endpoint}: expected object")

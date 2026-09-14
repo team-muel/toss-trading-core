@@ -2,8 +2,10 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from toss_trading.contracts.toss import TossContractError, require_buying_power
-from asset_management.broker.contracts import require_decimal_string
+from asset_management.broker.contracts import (
+    require_decimal_string,
+    require_toss_buying_power,
+)
 from asset_management.data.immutable import canonical, digest
 from asset_management.data.raw_store import SQLiteRawResponseStore
 from asset_management.domain.errors import DataQualityError, ReconciliationError
@@ -38,13 +40,13 @@ def cash_state_from_buying_power(conn, *, source_response_id: str, account_id: s
             not raw.requested_at <= raw.received_at <= as_of or as_of - raw.requested_at > max_age):
         raise ReconciliationError('CASH_CONSTRAINT_FUTURE_OR_STALE')
     try:
-        result = require_buying_power(raw.body)
+        result = require_toss_buying_power(raw.body)
         if result['currency'] != currency:
             raise ReconciliationError('CASH_CONSTRAINT_CURRENCY_MISMATCH')
         value = require_decimal_string(result['cashBuyingPower'], 'cashBuyingPower')
         if value < 0:
             raise ReconciliationError('CASH_CONSTRAINT_NEGATIVE')
-    except (TossContractError, DataQualityError) as error:
+    except DataQualityError as error:
         raise ReconciliationError('CASH_CONSTRAINT_RESPONSE_INVALID') from error
     constraint = BrokerConstraint(value, raw.received_at, raw.requested_at + max_age, source_response_id)
     state = CashLedger(conn).state(account_id=account_id, currency=currency, as_of_utc=as_of,
