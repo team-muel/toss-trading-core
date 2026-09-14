@@ -147,6 +147,18 @@ def test_feature_snapshot_and_manifest_stay_atomically_bound_to_component():
         growth.input_features[0].snapshot.input_manifest_ids)
 
 
+def test_feature_evidence_and_quality_cannot_be_forged_upward():
+    source = feature_input("growth", Decimal("0.1"), QualityStatus.CONFLICT, suffix="bad-source")
+    base = components(MARKET_COMPONENTS)["growth"]
+    with pytest.raises(ValueError, match="STATE_FEATURE_QUALITY_UPGRADE_FORBIDDEN"):
+        replace(
+            base, quality_status=QualityStatus.VALID, input_features=(source,),
+            input_evidence_ids=(source.manifest_id,))
+    valid = feature_input("growth", Decimal("0.1"), QualityStatus.VALID, suffix="valid-source")
+    with pytest.raises(ValueError, match="STATE_FEATURE_EVIDENCE_MISSING"):
+        replace(base, input_features=(valid,), input_evidence_ids=(identifier("other", "evidence"),))
+
+
 def test_each_component_can_be_recomputed_without_changing_others():
     engine = MarketStateEngine()
     original = build(engine, components(MARKET_COMPONENTS))
@@ -273,8 +285,7 @@ def test_component_time_and_lineage_fail_closed():
             information_cutoff=(NOW + timedelta(seconds=1)).isoformat(),
             confidence=Decimal("0.9"), quality_status=QualityStatus.VALID,
             freshness_seconds=1, input_evidence_ids=(identifier("evidence", "future"),),
-            parameter_set_id="p@1", formula_version="growth@1",
-            input_features=(feature_input("growth", Decimal("0.1"), QualityStatus.VALID),),
+            parameter_set_id="p@1", formula_version="growth@1", input_features=(),
         )
 
     values = components(MARKET_COMPONENTS)
@@ -307,7 +318,8 @@ def test_expired_or_future_feature_reference_fails_closed():
         as_of=(NOW + timedelta(seconds=1)).isoformat())
     future_ref = StateFeatureInput(future_snapshot, identifier("feature-manifest", "future"))
     with pytest.raises(ValueError, match="STATE_FEATURE_CONTEXT_INVALID"):
-        replace(components(MARKET_COMPONENTS)["growth"], input_features=(future_ref,))
+        replace(components(MARKET_COMPONENTS)["growth"], input_features=(future_ref,),
+                input_evidence_ids=(future_ref.manifest_id,))
 
 
 def test_component_id_and_normalization_contracts_fail_closed():
