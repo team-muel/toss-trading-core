@@ -1,0 +1,78 @@
+{
+  "schema_version": "legacy-boundary-inventory@1",
+  "canonical_asset_management_toss_import_allowlist": {
+    "src/asset_management/broker/toss_read.py": [
+      "toss_trading.broker.toss",
+      "toss_trading.contracts.toss"
+    ]
+  },
+  "toss_trading_source_classification": {
+    "canonical_read_only_toss_compatibility_adapter": [
+      "src/toss_trading/broker/**",
+      "src/toss_trading/contracts/**",
+      "src/toss_trading/runtime/rate_limit.py"
+    ],
+    "legacy_research_runtime": [
+      "src/toss_trading/cli/**",
+      "src/toss_trading/research/**",
+      "src/toss_trading/runtime/__init__.py",
+      "src/toss_trading/runtime/jsonlog.py",
+      "src/toss_trading/runtime/secret_manager.py"
+    ],
+    "historical_reader_cli": [
+      "src/toss_trading/__init__.py",
+      "src/toss_trading/account/**",
+      "src/toss_trading/data/**",
+      "src/toss_trading/resources.py"
+    ]
+  },
+  "packaging_entry_points": {
+    "toss-research-ingest-bars": "toss_trading.cli.research_ingest_bars:main",
+    "toss-research-backtest": "toss_trading.cli.research_backtest:main",
+    "toss-research-collect-toss": "toss_trading.cli.research_collect_toss:main",
+    "toss-research-collect-toss-reference": "toss_trading.cli.research_collect_toss_reference:main",
+    "toss-research-collect-tiingo": "toss_trading.cli.research_collect_tiingo:main",
+    "toss-research-collect-sec": "toss_trading.cli.research_collect_sec:main",
+    "toss-research-collect-fred": "toss_trading.cli.research_collect_fred:main",
+    "toss-research-export-cost-model": "toss_trading.cli.research_export_cost_model:main",
+    "toss-research-validate-bars": "toss_trading.cli.research_validate_bars:main",
+    "toss-research-validate-instruments": "toss_trading.cli.research_validate_instruments:main",
+    "toss-research-automation": "toss_trading.cli.research_automation:main",
+    "toss-research-reporting": "toss_trading.cli.research_reporting:main",
+    "toss-research-plan-hypotheses": "toss_trading.cli.research_plan_hypotheses:main",
+    "toss-research-evaluate-hypotheses": "toss_trading.cli.research_evaluate_hypotheses:main",
+    "toss-research-recommend-stocks": "toss_trading.cli.research_recommend_stocks:main",
+    "toss-research-collect-massive": "toss_trading.cli.research_collect_massive:main",
+    "toss-research-validate-focus-dossier": "toss_trading.cli.research_validate_focus_dossier:main"
+  },
+  "legacy_cli_modules": [
+    "src/toss_trading/cli/research_automation.py",
+    "src/toss_trading/cli/research_backtest.py",
+    "src/toss_trading/cli/research_collect_fred.py",
+    "src/toss_trading/cli/research_collect_massive.py",
+    "src/toss_trading/cli/research_collect_sec.py",
+    "src/toss_trading/cli/research_collect_tiingo.py",
+    "src/toss_trading/cli/research_collect_toss.py",
+    "src/toss_trading/cli/research_collect_toss_reference.py",
+    "src/toss_trading/cli/research_evaluate_hypotheses.py",
+    "src/toss_trading/cli/research_export_cost_model.py",
+    "src/toss_trading/cli/research_ingest_bars.py",
+    "src/toss_trading/cli/research_plan_hypotheses.py",
+    "src/toss_trading/cli/research_recommend_stocks.py",
+    "src/toss_trading/cli/research_record_observation.py",
+    "src/toss_trading/cli/research_reporting.py",
+    "src/toss_trading/cli/research_upload_gcs.py",
+    "src/toss_trading/cli/research_validate_bars.py",
+    "src/toss_trading/cli/research_validate_focus_dossier.py",
+    "src/toss_trading/cli/research_validate_instruments.py"
+  ],
+  "systemd_units": [
+    "deploy/systemd/toss-research-automation@.service",
+    "deploy/systemd/toss-research-daily.timer",
+    "deploy/systemd/toss-research-prune.service",
+    "deploy/systemd/toss-research-prune.timer",
+    "deploy/systemd/toss-research-weekly.timer",
+    "deploy/systemd/toss-stock-recommendations.service",
+    "deploy/systemd/toss-stock-recommendations.timer"
+  ]
+}
