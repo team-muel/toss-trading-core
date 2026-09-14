@@ -1,7 +1,7 @@
 """Canonical PIT construction of MarketState from immutable Feature snapshots.
 
-The builder is deliberately representation-only.  It does not infer regimes, select assets,
-or create Forecast/Risk authority.  A component binding is an explicit, content-addressed
+The builder is deliberately representation-only. It does not infer regimes, select assets,
+or create Forecast/Risk authority. A component binding is an explicit, content-addressed
 contract; the initial built-in foundation spec leaves every economically unresolved dimension
 unavailable instead of inventing proxies.
 """
@@ -16,6 +16,7 @@ from typing import Mapping
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.domain.errors import DataQualityError
 from asset_management.features.registry import FeatureRegistry
+from asset_management.features.store import identity_for_request
 from asset_management.quality.models import QualityStatus
 
 from .market import MARKET_COMPONENTS, MarketStateEngine
@@ -119,8 +120,8 @@ def foundation_market_state_spec() -> MarketStateSpec:
     """Current approved foundation: preserve unresolved dimensions as unavailable.
 
     Phase-0 found no reviewed Feature->State economic binding on master for any of the nine
-    dimensions.  Existing Feature names remain candidate inputs, not authority to promote a
-    value into MarketState.  Adding a direct binding therefore requires a code-reviewed spec
+    dimensions. Existing Feature names remain candidate inputs, not authority to promote a
+    value into MarketState. Adding a direct binding therefore requires a code-reviewed spec
     change rather than an implicit name match.
     """
     return MarketStateSpec(
@@ -265,6 +266,8 @@ class MarketStateBuilder:
         if (feature_as_of > as_of or feature_cutoff > cutoff or
                 snapshot.validity.valid_until <= as_of):
             raise DataQualityError("MARKET_STATE_FEATURE_CONTEXT_INVALID")
+        if snapshot.input_manifest_ids != tuple(sorted(set(snapshot.input_manifest_ids))):
+            raise DataQualityError("MARKET_STATE_FEATURE_LINEAGE_INVALID")
         try:
             definition = self.feature_registry.get(snapshot.feature_id)
             manifest, body = self.store.read(item.manifest_id)
@@ -272,6 +275,8 @@ class MarketStateBuilder:
                                 for identifier in snapshot.input_manifest_ids]
         except (FileNotFoundError, ValueError):
             raise DataQualityError("MARKET_STATE_FEATURE_MANIFEST_UNVERIFIED") from None
+        if not parent_manifests:
+            raise DataQualityError("MARKET_STATE_FEATURE_MANIFEST_INVALID")
 
         definition_id = digest(canonical(asdict(definition)))
         definition_path = self.store.layout.resolve(
@@ -298,13 +303,38 @@ class MarketStateBuilder:
             "validity": snapshot.validity.payload(),
             "feature_definition_catalog_id": definition_id,
         }
+        try:
+            manifest_retrieved = datetime.fromisoformat(manifest.retrieved_at).astimezone(timezone.utc)
+            manifest_available = datetime.fromisoformat(manifest.available_at).astimezone(timezone.utc)
+            manifest_provider = datetime.fromisoformat(manifest.provider_timestamp).astimezone(timezone.utc)
+            parent_available = tuple(
+                datetime.fromisoformat(parent.available_at).astimezone(timezone.utc)
+                for parent in parent_manifests
+            )
+            parent_provider = tuple(
+                datetime.fromisoformat(parent.provider_timestamp).astimezone(timezone.utc)
+                for parent in parent_manifests
+            )
+        except (TypeError, ValueError):
+            raise DataQualityError("MARKET_STATE_FEATURE_MANIFEST_INVALID") from None
+        parent_sources = {parent.source for parent in parent_manifests}
+        parent_licenses = {parent.license_tag for parent in parent_manifests}
+        expected_request_hash = digest(canonical(identity_for_request(snapshot, definition_id)))
         if (manifest.layer != "gold" or manifest.dataset != "feature-snapshot" or
                 manifest.schema_version != "phase11-feature-snapshot-v1" or
                 manifest.quality_status != "VALID" or
-                datetime.fromisoformat(manifest.available_at).astimezone(timezone.utc) > cutoff or
+                manifest_retrieved != feature_as_of or manifest_available != feature_as_of or
+                manifest_available > cutoff or
                 manifest.code_revision != snapshot.code_revision or
-                tuple(sorted(manifest.parent_manifest_ids)) != tuple(sorted(snapshot.input_manifest_ids)) or
-                not isinstance(body, dict) or body != expected or
-                any(datetime.fromisoformat(parent.available_at).astimezone(timezone.utc) > feature_cutoff
-                    for parent in parent_manifests)):
+                manifest.request_hash != expected_request_hash or
+                tuple(sorted(manifest.parent_manifest_ids)) != snapshot.input_manifest_ids or
+                any(parent.layer != "silver" or parent.quality_status != "VALID"
+                    for parent in parent_manifests) or
+                any(available > feature_cutoff for available in parent_available) or
+                not any(parent.dataset == "historical-universe" for parent in parent_manifests) or
+                len(parent_sources) != 1 or len(parent_licenses) != 1 or
+                manifest.source != next(iter(parent_sources)) or
+                manifest.license_tag != next(iter(parent_licenses)) or
+                manifest_provider != max(parent_provider) or
+                not isinstance(body, dict) or body != expected):
             raise DataQualityError("MARKET_STATE_FEATURE_MANIFEST_INVALID")
