@@ -42,7 +42,9 @@ Until then this layer preserves the evidence coordinates without overstating sou
 
 This is a new internal contract generation. Existing historical v1 catalog objects remain
 historical evidence; they are not silently reinterpreted as v2 and they do not acquire the
-new semantic guarantees retroactively.
+new semantic guarantees retroactively. The later `reason_code` field is an optional v2
+extension so the earliest v2 payloads produced by AMA-175 remain schema-compatible; new
+unavailable components, however, are required by the runtime contract to supply it.
 
 ## Feature-derived continuous states
 
@@ -58,6 +60,7 @@ A component may instead be **explicitly unavailable** without fabricating featur
 For Market/Company this is allowed only when all of the following are true:
 
 - `value` is `None`
+- `confidence` is exactly zero
 - quality is one of `MISSING`, `PRIMARY_PENDING`, `BLOCKED`, or `QUARANTINED`
 - `reason_code` is present, for example `UNMAPPED_COMPONENT`
 - immutable evidence IDs are still present
@@ -129,7 +132,7 @@ does not falsely claim that a graph exists when one has not been materialized.
 - State values have explicit semantic/unit/normalization contracts
 - snapshot and component PIT context agree exactly
 - available Market/Company components retain atomically grouped FeatureSnapshot + manifest coordinates
-- unavailable Market/Company components are explicit, blocking and never fabricate feature lineage
+- unavailable Market/Company components are explicit, zero-confidence, blocking and never fabricate feature lineage
 - expired/future FeatureSnapshot references fail closed
 - component quality cannot silently upgrade worse source-feature quality
 - Portfolio/System are not forced to fabricate feature lineage
