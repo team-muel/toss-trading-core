@@ -8,11 +8,13 @@ import pytest
 
 from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.domain.errors import DataQualityError
+from asset_management.domain.horizon import DecayProfile, SignalValidity
+from asset_management.features.models import FeatureSnapshot
 from asset_management.quality.models import QualityStatus
 from asset_management.states import (
     CompanyStateEngine, MarketStateEngine, OperationalState, PortfolioStateEngine,
-    StateComponent, StateNormalization, StatePolicy, StateRepository, StateType,
-    SystemStateEngine,
+    StateComponent, StateFeatureInput, StateNormalization, StatePolicy, StateRepository,
+    StateType, SystemStateEngine,
 )
 from asset_management.states.company import COMPANY_COMPONENTS
 from asset_management.states.market import MARKET_COMPONENTS
@@ -22,11 +24,31 @@ from asset_management.states.system import SYSTEM_COMPONENTS
 
 NOW = datetime(2026, 9, 5, 12, tzinfo=timezone.utc)
 CUTOFF = NOW - timedelta(minutes=1)
+VALIDITY = SignalValidity(21, 21, NOW + timedelta(days=30), DecayProfile.STEP)
 POLICY = StatePolicy("state-policy-v1", Decimal("0.8"), Decimal("0.5"), 300)
 
 
 def identifier(*parts: str) -> str:
     return sha256(":".join(parts).encode("utf-8")).hexdigest()
+
+
+def feature_input(name: str, value: object, quality: QualityStatus, *, suffix: str = "") -> StateFeatureInput:
+    tag = f"{name}:{suffix}" if suffix else name
+    snapshot = FeatureSnapshot(
+        feature_run_id=identifier("feature-run", tag),
+        instrument_id="STATE_INPUT",
+        feature_id=f"feature.{name}",
+        as_of=NOW.isoformat(),
+        information_cutoff=CUTOFF.isoformat(),
+        value=str(value) if value is not None else None,
+        quality_status=quality.value,
+        input_manifest_ids=(identifier("source-manifest", tag),),
+        parameter_set_id="feature-params-v1",
+        parent_state_id=None,
+        code_revision="git:abcdef0",
+        validity=VALIDITY,
+    )
+    return StateFeatureInput(snapshot, identifier("feature-manifest", tag))
 
 
 def components(names, *, state_type=StateType.MARKET, confidence="0.9",
@@ -51,9 +73,11 @@ def components(names, *, state_type=StateType.MARKET, confidence="0.9",
             unit = "1"
         has_feature_lineage = (state_type in {StateType.MARKET, StateType.COMPANY}
                                if feature_lineage is None else feature_lineage)
+        feature = feature_input(name, value, quality) if has_feature_lineage else None
+        evidence_id = feature.manifest_id if feature is not None else identifier("evidence", name)
         result[name] = StateComponent(
-            component_id=name,
             value=value,
+            component_id=name,
             semantic_type=semantic_type,
             unit=unit,
             normalization=norm,
@@ -62,14 +86,10 @@ def components(names, *, state_type=StateType.MARKET, confidence="0.9",
             confidence=Decimal(confidence),
             quality_status=quality,
             freshness_seconds=freshness,
-            input_evidence_ids=(identifier("evidence", name),),
+            input_evidence_ids=(evidence_id,),
             parameter_set_id="state-components-v1",
             formula_version=f"{name}@1",
-            input_feature_ids=((f"feature.{name}",) if has_feature_lineage else ()),
-            input_feature_run_ids=((identifier("feature-run", name),)
-                                   if has_feature_lineage else ()),
-            input_feature_manifest_ids=((identifier("feature-manifest", name),)
-                                        if has_feature_lineage else ()),
+            input_features=((feature,) if feature is not None else ()),
         )
     return result
 
@@ -114,15 +134,27 @@ def test_market_state_stays_continuous_and_regime_requires_declared_centered_sem
     assert len(labelled.components) == 9
 
 
+def test_feature_snapshot_and_manifest_stay_atomically_bound_to_component():
+    state = build(MarketStateEngine(), components(MARKET_COMPONENTS))
+    growth = state.components["growth"]
+    payload = growth.payload()
+    assert len(payload["input_features"]) == 1
+    reference = payload["input_features"][0]
+    assert reference["snapshot"]["feature_id"] == "feature.growth"
+    assert reference["snapshot"]["feature_run_id"] == growth.input_features[0].snapshot.feature_run_id
+    assert reference["manifest_id"] == growth.input_features[0].manifest_id
+    assert reference["snapshot"]["input_manifest_ids"] == list(
+        growth.input_features[0].snapshot.input_manifest_ids)
+
+
 def test_each_component_can_be_recomputed_without_changing_others():
     engine = MarketStateEngine()
     original = build(engine, components(MARKET_COMPONENTS))
+    replacement_feature = feature_input("growth", Decimal("0.8"), QualityStatus.VALID, suffix="new")
     replacement = replace(
         original.components["growth"], value=Decimal("0.8"), confidence=Decimal("0.95"),
-        freshness_seconds=5, input_feature_ids=("feature.growth.new",),
-        input_feature_run_ids=(identifier("feature-run", "growth-new"),),
-        input_feature_manifest_ids=(identifier("feature-manifest", "growth-new"),),
-        input_evidence_ids=(identifier("evidence", "growth-new"),),
+        freshness_seconds=5, input_features=(replacement_feature,),
+        input_evidence_ids=(replacement_feature.manifest_id,),
     )
     revised = engine.recompute_component(
         original, component_name="growth", component=replacement, as_of=NOW,
@@ -147,6 +179,7 @@ def test_portfolio_state_preserves_truth_and_risk_structures_without_fake_featur
     assert state.components["cash_by_currency"].value["USD"] == Decimal("1000")
     assert state.components["open_orders"].value == ["order-1"]
     assert state.input_feature_ids == ()
+    assert state.input_feature_manifest_ids == ()
     assert state.input_evidence_ids
 
 
@@ -187,9 +220,11 @@ def test_stale_or_invalid_component_blocks_new_trades():
     assert stale.operational_state is OperationalState.NO_NEW_TRADES
     assert stale.risk_multiplier == "0"
     invalid = components(MARKET_COMPONENTS)
+    invalid_feature = feature_input("credit", None, QualityStatus.CONFLICT, suffix="conflict")
     invalid["credit"] = replace(
         invalid["credit"], value=None, confidence=Decimal("0"),
-        quality_status=QualityStatus.CONFLICT)
+        quality_status=QualityStatus.CONFLICT, input_features=(invalid_feature,),
+        input_evidence_ids=(invalid_feature.manifest_id,))
     blocked = build(MarketStateEngine(), invalid)
     assert blocked.quality_status is QualityStatus.CONFLICT
     assert blocked.operational_state is OperationalState.NO_NEW_TRADES
@@ -205,6 +240,7 @@ def test_common_fields_preserve_pit_and_feature_lineage():
     assert state.freshness == 10 and len(state.input_feature_ids) == len(COMPANY_COMPONENTS)
     assert len(state.input_feature_run_ids) == len(COMPANY_COMPONENTS)
     assert len(state.input_feature_manifest_ids) == len(COMPANY_COMPONENTS)
+    assert len(state.input_data_manifest_ids) == len(COMPANY_COMPONENTS)
     assert len(state.input_evidence_ids) == len(COMPANY_COMPONENTS)
     assert state.policy_version == "state-policy-v1" and state.code_revision == "git:abcdef0"
 
@@ -226,32 +262,52 @@ def test_state_snapshot_is_deterministic_and_semantic_metadata_changes_identity(
     assert payload["schema_version"] == "state-snapshot-v2"
     assert payload["information_cutoff"] == CUTOFF.isoformat()
     assert payload["components"]["growth"]["normalization"] == "RAW"
+    assert payload["input_data_manifest_ids"] == list(first.input_data_manifest_ids)
 
 
 def test_component_time_and_lineage_fail_closed():
     with pytest.raises(ValueError, match="STATE_COMPONENT_CUTOFF_AFTER_AS_OF"):
         StateComponent(
-            component_id="growth", value=Decimal("0.1"), semantic_type="GROWTH_STATE",
+            value=Decimal("0.1"), component_id="growth", semantic_type="GROWTH_STATE",
             unit="1", normalization=StateNormalization.RAW, as_of=NOW.isoformat(),
             information_cutoff=(NOW + timedelta(seconds=1)).isoformat(),
             confidence=Decimal("0.9"), quality_status=QualityStatus.VALID,
             freshness_seconds=1, input_evidence_ids=(identifier("evidence", "future"),),
             parameter_set_id="p@1", formula_version="growth@1",
-            input_feature_ids=("market.return_3m",),
-            input_feature_run_ids=(identifier("run", "future"),),
-            input_feature_manifest_ids=(identifier("manifest", "future"),),
+            input_features=(feature_input("growth", Decimal("0.1"), QualityStatus.VALID),),
         )
 
     values = components(MARKET_COMPONENTS)
-    values["growth"] = replace(values["growth"], input_feature_run_ids=())
+    values["growth"] = replace(values["growth"], input_features=())
     with pytest.raises(DataQualityError, match="STATE_FEATURE_LINEAGE_INCOMPLETE"):
         build(MarketStateEngine(), values)
 
     values = components(MARKET_COMPONENTS)
     values["growth"] = replace(
-        values["growth"], information_cutoff=(CUTOFF - timedelta(seconds=1)).isoformat())
+        values["growth"], information_cutoff=(CUTOFF + timedelta(seconds=10)).isoformat())
     with pytest.raises(DataQualityError, match="STATE_COMPONENT_CONTEXT_MISMATCH"):
         build(MarketStateEngine(), values)
+
+
+def test_expired_or_future_feature_reference_fails_closed():
+    snapshot = FeatureSnapshot(
+        feature_run_id=identifier("feature-run", "expired"), instrument_id="STATE_INPUT",
+        feature_id="feature.growth", as_of=NOW.isoformat(), information_cutoff=CUTOFF.isoformat(),
+        value="0.1", quality_status=QualityStatus.VALID.value,
+        input_manifest_ids=(identifier("source-manifest", "expired"),),
+        parameter_set_id="feature-params-v1", parent_state_id=None,
+        code_revision="git:abcdef0",
+        validity=SignalValidity(21, 21, NOW, DecayProfile.STEP),
+    )
+    with pytest.raises(ValueError, match="STATE_FEATURE_TIME_INVALID"):
+        StateFeatureInput(snapshot, identifier("feature-manifest", "expired"))
+
+    future_snapshot = replace(
+        feature_input("growth", Decimal("0.1"), QualityStatus.VALID).snapshot,
+        as_of=(NOW + timedelta(seconds=1)).isoformat())
+    future_ref = StateFeatureInput(future_snapshot, identifier("feature-manifest", "future"))
+    with pytest.raises(ValueError, match="STATE_FEATURE_CONTEXT_INVALID"):
+        replace(components(MARKET_COMPONENTS)["growth"], input_features=(future_ref,))
 
 
 def test_component_id_and_normalization_contracts_fail_closed():
