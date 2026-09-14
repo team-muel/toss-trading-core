@@ -64,6 +64,35 @@ component `parameter_set_id` and is included in State identity. A caller may con
 research spec, but no binding is hidden: downstream approval of a spec hash is a separate
 authority concern for AMA-177/179.
 
+## AMA-33 contract reconciliation
+
+AMA-33 specified a Market/Macro Feature Set v1 containing 1/3/6/12-month returns, 12-1
+momentum, 20/60-day realized volatility, drawdown, moving-average distance, volume trend,
+breadth, yield-curve slope, credit spread, and macro level/change/surprise/revision/age.
+The current built-in `FeatureRegistry` is not identical to that contract:
+
+| AMA-33 feature family | Current registry | AMA-176 disposition |
+| --- | --- | --- |
+| return 1/3/6/12m | `market.return_1m/3m/6m/12m` | present; not itself a reviewed State-axis binding |
+| 12-1 momentum | `market.momentum_12_1` | present; candidate trend input only |
+| realized volatility 20/60d | `market.volatility_20d/60d` | present; canonical horizon/normalization unresolved |
+| drawdown | `market.drawdown` | present; no dedicated MarketState axis |
+| moving-average distance | `market.moving_average_distance` | present; candidate trend input only |
+| volume trend | `market.volume_trend` | present; not equivalent to an approved liquidity State contract |
+| breadth | `market.breadth` | present; candidate breadth input, used only by synthetic direct-binding tests here |
+| yield-curve slope | absent | unresolved; rates remains unavailable |
+| credit spread | `market.credit_spread` | present; candidate credit input, but direction/scale semantics are not approved as State identity |
+| macro level/change/surprise/revision/age | absent | unresolved; macro convergence belongs to AMA-178 |
+| not in AMA-33 | `market.gold_slope` | registry extension; no automatic State promotion |
+
+`FeatureDefinition` also does not currently carry an explicit unit field. Therefore
+`MarketStateBuilder` cannot safely infer component units or economic semantics from the
+registry. Units, semantic type, source instrument, formula version, and any future approved
+binding must be explicit in the content-addressed `MarketStateSpec`.
+
+This reconciliation is why the built-in foundation spec does not silently treat a similar
+Feature name as an approved State dimension.
+
 ## Foundation spec
 
 The built-in `market-state-foundation@1` spec intentionally has **zero active Feature
@@ -71,9 +100,19 @@ bindings**.
 
 Phase-0 found candidate Features for some dimensions, but it did not find a reviewed
 economic contract authorizing any existing Feature to become a particular MarketState axis.
-For example, `market.credit_spread` being present does not by itself authorize an identity
-mapping into the `credit` State component, and the existence of 20d/60d volatility Features
-does not select a canonical volatility horizon.
+The current disposition is therefore:
+
+| MarketState dimension | Current status |
+| --- | --- |
+| growth | unavailable; no canonical growth Feature binding |
+| inflation | unavailable; macro feature family absent from current registry |
+| liquidity | unavailable; `volume_trend` is not silently treated as liquidity |
+| rates | unavailable; yield-curve slope absent from current registry |
+| credit | unavailable; `market.credit_spread` remains an unapproved candidate |
+| volatility | unavailable; 20d vs 60d and normalization semantics unresolved |
+| trend | unavailable; momentum/MA/gold candidates are not a canonical binding |
+| breadth | unavailable in foundation; `market.breadth` is exercised only by a synthetic reviewed test spec |
+| valuation | unavailable; no canonical market-valuation Feature binding |
 
 Therefore all nine dimensions are currently represented as:
 
@@ -86,6 +125,22 @@ Therefore all nine dimensions are currently represented as:
 
 This produces a deterministic, explicit, fail-closed MarketState (`NO_NEW_TRADES`) rather
 than an apparently complete State built from unreviewed proxies.
+
+## CalculationLineage boundary
+
+AMA-37 `CalculationLineageGraph` is reserved for an actual calculation chain with
+`RAW_DATA → FEATURE → INTERMEDIATE_CALCULATION → FINAL_ESTIMATE`. AMA-176 `DIRECT_FEATURE`
+performs no new statistical calculation: it re-verifies one already-published Feature and
+copies its exact value under an explicit State binding. It therefore does **not** fabricate a
+four-stage graph merely to make `calculation_lineage_id` non-null.
+
+Raw/source provenance remains recoverable through the verified Feature gold manifest and its
+recursively verified silver/bronze manifest DAG. If a future State component introduces a
+z-score, composite, normalization, weighting, or other calculation, that work is outside
+`DIRECT_FEATURE`: it must materialize and publish a real `CalculationLineageGraph`, place the
+graph ID in `StateComponent.calculation_lineage_id`, and include that ID in component evidence.
+This preserves the AMA-175 rule that lineage graphs are cited when they exist and are never
+invented when they do not.
 
 ## Missing approved input
 
