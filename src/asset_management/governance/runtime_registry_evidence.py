@@ -203,6 +203,25 @@ class RuntimeModelRegistryEvidenceRepository:
         authorization = registry.authorize(model_key, scope, at=cutoff)
         return RuntimeModelAuthorization(runtime_run_id, snapshot_id, binding_hash, authorization)
 
+    def authorized_model_keys(self, runtime_run_id: str, *, scope: ModelScope) -> tuple[str, ...]:
+        """Enumerate active models only from the persisted runtime binding.
+
+        Readiness tooling must not accept a caller-selected model key.  This
+        method derives the candidates from the immutable selected snapshot and
+        applies the same point-in-time authorization check as ``authorize``.
+        """
+        if not isinstance(scope, ModelScope):
+            raise InvariantViolation("MODEL_SCOPE_NOT_APPROVED")
+        registry, _, _, cutoff, _ = self._selected(runtime_run_id)
+        authorized: list[str] = []
+        for key in sorted(registry.models):
+            try:
+                registry.authorize(key, scope, at=cutoff)
+            except InvariantViolation:
+                continue
+            authorized.append(key)
+        return tuple(authorized)
+
     def require_authorization(self, runtime_authorization: RuntimeModelAuthorization, *,
                               model_key: str, scope: ModelScope, at: datetime) -> ModelRegistry:
         """Re-read the persisted binding before allowing a model calculation."""
