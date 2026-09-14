@@ -17,4 +17,5 @@ class PortfolioStateEngine(StateEngine):
             raise ValueError("PORTFOLIO_STATE_CONTRACT_UNKNOWN")
         self.contract_version = contract_version
         names = LEGACY_PORTFOLIO_COMPONENTS if contract_version == "portfolio-state@1" else PORTFOLIO_COMPONENTS
-        super().__init__(state_type=StateType.PORTFOLIO, component_names=names)
+        super().__init__(state_type=StateType.PORTFOLIO, component_names=names,
+                         allow_legacy_cutoff_inference=contract_version == "portfolio-state@1")
