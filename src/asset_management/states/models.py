@@ -20,6 +20,13 @@ _HASH = re.compile(r"[0-9a-f]{64}")
 _COMPONENT_ID = re.compile(r"[a-z][a-z0-9_.-]*")
 _SEMANTIC = re.compile(r"[A-Z][A-Z0-9_]*")
 _CODE_REVISION = re.compile(r"git:[0-9a-f]{7,40}")
+_QUALITY_ORDER = (
+    QualityStatus.QUARANTINED, QualityStatus.BLOCKED, QualityStatus.CONFLICT,
+    QualityStatus.MISSING, QualityStatus.STALE, QualityStatus.PRIMARY_PENDING,
+    QualityStatus.VENDOR_DELAY, QualityStatus.ESTIMATED, QualityStatus.MANUAL,
+    QualityStatus.VALID,
+)
+_QUALITY_RANK = {status: rank for rank, status in enumerate(_QUALITY_ORDER)}
 
 
 class StateType(StrEnum):
@@ -77,7 +84,7 @@ def _feature_snapshot_payload(snapshot: FeatureSnapshot) -> dict[str, object]:
         "information_cutoff": snapshot.information_cutoff,
         "value": snapshot.value,
         "quality_status": snapshot.quality_status,
-        "input_manifest_ids": list(snapshot.input_manifest_ids),
+        "input_manifest_ids": sorted(snapshot.input_manifest_ids),
         "parameter_set_id": snapshot.parameter_set_id,
         "parent_state_id": snapshot.parent_state_id,
         "code_revision": snapshot.code_revision,
@@ -87,20 +94,21 @@ def _feature_snapshot_payload(snapshot: FeatureSnapshot) -> dict[str, object]:
 
 @dataclass(frozen=True)
 class StateFeatureInput:
-    """One immutable FeatureSnapshot and the gold manifest that published it."""
+    """FeatureSnapshot plus its claimed publishing manifest; builders verify store contents."""
 
     snapshot: FeatureSnapshot
     manifest_id: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.snapshot, FeatureSnapshot) or not _HASH.fullmatch(self.manifest_id):
+        if (not isinstance(self.snapshot, FeatureSnapshot) or
+                not isinstance(self.manifest_id, str) or not _HASH.fullmatch(self.manifest_id)):
             raise ValueError("STATE_FEATURE_INPUT_INVALID")
         snapshot = self.snapshot
-        if (not _HASH.fullmatch(snapshot.feature_run_id) or
+        if (not isinstance(snapshot.feature_run_id, str) or not _HASH.fullmatch(snapshot.feature_run_id) or
                 not isinstance(snapshot.instrument_id, str) or not snapshot.instrument_id.strip() or
                 not isinstance(snapshot.feature_id, str) or not snapshot.feature_id.strip() or
                 not isinstance(snapshot.parameter_set_id, str) or not snapshot.parameter_set_id.strip() or
-                not _CODE_REVISION.fullmatch(snapshot.code_revision) or
+                not isinstance(snapshot.code_revision, str) or not _CODE_REVISION.fullmatch(snapshot.code_revision) or
                 not isinstance(snapshot.validity, SignalValidity) or
                 snapshot.quality_status not in {status.value for status in QualityStatus}):
             raise ValueError("STATE_FEATURE_SNAPSHOT_INVALID")
@@ -151,11 +159,13 @@ class StateComponent:
             raise ValueError("STATE_CONFIDENCE_INVALID")
         if type(self.freshness_seconds) is not int or self.freshness_seconds < 0:
             raise ValueError("STATE_FRESHNESS_INVALID")
-        object.__setattr__(self, "input_evidence_ids", _identifiers(
-            self.input_evidence_ids, hashes=True, reason="STATE_EVIDENCE_LINEAGE_INVALID"))
-        if (len(self.input_features) != len({(item.snapshot.feature_run_id, item.manifest_id)
-                                             for item in self.input_features}) or
-                any(not isinstance(item, StateFeatureInput) for item in self.input_features)):
+        evidence_ids = _identifiers(
+            self.input_evidence_ids, hashes=True, reason="STATE_EVIDENCE_LINEAGE_INVALID")
+        object.__setattr__(self, "input_evidence_ids", evidence_ids)
+        if any(not isinstance(item, StateFeatureInput) for item in self.input_features):
+            raise ValueError("STATE_FEATURE_INPUTS_INVALID")
+        if len(self.input_features) != len({(item.snapshot.feature_run_id, item.manifest_id)
+                                            for item in self.input_features}):
             raise ValueError("STATE_FEATURE_INPUTS_INVALID")
         ordered = tuple(sorted(
             self.input_features,
@@ -168,9 +178,20 @@ class StateComponent:
             if (feature_as_of > as_of or feature_cutoff > cutoff or
                     item.snapshot.validity.valid_until <= as_of):
                 raise ValueError("STATE_FEATURE_CONTEXT_INVALID")
+        if ordered:
+            feature_manifest_ids = {item.manifest_id for item in ordered}
+            if not feature_manifest_ids <= set(evidence_ids):
+                raise ValueError("STATE_FEATURE_EVIDENCE_MISSING")
+            worst_source_rank = min(_QUALITY_RANK[QualityStatus(item.snapshot.quality_status)]
+                                    for item in ordered)
+            if _QUALITY_RANK[self.quality_status] > worst_source_rank:
+                raise ValueError("STATE_FEATURE_QUALITY_UPGRADE_FORBIDDEN")
         object.__setattr__(self, "input_features", ordered)
-        if self.calculation_lineage_id is not None and not _HASH.fullmatch(self.calculation_lineage_id):
-            raise ValueError("STATE_CALCULATION_LINEAGE_INVALID")
+        if self.calculation_lineage_id is not None:
+            if not _HASH.fullmatch(self.calculation_lineage_id):
+                raise ValueError("STATE_CALCULATION_LINEAGE_INVALID")
+            if self.calculation_lineage_id not in evidence_ids:
+                raise ValueError("STATE_CALCULATION_EVIDENCE_MISSING")
         object.__setattr__(self, "as_of", as_of.isoformat())
         object.__setattr__(self, "information_cutoff", cutoff.isoformat())
 
@@ -283,11 +304,7 @@ def state_identity(*, state_type: StateType, as_of: datetime, information_cutoff
 
 
 def worst_quality(components: Mapping[str, StateComponent]) -> QualityStatus:
-    order = (QualityStatus.QUARANTINED, QualityStatus.BLOCKED, QualityStatus.CONFLICT,
-             QualityStatus.MISSING, QualityStatus.STALE, QualityStatus.PRIMARY_PENDING,
-             QualityStatus.VENDOR_DELAY, QualityStatus.ESTIMATED, QualityStatus.MANUAL,
-             QualityStatus.VALID)
-    return next(status for status in order
+    return next(status for status in _QUALITY_ORDER
                 if any(component.quality_status is status for component in components.values()))
 
 
