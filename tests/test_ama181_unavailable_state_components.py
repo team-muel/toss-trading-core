@@ -107,6 +107,7 @@ def test_unmapped_component_is_explicit_without_fabricated_feature_lineage():
 
     assert state.components["growth"].value is None
     assert state.components["growth"].reason_code == "UNMAPPED_COMPONENT"
+    assert state.components["growth"].confidence == Decimal("0")
     assert state.components["growth"].input_features == ()
     assert "market.growth" not in state.input_feature_ids
     assert state.quality_status is QualityStatus.MISSING
@@ -122,21 +123,19 @@ def test_successful_market_component_cannot_omit_feature_lineage():
         build(values)
 
 
-def test_unavailable_component_requires_none_value_blocking_quality_and_reason():
+def test_unavailable_component_requires_none_value_blocking_quality_zero_confidence_and_reason():
     values = market_components()
     missing = unavailable_component("growth")
 
-    values["growth"] = replace(missing, reason_code=None)
-    with pytest.raises(DataQualityError, match="STATE_COMPONENT_UNAVAILABLE_INVALID"):
-        build(values)
-
-    values["growth"] = replace(missing, value=Decimal("0.1"))
-    with pytest.raises(DataQualityError, match="STATE_COMPONENT_UNAVAILABLE_INVALID"):
-        build(values)
-
-    values["growth"] = replace(missing, quality_status=QualityStatus.VALID)
-    with pytest.raises(DataQualityError, match="STATE_COMPONENT_UNAVAILABLE_INVALID"):
-        build(values)
+    for invalid in (
+        replace(missing, reason_code=None),
+        replace(missing, value=Decimal("0.1")),
+        replace(missing, quality_status=QualityStatus.VALID),
+        replace(missing, confidence=Decimal("0.1")),
+    ):
+        values["growth"] = invalid
+        with pytest.raises(DataQualityError, match="STATE_COMPONENT_UNAVAILABLE_INVALID"):
+            build(values)
 
 
 def test_unavailable_regime_input_fails_closed_and_reason_changes_identity():
