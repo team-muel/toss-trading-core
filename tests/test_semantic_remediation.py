@@ -197,11 +197,20 @@ def test_canonical_multifactor_requires_pricing_only_authority():
 def test_portfolio_state_requires_new_components_but_can_replay_explicit_v1():
     from asset_management.states.portfolio import PortfolioStateEngine, LEGACY_PORTFOLIO_COMPONENTS
     from test_phase12_state_engines import components as state_components, POLICY
-    legacy_components = state_components(LEGACY_PORTFOLIO_COMPONENTS)
+    fixture_components = state_components(LEGACY_PORTFOLIO_COMPONENTS)
+    # This test uses NOW from the expected-return suite (2026-01-02), while the Phase 12
+    # helper's own default timestamp is later. State v2 makes that hidden mismatch invalid,
+    # so retime the legacy Portfolio fixture explicitly instead of weakening PIT checks.
+    legacy_components = {
+        name: replace(component, as_of=NOW.isoformat(), information_cutoff=NOW.isoformat(),
+                      input_features=())
+        for name, component in fixture_components.items()
+    }
     old = PortfolioStateEngine(contract_version='portfolio-state@1')
     first = old.build(as_of=NOW, components=legacy_components, policy=POLICY, code_revision='git:abcdef0')
     second = old.build(as_of=NOW, components=legacy_components, policy=POLICY, code_revision='git:abcdef0')
     assert first.state_id == second.state_id
+    assert first.information_cutoff == NOW.isoformat()
     assert 'risk_contribution' in first.payload()['components']
     with pytest.raises(DataQualityError, match='INCOMPLETE'):
         PortfolioStateEngine().build(as_of=NOW, components=legacy_components, policy=POLICY, code_revision='git:abcdef0')
