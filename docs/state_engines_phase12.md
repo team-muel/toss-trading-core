@@ -27,11 +27,17 @@ Every `StateComponent` records:
 - zero or more typed `StateFeatureInput` references
 - an optional calculation-lineage graph ID
 
-A `StateFeatureInput` binds one complete `FeatureSnapshot` to the immutable gold manifest
-that published it. The feature ID, instrument, feature-run ID, feature cutoff, source data
-manifests, parameter set, code revision and validity therefore cannot be detached from the
-manifest reference by sorting unrelated ID arrays. Snapshot-level feature/run/manifest/data
-manifest arrays are derived summaries; the component-level typed reference is authoritative.
+A `StateFeatureInput` keeps one complete `FeatureSnapshot` and one claimed publishing gold
+manifest ID in the same typed reference. The feature ID, instrument, feature-run ID, feature
+cutoff, source data manifests, parameter set, code revision and validity therefore cannot be
+detached from that manifest ID by sorting unrelated arrays. Snapshot-level
+feature/run/manifest/data-manifest arrays are derived summaries; the component-level typed
+reference is authoritative for identity.
+
+The reference contract alone does **not** prove that the manifest actually contains that
+FeatureSnapshot. Store-backed content verification belongs to the canonical
+Feature-to-MarketState builder in AMA-173/02, following the existing `SignalStore` pattern.
+Until then this layer preserves the evidence coordinates without overstating source truth.
 
 This is a new internal contract generation. Existing historical v1 catalog objects remain
 historical evidence; they are not silently reinterpreted as v2 and they do not acquire the
@@ -42,8 +48,10 @@ new semantic guarantees retroactively.
 Market and Company state are continuous feature-derived representations. Their components
 must therefore carry at least one `StateFeatureInput` and must use a continuous normalization
 rather than `STRUCTURED` or `CATEGORICAL`. Feature snapshots that are expired or known only
-after the State cutoff are rejected. A caller cannot satisfy the contract merely by inventing
-a feature name.
+after the State cutoff are rejected. Every referenced feature-manifest ID must also appear
+in the component evidence set, and a component may degrade source quality but may not claim
+a better quality status than its worst feature input. A caller cannot satisfy the contract
+merely by inventing a feature name.
 
 The current Market state still preserves the nine named dimensions: growth, inflation,
 liquidity, rates, credit, volatility, trend, breadth and valuation. This contract does not
@@ -92,19 +100,22 @@ parameter/formula versions and code revision produces the same immutable state i
 Changing semantic metadata such as normalization changes that identity even when the numeric
 value is unchanged.
 
-FeatureStore already verifies source manifests against the information cutoff. State v2
-retains the complete referenced FeatureSnapshot plus its publishing manifest instead of
-collapsing provenance to a feature name. Where a `CalculationLineageGraph` exists, a
-component can also cite its graph ID; the State contract does not falsely claim that a graph
-exists when one has not been materialized.
+FeatureStore already verifies its own source manifests against the information cutoff. State
+v2 retains the referenced FeatureSnapshot, its claimed publishing manifest, and the
+FeatureSnapshot's source-manifest coordinates instead of collapsing provenance to a feature
+name. AMA-173/02 verifies those references against the immutable store while constructing
+canonical MarketState components. Where a `CalculationLineageGraph` exists, a component can
+also cite its graph ID and must include that graph ID in its evidence set; the State contract
+does not falsely claim that a graph exists when one has not been materialized.
 
 ## Completion criteria
 
 - the four state engines and component contracts remain separate
 - State values have explicit semantic/unit/normalization contracts
 - snapshot and component PIT context agree exactly
-- Market/Company components retain atomically bound FeatureSnapshot + manifest lineage
+- Market/Company components retain atomically grouped FeatureSnapshot + manifest coordinates
 - expired/future FeatureSnapshot references fail closed
+- component quality cannot silently upgrade worse source-feature quality
 - Portfolio/System are not forced to fabricate feature lineage
 - System State produces operational restrictions only
 - every component remains visible; there is no single opaque state score
