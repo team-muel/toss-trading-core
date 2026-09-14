@@ -49,8 +49,7 @@ class StateEngine:
                                                StateNormalization.CATEGORICAL}
                    for component in components.values()):
                 raise DataQualityError("CONTINUOUS_STATE_NORMALIZATION_INVALID")
-            if any(not component.input_feature_ids or not component.input_feature_run_ids or
-                   not component.input_feature_manifest_ids for component in components.values()):
+            if any(not component.input_features for component in components.values()):
                 raise DataQualityError("STATE_FEATURE_LINEAGE_INCOMPLETE")
             if any(component.quality_status is QualityStatus.VALID and
                    (not isinstance(component.value, Decimal) or not component.value.is_finite())
@@ -75,12 +74,13 @@ class StateEngine:
         )
         evidence_ids = tuple(sorted({item for component in components.values()
                                      for item in component.input_evidence_ids}))
-        feature_ids = tuple(sorted({item for component in components.values()
-                                    for item in component.input_feature_ids}))
-        feature_run_ids = tuple(sorted({item for component in components.values()
-                                        for item in component.input_feature_run_ids}))
-        feature_manifest_ids = tuple(sorted({item for component in components.values()
-                                             for item in component.input_feature_manifest_ids}))
+        feature_inputs = tuple(item for component in components.values()
+                               for item in component.input_features)
+        feature_ids = tuple(sorted({item.snapshot.feature_id for item in feature_inputs}))
+        feature_run_ids = tuple(sorted({item.snapshot.feature_run_id for item in feature_inputs}))
+        feature_manifest_ids = tuple(sorted({item.manifest_id for item in feature_inputs}))
+        data_manifest_ids = tuple(sorted({identifier for item in feature_inputs
+                                          for identifier in item.snapshot.input_manifest_ids}))
         lineage_ids = tuple(sorted({component.calculation_lineage_id
                                     for component in components.values()
                                     if component.calculation_lineage_id is not None}))
@@ -97,6 +97,7 @@ class StateEngine:
             input_feature_ids=feature_ids,
             input_feature_run_ids=feature_run_ids,
             input_feature_manifest_ids=feature_manifest_ids,
+            input_data_manifest_ids=data_manifest_ids,
             calculation_lineage_ids=lineage_ids,
             policy_version=policy.policy_version,
             code_revision=code_revision,
