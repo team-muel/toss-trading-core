@@ -4,57 +4,101 @@ Phase 12 keeps market, company, portfolio, and system state as separate contract
 is a versioned snapshot of components with uncertainty and lineage. It is not an order or
 investment signal.
 
-## Common contract
+## State snapshot v2
 
-Every snapshot records `as_of`, named components, conservative aggregate confidence,
-quality status, maximum freshness lag, the union of input feature IDs, policy version, and
-code revision. It also records the operational restriction and its risk multiplier. State
-identity is a deterministic SHA-256 over all components, their individual confidence,
-quality, freshness and lineage, the full policy, calculation time, optional regime, and code
-revision. Repeating the same calculation produces the same immutable catalog object.
+`state-snapshot-v2` strengthens the State boundary so a future regime model cannot infer
+meaning from an untyped number. Every snapshot records both `as_of` and
+`information_cutoff`; every component must use exactly the same temporal context as the
+snapshot. The state identity is a deterministic SHA-256 over the complete component
+semantics and lineage, the state policy, times, code revision, and the still-temporary
+optional regime field.
 
-Each `StateComponent` retains its own value, confidence, quality status, freshness, and
-feature IDs. `recompute_component` replaces only the named component and rebuilds the
-aggregate state; unrelated components remain unchanged.
+Every `StateComponent` records:
 
-## Market state
+- a stable `component_id`
+- the component value
+- an explicit `semantic_type` and `unit`
+- one of `RAW`, `Z_SCORE`, `PERCENTILE`, `DIRECTIONAL_SCORE`,
+  `STANDARDIZED_COMPOSITE`, `STRUCTURED`, or `CATEGORICAL`
+- `as_of` and `information_cutoff`
+- confidence, quality and freshness
+- immutable evidence IDs
+- parameter-set and formula versions
+- source feature IDs, feature-run IDs and feature-manifest IDs when the component is
+  feature-derived
+- an optional calculation-lineage graph ID
 
-Market state preserves growth, inflation, liquidity, rates, credit, volatility, trend,
-breadth, and valuation as nine continuous components. It does not collapse them into an
-initial RISK_ON/RISK_OFF score. A coarse EXPANSION, CONTRACTION, or TRANSITION regime is
-derived only when the caller explicitly requests it; the continuous components remain.
+This is a new internal contract generation. Existing historical v1 catalog objects remain
+historical evidence; they are not silently reinterpreted as v2 and they do not acquire the
+new semantic guarantees retroactively.
 
-## Company state
+## Feature-derived continuous states
 
-Company state separately preserves growth, profitability, cash quality, leverage, relative
-growth, estimates, valuation, and shareholder yield. It remains inactive for company
-selection in the ETF-first release, but its contract and deterministic engine are available
-for later activation after the Phase 9 inputs pass quality gates.
+Market and Company state are continuous feature-derived representations. Their components
+must therefore carry source feature ID, feature-run ID and feature-manifest lineage, and
+must use a continuous normalization rather than `STRUCTURED` or `CATEGORICAL`. A caller
+cannot satisfy the contract merely by inventing a feature name.
 
-## Portfolio state
+The current Market state still preserves the nine named dimensions: growth, inflation,
+liquidity, rates, credit, volatility, trend, breadth and valuation. This contract does not
+claim that every dimension already has an approved canonical builder. AMA-173 separately
+maps and constructs those components; an unmapped dimension must remain explicitly
+unavailable rather than being filled with an arbitrary proxy.
 
-Portfolio state preserves NAV, cash by currency, current weights, sector/factor/currency
-exposures, volatility, CVaR, drawdown, risk contribution, open orders, reserved cash, and
-unsettled cash. Map and list values remain structured; they are not hidden inside one score.
+Company state follows the same feature-lineage rule but remains inactive for company
+selection in the ETF-first release.
 
-## System state
+## Portfolio and System state
+
+Portfolio and System state are not forced to fabricate feature lineage. Portfolio components
+may retain structured account/risk values using `STRUCTURED` where appropriate and still
+must cite immutable evidence IDs. System health is categorical and every System component
+must declare `CATEGORICAL` normalization.
 
 System state contains broker, data, clock, reconciliation, storage, model, and execution
-health. Its only aggregate output is one of NORMAL, CAUTION, REDUCED_RISK, NO_NEW_TRADES,
-or HALTED. It cannot emit an instrument direction, BUY, or SELL.
+health. Its aggregate operational restriction remains one of NORMAL, CAUTION, REDUCED_RISK,
+NO_NEW_TRADES, or HALTED. It cannot emit an instrument direction, BUY, or SELL.
 
-## Uncertainty and quality action
+## Regime boundary during migration
 
-The policy defines stale age and two confidence boundaries. Low confidence applies the
-versioned reduced-risk multiplier; intermediate confidence applies the caution multiplier.
-Blocking quality or stale components set the multiplier to zero and produce NO_NEW_TRADES.
-A BLOCKED or HALTED system component produces HALTED. Uncertainty therefore changes the
-allowed risk rather than appearing only as descriptive text.
+The old optional EXPANSION/CONTRACTION/TRANSITION helper remains temporarily for migration
+only; AMA-173/03 removes regime inference from the generic State engine. Until then the
+helper refuses to interpret raw values. Growth, trend and volatility must explicitly be
+unitless centered/standardized state scores (`Z_SCORE`, `DIRECTIONAL_SCORE`, or
+`STANDARDIZED_COMPOSITE`) before the zero thresholds are even eligible to run. Raw realized
+volatility therefore cannot be mistaken for a centered volatility state.
+
+No regime model is approved or selected by this Phase 12 contract.
+
+## Uncertainty and operational policy
+
+The existing State policy still records stale age and two confidence boundaries. Low
+confidence maps to REDUCED_RISK, intermediate confidence to CAUTION, and blocking/stale
+components to NO_NEW_TRADES; System BLOCKED/HALTED can produce HALTED. These outputs are
+retained for compatibility while AMA-173 separately audits the boundary between descriptive
+State and the authority-bearing `RiskGovernor`. Their existence does not allow State or a
+future regime representation to mint portfolio targets, orders, or approved risk decisions.
+
+## Determinism and lineage
+
+Repeating the same calculation with identical values, semantics, evidence, cutoff, policy,
+parameter/formula versions and code revision produces the same immutable state identity.
+Changing semantic metadata such as normalization changes that identity even when the numeric
+value is unchanged.
+
+FeatureStore already verifies source manifests against the information cutoff. State v2
+preserves the feature run/manifest references instead of collapsing them to feature names.
+Where a `CalculationLineageGraph` exists, a component can also cite its graph ID; the State
+contract does not falsely claim that a graph exists when one has not been materialized.
 
 ## Completion criteria
 
 - the four state engines and component contracts remain separate
+- State values have explicit semantic/unit/normalization contracts
+- snapshot and component PIT context agree exactly
+- Market/Company components retain actual feature run and manifest lineage
+- Portfolio/System are not forced to fabricate feature lineage
 - System State produces operational restrictions only
-- any component can be recomputed independently
 - every component remains visible; there is no single opaque state score
-- uncertainty and data quality reduce risk or block new trades under versioned policy
+- identical semantic inputs reproduce the same state hash
+- no actual regime classifier or new trading authority is introduced by this contract
