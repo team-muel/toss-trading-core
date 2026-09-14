@@ -9,6 +9,7 @@ from asset_management.domain.errors import DataQualityError
 from asset_management.domain.horizon import DecayProfile, SignalValidity
 from asset_management.features.models import FeatureSnapshot
 from asset_management.features.registry import FeatureRegistry, builtin_definitions
+from asset_management.features.store import identity_for_request
 from asset_management.quality.models import QualityStatus
 from asset_management.states import (
     MarketStateBuilder,
@@ -60,8 +61,8 @@ def direct_breadth_spec() -> MarketStateSpec:
     return MarketStateSpec("test-direct-breadth", "1", tuple(items))
 
 
-def _write_silver(store: ImmutableDatasetStore, *, dataset: str, stamp: datetime):
-    bronze = store.write(
+def _write_bronze(store: ImmutableDatasetStore, *, dataset: str, stamp: datetime):
+    return store.write(
         {"rows": [{"value": dataset}]},
         layer="bronze", source="fixture", dataset=f"raw-{dataset}", schema_version="raw@1",
         retrieved_at=stamp, available_at=stamp, provider_timestamp=stamp,
@@ -69,6 +70,10 @@ def _write_silver(store: ImmutableDatasetStore, *, dataset: str, stamp: datetime
         request_hash=digest(canonical({"raw": dataset})),
         quality_status="RAW",
     )
+
+
+def _write_silver(store: ImmutableDatasetStore, *, dataset: str, stamp: datetime):
+    bronze = _write_bronze(store, dataset=dataset, stamp=stamp)
     return store.write(
         {"rows": [{"value": dataset}]},
         layer="silver", source="fixture", dataset=dataset, schema_version="silver@1",
@@ -79,10 +84,22 @@ def _write_silver(store: ImmutableDatasetStore, *, dataset: str, stamp: datetime
     )
 
 
-def published_feature(store: ImmutableDatasetStore, feature_registry: FeatureRegistry,
-                      *, value="0.6", gold_available_at=FEATURE_AS_OF) -> StateFeatureInput:
-    universe = _write_silver(store, dataset="historical-universe", stamp=FEATURE_AS_OF - timedelta(minutes=1))
-    prices = _write_silver(store, dataset="market-bars", stamp=FEATURE_AS_OF - timedelta(minutes=1))
+def published_feature(
+    store: ImmutableDatasetStore,
+    feature_registry: FeatureRegistry,
+    *,
+    value: str = "0.6",
+    gold_available_at: datetime = FEATURE_AS_OF,
+    use_bronze_market_parent: bool = False,
+    request_hash_override: str | None = None,
+) -> StateFeatureInput:
+    source_stamp = FEATURE_AS_OF - timedelta(minutes=1)
+    universe = _write_silver(store, dataset="historical-universe", stamp=source_stamp)
+    prices = (
+        _write_bronze(store, dataset="market-bars", stamp=source_stamp)
+        if use_bronze_market_parent
+        else _write_silver(store, dataset="market-bars", stamp=source_stamp)
+    )
     definition = feature_registry.get("market.breadth")
     definition_id = store.catalog("feature-definitions", asdict(definition))
     parents = tuple(sorted((universe.manifest_id, prices.manifest_id)))
@@ -114,22 +131,18 @@ def published_feature(store: ImmutableDatasetStore, feature_registry: FeatureReg
         "validity": snapshot.validity.payload(),
         "feature_definition_catalog_id": definition_id,
     }
+    expected_request_hash = digest(canonical(identity_for_request(snapshot, definition_id)))
     gold = store.write(
         body,
         layer="gold", source="fixture", dataset="feature-snapshot",
         schema_version="phase11-feature-snapshot-v1",
         retrieved_at=gold_available_at, available_at=gold_available_at,
-        provider_timestamp=FEATURE_AS_OF - timedelta(minutes=1),
+        provider_timestamp=source_stamp,
         license_tag=LICENSE, code_revision=CODE,
-        request_hash=digest(canonical({"feature_run_id": snapshot.feature_run_id})),
+        request_hash=request_hash_override or expected_request_hash,
         parent_manifest_ids=parents,
     )
     return StateFeatureInput(snapshot, gold.manifest_id)
-
-
-def builder(tmp_path):
-    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
-    return store, registry(), MarketStateBuilder(store, registry())
 
 
 def test_foundation_spec_preserves_all_nine_dimensions_as_explicit_unavailable(tmp_path):
@@ -246,6 +259,48 @@ def test_feature_identity_and_manifest_availability_fail_closed(tmp_path):
         market_builder.build(
             spec=direct_breadth_spec(), as_of=NOW + timedelta(minutes=2), information_cutoff=CUTOFF,
             policy=POLICY, code_revision=CODE, feature_inputs={"breadth": late_item},
+        )
+
+
+def test_forged_featurestore_publication_contract_is_rejected(tmp_path):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    feature_registry = registry()
+    market_builder = MarketStateBuilder(store, feature_registry)
+
+    early_publication = published_feature(
+        store,
+        feature_registry,
+        value="0.61",
+        gold_available_at=FEATURE_AS_OF - timedelta(seconds=30),
+    )
+    with pytest.raises(DataQualityError, match="MARKET_STATE_FEATURE_MANIFEST_INVALID"):
+        market_builder.build(
+            spec=direct_breadth_spec(), as_of=NOW, information_cutoff=CUTOFF,
+            policy=POLICY, code_revision=CODE, feature_inputs={"breadth": early_publication},
+        )
+
+    forged_request = published_feature(
+        store,
+        feature_registry,
+        value="0.62",
+        request_hash_override=digest(canonical({"forged": True})),
+    )
+    with pytest.raises(DataQualityError, match="MARKET_STATE_FEATURE_MANIFEST_INVALID"):
+        market_builder.build(
+            spec=direct_breadth_spec(), as_of=NOW, information_cutoff=CUTOFF,
+            policy=POLICY, code_revision=CODE, feature_inputs={"breadth": forged_request},
+        )
+
+    bronze_parent = published_feature(
+        store,
+        feature_registry,
+        value="0.63",
+        use_bronze_market_parent=True,
+    )
+    with pytest.raises(DataQualityError, match="MARKET_STATE_FEATURE_MANIFEST_INVALID"):
+        market_builder.build(
+            spec=direct_breadth_spec(), as_of=NOW, information_cutoff=CUTOFF,
+            policy=POLICY, code_revision=CODE, feature_inputs={"breadth": bronze_parent},
         )
 
 
