@@ -8,12 +8,12 @@ This module is research-only and has no broker or execution dependency.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from math import sqrt
+from math import isfinite, sqrt
 
 __all__ = [
     "rank", "zscore", "scale", "sign", "winsorize", "group_neutralize",
     "group_rank", "truncate", "ts_delay", "ts_delta", "ts_sum", "ts_mean",
-    "ts_stddev", "ts_zscore", "ts_rank", "ts_decay_linear", "ts_max", "ts_min",
+    "ts_stddev", "ts_zscore", "ts_rank", "ts_decay_linear", "ts_max", "ts_min", "ts_return",
 ]
 
 
@@ -172,6 +172,45 @@ def ts_delay(series: Sequence[float], d: int) -> list[float | None]:
 def ts_delta(series: Sequence[float], d: int) -> list[float | None]:
     delayed = ts_delay(series, d)
     return [None if value is None or delayed[i] is None else float(value) - float(delayed[i]) for i, value in enumerate(series)]
+
+
+def ts_return(series: Sequence[float | None], d: int) -> list[float | None]:
+    """Simple d-observation return over a consistently adjusted positive index.
+
+    This computes x[t] / x[t-d] - 1, not a price difference. A missing cell
+    anywhere in the d+1 observation window makes that output unavailable.
+    Adjustment, currency and calendar truth must be established upstream;
+    this primitive cannot turn raw prices into a total-return index.
+    """
+    if type(d) is not int or d <= 0:
+        raise ValueError("ts_return lag must be a positive integer")
+    values: list[float | None] = []
+    missing = [0]
+    for value in series:
+        if value is None:
+            values.append(None)
+            missing.append(missing[-1] + 1)
+            continue
+        if isinstance(value, bool):
+            raise ValueError("ts_return values must be positive finite numbers")
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("ts_return values must be positive finite numbers") from exc
+        if not isfinite(number) or number <= 0:
+            raise ValueError("ts_return values must be positive finite numbers")
+        values.append(number)
+        missing.append(missing[-1])
+    result: list[float | None] = []
+    for index, value in enumerate(values):
+        if index < d or missing[index + 1] != missing[index - d]:
+            result.append(None)
+            continue
+        value = float(value) / float(values[index - d]) - 1.0
+        if not isfinite(value):
+            raise ValueError("ts_return output must be finite")
+        result.append(value)
+    return result
 
 
 def ts_sum(series: Sequence[float], d: int) -> list[float | None]:
