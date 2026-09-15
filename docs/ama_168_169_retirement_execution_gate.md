@@ -46,33 +46,44 @@ VM, or changing a resource:
 the available authority. It does not mean the operational acceptance passed,
 the resource never existed, or deletion was correctly performed.
 
-## Proposed superseding acceptance — pending Linear approval
+## Current authoritative acceptance
 
-AMA-168/169 may be **superseded or waived only for the unrecoverable physical
-retirement proof**, and only after Linear explicitly accepts all of the
-following as the replacement acceptance record:
+The current Linear descriptions for AMA-168 and AMA-169 authoritatively
+supersede the former requirement to prove a normal operational VM or GCP
+retirement. The former environment is classified as a failed historical
+environment that was abandoned and is no longer authoritative; this record does
+not claim that a formal retirement procedure occurred.
 
-1. Attach the owner-provided deletion disposition and any independently retained
-   Cloud Resource Manager, billing, or audit export available outside this
-   account's read-only scope. Missing export remains `UNRECOVERABLE`; it must
-   not be replaced with a claim of absence.
-2. Attach the dated current-project discovery manifest, including the exact
-   project ID and the resource-by-resource `OBSERVED_ABSENT` results.
-3. Retain the repository deployment/default inventory as historical context,
-   explicitly labelled non-operational evidence.
-4. Preserve the merged approved-bucket fail-closed guard: every provisioning,
-   runtime, and Cloud Build artifact destination must remain resolved against a
+The active acceptance requires all of the following:
+
+1. Identify the current canonical Google Cloud account/project and its governed
+   operational runtime.
+2. Verify that current repository, CI, deployment, scheduler, and authority
+   configuration has no executable reference or authority path to the historical
+   environment.
+3. Verify that the current authorized canonical environment has no second
+   scheduled trading/research application. This is not a claim about an
+   inaccessible historical environment's physical state.
+4. Record `OBSERVED_ABSENT` only for the exact current-project scope.
+5. Record unavailable historical lifecycle, systemd, command, rollback, billing,
+   audit, monitoring, and scheduler evidence as `UNRECOVERABLE` without treating
+   it as retirement completion, correct deletion, global absence, or acceptance
+   completion.
+6. Preserve the approved-bucket-identity fail-closed guard: every provisioning,
+   runtime, and Cloud Build artifact destination must resolve against a
    repository-owned approved bucket identity. A non-empty caller value is
    insufficient.
-5. Preserve the execution gate with no retirement command because no concrete
-   target, rollback artifact, or historical before/after evidence exists.
-6. Keep AMA-156 In Progress and keep Gate D2, canonical production runs, M5,
-   and live trading blocked. A waiver for historical operations does not grant
-   any of those authorities.
+7. Authorize no retirement command unless a newly identified concrete target,
+   reviewed manifest, explicit approver, and rollback evidence exist.
+8. Do not reactivate, contact, or delete the historical environment under this
+   acceptance.
 
-Until a Linear acceptance change or independently approved superseding evidence
-is attached, this proposal is **BLOCKED**. It does not mark AMA-168, AMA-169,
-or AMA-156 Done and it does not authorize a Merge Queue action.
+This document does not claim that the active acceptance is satisfied. Current
+evidence identifies the approved project and records a scoped read-only
+observation, but does not establish the canonical environment's governed runtime
+or deployed-state evidence. AMA-168/169 acceptance therefore remains
+**BLOCKED**. AMA-156 remains In Progress; Gate D2, canonical run, M5, and live
+remain BLOCKED. This PR remains Draft and must not enter Merge Queue.
 
 ## Execution preconditions
 
