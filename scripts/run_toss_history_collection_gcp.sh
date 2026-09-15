@@ -23,7 +23,7 @@ on_exit() {
 }
 trap on_exit EXIT
 
-: "${GCP_PROJECT_ID:=toss-trading-core-lab}"
+: "${GCP_PROJECT_ID:=toss-trading-core-lab-508411}"
 : "${TOSS_CLIENT_ID_SECRET:=toss-client-id}"
 : "${TOSS_CLIENT_SECRET_SECRET:=toss-client-secret}"
 : "${TOSS_ACCOUNT_SEQ_SECRET:=toss-account-seq}"
@@ -36,6 +36,8 @@ export TOSS_CLIENT_SECRET_SECRET
 export TOSS_ACCOUNT_SEQ_SECRET
 export TOSS_API_ENV_SECRET
 export TOSS_BROKER_BASE_URL_SECRET
+
+python3 "${ROOT_DIR}/scripts/check_research_operations_identity.py" --project-id="${GCP_PROJECT_ID}"
 
 if ! command -v flock >/dev/null 2>&1; then
   printf 'toss_history_collector_error=flock_missing\n' >&2

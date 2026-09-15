@@ -23,11 +23,15 @@ steps:
   - id: upload-wheel
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
+    env:
+      - RESEARCH_ARTIFACT_BUCKET=${_RESEARCH_ARTIFACT_BUCKET}
     args:
       - -ceu
       - |
         set -- dist/*.whl
         test "$$#" -eq 1
+        test -n "$${RESEARCH_ARTIFACT_BUCKET}"
+        python3 scripts/check_research_operations_destination.py --bucket="$${RESEARCH_ARTIFACT_BUCKET}" --verify-bucket-project
         wheel_path="$$1"
         wheel_name="$$(basename "$${wheel_path}")"
         access_token="$$(gcloud auth print-access-token)"
@@ -39,8 +43,10 @@ steps:
           --header "Authorization: Bearer $${access_token}" \
           --header "Content-Type: application/octet-stream" \
           --data-binary "@$${wheel_path}" \
-          "https://storage.googleapis.com/upload/storage/v1/b/toss-trading-core-lab-research-data/o?uploadType=media&name=builds%2F${BUILD_ID}%2F$${wheel_name}"
-serviceAccount: projects/toss-trading-core-lab/serviceAccounts/toss-research-build@toss-trading-core-lab.iam.gserviceaccount.com
+          "https://storage.googleapis.com/upload/storage/v1/b/$${RESEARCH_ARTIFACT_BUCKET}/o?uploadType=media&name=builds%2F${BUILD_ID}%2F$${wheel_name}"
+serviceAccount: projects/toss-trading-core-lab-508411/serviceAccounts/toss-research-build@toss-trading-core-lab-508411.iam.gserviceaccount.com
+substitutions:
+  _RESEARCH_ARTIFACT_BUCKET: ""
 options:
   logging: CLOUD_LOGGING_ONLY
 timeout: 1200s

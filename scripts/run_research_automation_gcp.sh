@@ -110,12 +110,15 @@ if [[ -d ".venv" ]]; then
 fi
 export PYTHONPATH="${PYTHONPATH:-src}"
 
-: "${GCP_PROJECT_ID:=toss-trading-core-lab}"
+: "${GCP_PROJECT_ID:=toss-trading-core-lab-508411}"
 : "${TOSS_CLIENT_ID_SECRET:=toss-client-id}"
 : "${TOSS_CLIENT_SECRET_SECRET:=toss-client-secret}"
+: "${RESEARCH_GCS_URI:?RESEARCH_GCS_URI must name an approved research bucket URI}"
 export GCP_PROJECT_ID
 export TOSS_CLIENT_ID_SECRET
 export TOSS_CLIENT_SECRET_SECRET
+"${PYTHON_BIN}" scripts/check_research_operations_identity.py --project-id="${GCP_PROJECT_ID}"
+"${PYTHON_BIN}" scripts/check_research_operations_destination.py --uri="${GCS_URI}" --verify-bucket-project
 
 # shellcheck disable=SC1091
 source "scripts/load_gcp_secrets.sh"

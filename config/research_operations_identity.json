@@ -1,0 +1,10 @@
+{
+  "schema_version": "research-operations-identity@1",
+  "approved_project_id": "toss-trading-core-lab-508411",
+  "approved_project_number": "347216292745",
+  "prohibited_project_identifiers": [
+    "toss-trading-core-lab"
+  ],
+  "resource_discovery_status": "UNKNOWN",
+  "resource_discovery_requires_user_approval": true
+}

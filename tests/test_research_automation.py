@@ -430,9 +430,15 @@ class ResearchAutomationTest(unittest.TestCase):
         )
         self.assertIn(
             "serviceAccount: "
-            "projects/toss-trading-core-lab/serviceAccounts/"
-            "toss-research-build@toss-trading-core-lab."
+            "projects/toss-trading-core-lab-508411/serviceAccounts/"
+            "toss-research-build@toss-trading-core-lab-508411."
             "iam.gserviceaccount.com",
+            cloudbuild,
+        )
+        self.assertIn("_RESEARCH_ARTIFACT_BUCKET", cloudbuild)
+        self.assertIn('test -n "$${RESEARCH_ARTIFACT_BUCKET}"', cloudbuild)
+        self.assertIn(
+            'check_research_operations_destination.py --bucket="$${RESEARCH_ARTIFACT_BUCKET}" --verify-bucket-project',
             cloudbuild,
         )
 
