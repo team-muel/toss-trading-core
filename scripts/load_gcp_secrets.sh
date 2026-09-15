@@ -16,6 +16,9 @@ set -Eeuo pipefail
 
 : "${GCP_PROJECT_ID:?GCP_PROJECT_ID is required}"
 
+_identity_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+python3 "${_identity_root}/scripts/check_research_operations_identity.py" --project-id="${GCP_PROJECT_ID}"
+
 if ! command -v gcloud >/dev/null 2>&1; then
   echo "gcloud CLI is required to load GCP Secret Manager values" >&2
   return 2

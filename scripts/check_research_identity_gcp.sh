@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-toss-trading-core-lab}"
+PROJECT_ID="${GCP_PROJECT_ID:-toss-trading-core-lab-508411}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 INSTANCE_NAME="${GCP_RESEARCH_INSTANCE_NAME:-personal-research-agent-vm}"
 EXPECTED="${RESEARCH_SERVICE_ACCOUNT:-toss-research-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 FOUNDATION="toss-foundation-runner@${PROJECT_ID}.iam.gserviceaccount.com"
 ADDRESS_NAME="${GCP_RESEARCH_ADDRESS_NAME:-toss-research-static-ip}"
 REGION="${ZONE%-*}"
+
+python3 scripts/check_research_operations_identity.py --project-id="${PROJECT_ID}"
 
 ATTACHED="$(gcloud compute instances describe "${INSTANCE_NAME}" \
   --project="${PROJECT_ID}" \

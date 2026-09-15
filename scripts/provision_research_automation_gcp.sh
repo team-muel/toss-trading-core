@@ -6,13 +6,14 @@ umask 077
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-PROJECT_ID="${GCP_PROJECT_ID:-toss-trading-core-lab}"
+PROJECT_ID="${GCP_PROJECT_ID:-toss-trading-core-lab-508411}"
 ZONE="${GCP_ZONE:-us-central1-a}"
 INSTANCE_NAME="${GCP_INSTANCE_NAME:-personal-research-agent-vm}"
 ADDRESS_NAME="${GCP_RESEARCH_ADDRESS_NAME:-toss-research-static-ip}"
 MACHINE_TYPE="${GCP_RESEARCH_MACHINE_TYPE:-e2-micro}"
 BOOT_DISK_SIZE="${GCP_RESEARCH_BOOT_DISK_SIZE:-30GB}"
-BUCKET_NAME="${RESEARCH_GCS_BUCKET:-toss-trading-core-lab-research-data}"
+: "${RESEARCH_GCS_BUCKET:?RESEARCH_GCS_BUCKET must name an approved research bucket}"
+BUCKET_NAME="${RESEARCH_GCS_BUCKET}"
 BUILD_SOURCE_BUCKET="${CLOUD_BUILD_SOURCE_BUCKET:-${PROJECT_ID}_cloudbuild}"
 RESEARCH_SERVICE_ACCOUNT_NAME="${RESEARCH_SERVICE_ACCOUNT_NAME:-toss-research-runner}"
 SERVICE_ACCOUNT="${RESEARCH_SERVICE_ACCOUNT:-${RESEARCH_SERVICE_ACCOUNT_NAME}@${PROJECT_ID}.iam.gserviceaccount.com}"
@@ -24,6 +25,9 @@ BIGQUERY_DATASET="${RESEARCH_BIGQUERY_DATASET:-toss_research_reporting}"
 BIGQUERY_TABLE="${RESEARCH_BIGQUERY_TABLE:-run_summaries}"
 DASHBOARD_DISPLAY_NAME="Toss Trading - Operations, Data Quality, Strategy"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+"${PYTHON_BIN}" scripts/check_research_operations_identity.py --project-id="${PROJECT_ID}"
+"${PYTHON_BIN}" scripts/check_research_operations_destination.py --bucket="${BUCKET_NAME}" --verify-bucket-project
+"${PYTHON_BIN}" scripts/check_research_operations_destination.py --bucket="${BUILD_SOURCE_BUCKET}" --verify-bucket-project
 NOTIFICATION_CHANNEL="${MONITORING_NOTIFICATION_CHANNEL:-}"
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf -- "${WORK_DIR}"' EXIT
@@ -104,13 +108,6 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --role="roles/monitoring.metricWriter" \
   --condition=None
 
-if ! gcloud storage buckets describe "gs://${BUCKET_NAME}" \
-  --project="${PROJECT_ID}" >/dev/null 2>&1; then
-  gcloud storage buckets create "gs://${BUCKET_NAME}" \
-    --project="${PROJECT_ID}" \
-    --location=us-central1 \
-    --uniform-bucket-level-access
-fi
 gcloud storage buckets update "gs://${BUCKET_NAME}" \
   --versioning \
   --lifecycle-file="deploy/storage/research-lifecycle.json"

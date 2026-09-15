@@ -53,7 +53,8 @@ if [[ -d ".venv" ]]; then
   source ".venv/bin/activate"
 fi
 export PYTHONPATH="${PYTHONPATH:-src}"
-: "${GCP_PROJECT_ID:=toss-trading-core-lab}"
+: "${GCP_PROJECT_ID:=toss-trading-core-lab-508411}"
+"${PYTHON_BIN}" scripts/check_research_operations_identity.py --project-id="${GCP_PROJECT_ID}"
 export MASSIVE_API_KEY
 MASSIVE_API_KEY="$(gcloud secrets versions access latest \
   --project="${GCP_PROJECT_ID}" --secret="${MASSIVE_SECRET}")"

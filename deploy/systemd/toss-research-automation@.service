@@ -21,7 +21,7 @@ RestrictRealtime=true
 CapabilityBoundingSet=
 ReadWritePaths=/home/seoje/toss-trading/research-runtime
 EnvironmentFile=-/etc/toss-trading/research.env
-Environment=GCP_PROJECT_ID=toss-trading-core-lab
+Environment=GCP_PROJECT_ID=toss-trading-core-lab-508411
 Environment=TOSS_CLIENT_ID_SECRET=toss-research-client-id
 Environment=TOSS_CLIENT_SECRET_SECRET=toss-research-client-secret
 Environment=RESEARCH_RUNTIME_ROOT=/home/seoje/toss-trading/research-runtime
@@ -30,7 +30,7 @@ Environment=RESEARCH_LOCK_PATH=/home/seoje/toss-trading/research-runtime/researc
 Environment=RESEARCH_PROSPECTIVE_OBSERVATION_LEDGER=/home/seoje/toss-trading/research-runtime/prospective_collection_observations.jsonl
 Environment=TOSS_API_LOCK_PATH=/home/seoje/toss-trading/research-runtime/toss_api.lock
 Environment=RESEARCH_PORTFOLIO_NOTIONAL_USD=10000
-Environment=RESEARCH_GCS_URI=gs://toss-trading-core-lab-research-data/research
+# RESEARCH_GCS_URI must be set to an explicitly approved resource in research.env.
 Environment=RESEARCH_BIGQUERY_DATASET=toss_research_reporting
 Environment=RESEARCH_BIGQUERY_TABLE=run_summaries
 Environment=CLOUDSDK_CONFIG=/home/seoje/toss-trading/research-runtime/gcloud

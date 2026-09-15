@@ -20,7 +20,7 @@ RestrictRealtime=true
 CapabilityBoundingSet=
 ReadWritePaths=/home/seoje/toss-trading/stock-recommendation-runtime
 EnvironmentFile=-/etc/toss-trading/research.env
-Environment=GCP_PROJECT_ID=toss-trading-core-lab
+Environment=GCP_PROJECT_ID=toss-trading-core-lab-508411
 Environment=STOCK_RECOMMENDATION_RUNTIME_ROOT=/home/seoje/toss-trading/stock-recommendation-runtime
 Environment=CLOUDSDK_CONFIG=/home/seoje/toss-trading/stock-recommendation-runtime/gcloud
 Environment=MASSIVE_API_KEY_SECRET=massive-api-key
