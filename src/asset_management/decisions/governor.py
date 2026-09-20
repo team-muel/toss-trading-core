@@ -131,6 +131,7 @@ class RiskInputs:
     spread_high: bool = False
     turnover_high: bool = False
     regime_uncertain: bool = False
+    regime_uncertainty_evidence_id: str | None = None
     risk_estimate_uncertain: bool = False
     evidence_insufficient: bool = False
     data_stale: bool = False
@@ -150,6 +151,14 @@ class RiskInputs:
             raise InvariantViolation("risk inputs require non-empty evidence lineage")
         if len(set(self.evidence_ids)) != len(self.evidence_ids):
             raise InvariantViolation("risk input evidence ids must be unique")
+        regime_evidence = self.regime_uncertainty_evidence_id
+        if self.regime_uncertain and regime_evidence is None:
+            raise NoTrade("REGIME_UNCERTAINTY_EVIDENCE_REQUIRED")
+        if regime_evidence is not None:
+            if (not isinstance(regime_evidence, str) or len(regime_evidence) != 64 or
+                    any(char not in "0123456789abcdef" for char in regime_evidence) or
+                    regime_evidence not in self.evidence_ids):
+                raise NoTrade("REGIME_UNCERTAINTY_EVIDENCE_INVALID")
 
     def canonical(self) -> dict[str, object]:
         return {field.name: (sorted(getattr(self, field.name)) if field.name == "evidence_ids"
