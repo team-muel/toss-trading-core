@@ -116,24 +116,7 @@ def load_research_policy(path: str | Path) -> dict[str, Any]:
     ):
         raise ValueError("research policy allowed_factor_weights is invalid")
     if "macro_regime" in families:
-        macro_weights = payload.get("allowed_macro_signal_weights")
-        if (
-            not isinstance(macro_weights, list)
-            or 0.0 not in macro_weights
-            or 1.0 not in macro_weights
-            or any(
-                isinstance(item, bool)
-                or not isinstance(item, (int, float))
-                or not 0 <= float(item) <= 1
-                for item in macro_weights
-            )
-        ):
-            raise ValueError(
-                "research policy allowed_macro_signal_weights is invalid"
-            )
-        lag = payload.get("macro_publication_lag_days")
-        if isinstance(lag, bool) or not isinstance(lag, int) or lag not in range(1, 8):
-            raise ValueError("research policy macro_publication_lag_days is invalid")
+        raise ValueError("legacy macro_regime research family is read-only")
     return payload
 
 
@@ -447,6 +430,8 @@ def hypothesis_from_proposal(
     if not isinstance(config, dict):
         raise ValueError("hypothesis config must be an object")
     strategy_family = str(proposal.get("strategy_family") or LEGACY_STRATEGY_FAMILY)
+    if strategy_family == "macro_regime":
+        raise ValueError("legacy macro_regime research family is read-only")
     if strategy_family == LEGACY_STRATEGY_FAMILY:
         normalized_config = _normalize_legacy_config(config, policy=policy)
     else:
@@ -728,6 +713,10 @@ class VertexHypothesisPlanner:
         target_families = policy.get("target_strategy_families")
         if not isinstance(target_families, list) or not target_families:
             target_families = list(policy["strategy_families"])
+        if "macro_regime" in target_families:
+            raise ValueError("legacy macro_regime research family is read-only")
+        if any(family not in policy["strategy_families"] for family in target_families):
+            raise ValueError("target_strategy_families contains a family outside policy")
         context = {
             "target_strategy_families": target_families,
             "bounded_parameter_policy": {
