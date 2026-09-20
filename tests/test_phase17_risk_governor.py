@@ -51,12 +51,12 @@ def test_explicit_boolean_risk_flags_preserve_decisions(field):
     assert governor.decide(inputs(**{field: True})).state is not DecisionState.ALLOW
 
 
-@pytest.mark.parametrize("field,reason", HARD_BLOCKS)
 def test_regime_uncertainty_cannot_be_set_without_traceable_evidence():
     with pytest.raises(NoTrade, match="REGIME_UNCERTAINTY_EVIDENCE_REQUIRED"):
         inputs(regime_uncertain=True)
 
 
+@pytest.mark.parametrize("field,reason", HARD_BLOCKS)
 def test_every_hard_condition_blocks(field: str, reason: ReasonCode):
     governor = RiskGovernor(policy())
     decision = governor.decide(inputs(**{field: True}))
