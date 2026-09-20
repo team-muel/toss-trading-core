@@ -168,9 +168,11 @@ The builder cannot:
 - issue a RiskGovernor approval;
 - create an order or broker-write authority.
 
-The existing temporary regime helper is outside this builder and is scheduled for removal
-from generic State in AMA-177. State-side operational/risk-multiplier responsibilities are
-reviewed separately in AMA-179.
+AMA-177 removes generic regime derivation from State construction. New canonical State
+snapshots no longer derive EXPANSION/CONTRACTION/TRANSITION; the legacy `regime_label`
+payload field remains only as a null replay-compatibility tombstone until final retirement in
+AMA-180. State-side operational/risk-multiplier responsibilities are reviewed separately in
+AMA-179.
 
 ## Completion meaning
 

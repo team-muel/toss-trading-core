@@ -88,14 +88,13 @@ def market_components() -> dict[str, StateComponent]:
     return {name: feature_component(name) for name in MARKET_COMPONENTS}
 
 
-def build(values: dict[str, StateComponent], *, derive_regime: bool = False):
+def build(values: dict[str, StateComponent]):
     return MarketStateEngine().build(
         as_of=NOW,
         information_cutoff=CUTOFF,
         components=values,
         policy=POLICY,
         code_revision="git:abcdef0",
-        derive_regime=derive_regime,
     )
 
 
@@ -138,7 +137,7 @@ def test_unavailable_component_requires_none_value_blocking_quality_zero_confide
             build(values)
 
 
-def test_unavailable_regime_input_fails_closed_and_reason_changes_identity():
+def test_unavailable_reason_changes_identity_without_generic_regime_inference():
     first_values = market_components()
     first_values["growth"] = unavailable_component("growth", reason="UNMAPPED_COMPONENT")
     second_values = dict(first_values)
@@ -146,7 +145,8 @@ def test_unavailable_regime_input_fails_closed_and_reason_changes_identity():
 
     first = build(first_values)
     second = build(second_values)
-    assert first.state_id != second.state_id
 
-    with pytest.raises(DataQualityError, match="REGIME_INPUT_UNAVAILABLE"):
-        build(first_values, derive_regime=True)
+    assert first.state_id != second.state_id
+    assert first.regime_label is None
+    assert first.operational_state is OperationalState.NO_NEW_TRADES
+    assert not hasattr(MarketStateEngine(), "_derive_regime")
