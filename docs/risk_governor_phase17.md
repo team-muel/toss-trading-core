@@ -114,3 +114,14 @@ instruction, order intent or approval. A true uncertainty flag remains only one
 input to the existing versioned RiskGovernor policy, which is still the sole
 issuer of `ApprovedRiskDecision`. A regime model therefore cannot bypass the
 normal Forecast/Risk/Portfolio/Execution authority chain.
+
+The supported binding path is also sealed against a caller supplying an arbitrary
+64-character evidence identifier: `RiskInputs` accepts a regime evidence reference
+only when the typed adapter issues the binding. This is an API-boundary control,
+with the same non-sandbox limitation documented for governor-issued approvals.
+
+For MarketState inputs, the verified Feature publishing manifest, exact
+`feature_definition_catalog_id`, and State spec catalog identifier are carried
+together in component evidence lineage. Because the State identity hashes those
+components and their evidence, downstream regime evidence cannot rely on a
+MarketState spec hash alone while silently dropping Feature-definition provenance.
