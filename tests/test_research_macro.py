@@ -198,7 +198,6 @@ class PointInTimeMacroTests(unittest.TestCase):
             evaluate_hypothesis(
                 hypothesis,
                 points=_points(),
-                macro_observations=_macro_observations(),
                 policy=load_research_policy("config/autonomous_research_policy.json"),
                 family_size=7,
                 data_manifest_ids=["prices", "alfred"],
