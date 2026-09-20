@@ -260,6 +260,7 @@ class StateSnapshot:
     code_revision: str
     operational_state: OperationalState
     risk_multiplier: str
+    # Legacy replay tombstone. Canonical State construction no longer derives regimes.
     regime_label: str | None = None
     schema_version: str = STATE_SNAPSHOT_SCHEMA_VERSION
 
@@ -291,7 +292,7 @@ class StateSnapshot:
 
 def state_identity(*, state_type: StateType, as_of: datetime, information_cutoff: datetime,
                    components: Mapping[str, StateComponent], policy: StatePolicy,
-                   code_revision: str, regime_label: str | None) -> str:
+                   code_revision: str) -> str:
     body = {
         "schema_version": STATE_SNAPSHOT_SCHEMA_VERSION,
         "state_type": state_type.value,
@@ -303,7 +304,6 @@ def state_identity(*, state_type: StateType, as_of: datetime, information_cutoff
                    "caution_risk_multiplier": str(policy.caution_risk_multiplier),
                    "reduced_risk_multiplier": str(policy.reduced_risk_multiplier)},
         "code_revision": code_revision,
-        "regime_label": regime_label,
     }
     return digest(canonical(body))
 
