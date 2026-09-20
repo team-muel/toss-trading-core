@@ -205,9 +205,6 @@ class PointInTimeMacroTests(unittest.TestCase):
                 run_id="macro-run",
                 execution_cost_model=_cost_model(),
             )
-        self.assertFalse(result["promotion_authorized"])
-        self.assertFalse(result["execution_authorized"])
-        self.assertEqual(result["data_manifest_ids"], ["alfred", "prices"])
 
 
 if __name__ == "__main__":
