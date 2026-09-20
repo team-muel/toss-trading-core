@@ -34,6 +34,7 @@ def inputs(**changes) -> RiskInputs:
 
 
 RISK_FLAGS = tuple(field.name for field in fields(RiskInputs) if field.type == "bool")
+DIRECT_RISK_FLAGS = tuple(name for name in RISK_FLAGS if name != "regime_uncertain")
 
 
 @pytest.mark.parametrize("field", RISK_FLAGS)
@@ -43,7 +44,7 @@ def test_unknown_or_coerced_risk_flags_cannot_authorize(field, value):
         RiskGovernor(policy()).decide(inputs(**{field: value}))
 
 
-@pytest.mark.parametrize("field", RISK_FLAGS)
+@pytest.mark.parametrize("field", DIRECT_RISK_FLAGS)
 def test_explicit_boolean_risk_flags_preserve_decisions(field):
     governor = RiskGovernor(policy())
     assert governor.decide(inputs(**{field: False})).state is DecisionState.ALLOW
@@ -51,6 +52,11 @@ def test_explicit_boolean_risk_flags_preserve_decisions(field):
 
 
 @pytest.mark.parametrize("field,reason", HARD_BLOCKS)
+def test_regime_uncertainty_cannot_be_set_without_traceable_evidence():
+    with pytest.raises(NoTrade, match="REGIME_UNCERTAINTY_EVIDENCE_REQUIRED"):
+        inputs(regime_uncertain=True)
+
+
 def test_every_hard_condition_blocks(field: str, reason: ReasonCode):
     governor = RiskGovernor(policy())
     decision = governor.decide(inputs(**{field: True}))
