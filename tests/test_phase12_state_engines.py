@@ -130,6 +130,13 @@ def test_market_state_stays_continuous_without_generic_regime_inference():
     assert not hasattr(engine, "_derive_regime")
 
 
+def test_legacy_regime_label_is_read_schema_tombstone_not_a_new_write_path():
+    state = build(MarketStateEngine(), components(MARKET_COMPONENTS))
+    assert state.regime_label is None
+    with pytest.raises(ValueError, match="STATE_LEGACY_REGIME_LABEL_WRITE_FORBIDDEN"):
+        replace(state, regime_label="EXPANSION")
+
+
 def test_feature_snapshot_and_manifest_stay_atomically_bound_to_component():
     state = build(MarketStateEngine(), components(MARKET_COMPONENTS))
     growth = state.components["growth"]
