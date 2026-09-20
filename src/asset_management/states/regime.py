@@ -166,6 +166,12 @@ class RegimeSnapshot:
         input_evidence_ids: tuple[str, ...],
         code_revision: str,
     ) -> "RegimeSnapshot":
+        if not isinstance(spec, RegimeModelSpec):
+            raise InvariantViolation("REGIME_MODEL_SPEC_INVALID")
+        as_of_utc = _aware(as_of, "REGIME_TIME_INVALID")
+        cutoff_utc = _aware(information_cutoff, "REGIME_TIME_INVALID")
+        if cutoff_utc > as_of_utc:
+            raise InvariantViolation("REGIME_CUTOFF_AFTER_AS_OF")
         if set(state_probabilities) != set(spec.latent_state_ids):
             raise InvariantViolation("REGIME_STATES_DO_NOT_MATCH_SPEC")
         probabilities = tuple(
@@ -177,8 +183,8 @@ class RegimeSnapshot:
             source_state_id=source_state_id,
             model_spec_id=spec.spec_id,
             model_key=spec.model_key,
-            as_of=as_of,
-            information_cutoff=information_cutoff,
+            as_of=as_of_utc,
+            information_cutoff=cutoff_utc,
             output_semantics=output_semantics,
             state_probabilities=probabilities,
             entropy=entropy,
@@ -191,8 +197,8 @@ class RegimeSnapshot:
             source_state_id,
             spec.spec_id,
             spec.model_key,
-            as_of.astimezone(timezone.utc).isoformat(),
-            information_cutoff.astimezone(timezone.utc).isoformat(),
+            as_of_utc.isoformat(),
+            cutoff_utc.isoformat(),
             output_semantics,
             probabilities,
             entropy,
@@ -282,5 +288,11 @@ class RegimeRepository:
         self.store = store
 
     def publish(self, snapshot: RegimeSnapshot) -> str:
-        self.store.catalog("regime-snapshots", snapshot.payload())
+        if not isinstance(snapshot, RegimeSnapshot):
+            raise InvariantViolation("REGIME_SNAPSHOT_INVALID")
+        content = canonical(snapshot.payload())
+        path = self.store.layout.resolve(
+            "catalog", f"regime-snapshots/{snapshot.regime_id}.json"
+        )
+        self.store._publish(path, content)
         return snapshot.regime_id
