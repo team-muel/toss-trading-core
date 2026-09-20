@@ -147,6 +147,6 @@ def test_unavailable_reason_changes_identity_without_generic_regime_inference():
     second = build(second_values)
 
     assert first.state_id != second.state_id
-    assert first.regime_label is None
+    assert "regime_label" not in first.payload()
     assert first.operational_state is OperationalState.NO_NEW_TRADES
     assert not hasattr(MarketStateEngine(), "_derive_regime")
