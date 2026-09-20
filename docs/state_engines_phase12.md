@@ -10,8 +10,9 @@ investment signal.
 meaning from an untyped number. Every snapshot records both `as_of` and
 `information_cutoff`; every component must use exactly the same temporal context as the
 snapshot. The state identity is a deterministic SHA-256 over the complete component
-semantics and lineage, the state policy, times, code revision, and the still-temporary
-optional regime field.
+semantics and lineage, the state policy, times, and code revision. AMA-177 removes regime
+derivation from generic State identity; the legacy `regime_label` payload field is retained
+only as a null replay-compatibility tombstone pending AMA-180 retirement.
 
 Every `StateComponent` records:
 
