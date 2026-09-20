@@ -120,6 +120,21 @@ def test_raw_regime_boolean_cannot_bypass_the_evidence_adapter():
         replace(risk_inputs(), regime_uncertain=True)
 
 
+def test_forged_regime_evidence_hash_cannot_bypass_the_typed_adapter():
+    forged = ident("forged-regime-evidence")
+    with pytest.raises(NoTrade, match="REGIME_UNCERTAINTY_EVIDENCE_ADAPTER_REQUIRED"):
+        RiskInputs(
+            runtime_run_id="run-179",
+            portfolio_target_id="target-179",
+            portfolio_target_hash=TARGET_HASH,
+            policy_version="risk@179",
+            as_of_utc=(NOW + timedelta(minutes=1)).isoformat(),
+            evidence_ids=(ident("account"), forged),
+            regime_uncertain=True,
+            regime_uncertainty_evidence_id=forged,
+        )
+
+
 def test_retrospective_smoothed_regime_cannot_enter_risk():
     with pytest.raises(
         InvariantViolation, match="RETROSPECTIVE_REGIME_CANNOT_ENTER_RISK"
