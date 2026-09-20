@@ -88,3 +88,29 @@ not rewritten.
 object with similarly named fields, and copies target collections into an
 immutable tuple. This protects the supported API boundary; it is not a sandbox
 against hostile Python code with reflective access to process internals.
+
+
+## AMA-179 regime uncertainty evidence boundary
+
+`regime_uncertain` is no longer an unqualified caller-owned soft-risk flag.
+Setting it to `True` requires a content-addressed
+`RegimeUncertaintyEvidence` identifier to be present in the RiskInputs evidence
+lineage.
+
+The evidence is derived from a `FILTERED_CAUSAL` `RegimeSnapshot` plus a
+versioned `RegimeUncertaintyPolicy`. The policy may inspect only uncertainty
+properties that are already present in the snapshot: model confidence,
+dominant-state probability and entropy. The resulting evidence records all
+triggered reasons and is bound to evaluation time, source State, source regime
+and policy hash.
+
+`SMOOTHED_RETROSPECTIVE` regime output is rejected at this boundary and cannot
+be relabeled as decision-time evidence. Evidence evaluated after the risk run's
+`as_of_utc` is likewise rejected. This is an information-boundary check, not a
+new regime model.
+
+The adapter does not generate a portfolio target, risk multiplier, BUY/SELL
+instruction, order intent or approval. A true uncertainty flag remains only one
+input to the existing versioned RiskGovernor policy, which is still the sole
+issuer of `ApprovedRiskDecision`. A regime model therefore cannot bypass the
+normal Forecast/Risk/Portfolio/Execution authority chain.
