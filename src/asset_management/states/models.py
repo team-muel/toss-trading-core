@@ -264,6 +264,10 @@ class StateSnapshot:
     regime_label: str | None = None
     schema_version: str = STATE_SNAPSHOT_SCHEMA_VERSION
 
+    def __post_init__(self) -> None:
+        if self.regime_label is not None:
+            raise ValueError("STATE_LEGACY_REGIME_LABEL_WRITE_FORBIDDEN")
+
     def payload(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
