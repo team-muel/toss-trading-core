@@ -12,11 +12,9 @@ from typing import Any, Iterable
 from .backtest import (
     BacktestResult,
     DualMomentumConfig,
-    MacroRegimeConfig,
     PricePoint,
     QuantFactorConfig,
     run_dual_momentum_backtest,
-    run_macro_regime_backtest,
     run_quant_factor_backtest,
     _metrics_from_daily_returns,
 )
@@ -30,7 +28,9 @@ PRIMARY_BENCHMARK = "SPY buy-and-hold"
 
 def _config(
     payload: dict[str, Any],
-) -> DualMomentumConfig | QuantFactorConfig | MacroRegimeConfig:
+) -> DualMomentumConfig | QuantFactorConfig:
+    if payload.get("strategy_family") == "macro_regime":
+        raise ValueError("LEGACY_MACRO_REGIME_READ_ONLY")
     config = payload.get("config")
     if not isinstance(config, dict):
         raise ValueError("hypothesis config is missing")
@@ -42,25 +42,6 @@ def _config(
             skip_recent_trading_days=int(config["skip_recent_trading_days"]),
             top_k=int(config["top_k"]),
             minimum_absolute_momentum=float(config["minimum_absolute_momentum"]),
-            walk_forward_train_days=int(config["walk_forward_train_days"]),
-            walk_forward_test_days=int(config["walk_forward_test_days"]),
-        )
-    if payload.get("strategy_family") == "macro_regime":
-        weights = config.get("macro_signal_weights")
-        if not isinstance(weights, dict):
-            raise ValueError("macro hypothesis config is missing signal weights")
-        return MacroRegimeConfig(
-            risk_on_symbols=tuple(config["risk_on_symbols"]),
-            defensive_symbols=tuple(config["defensive_symbols"]),
-            cash_symbol=str(config["cash_symbol"]),
-            macro_signal_weights=tuple(
-                (str(name), float(value))
-                for name, value in sorted(weights.items())
-            ),
-            signal_lookback_months=int(config["signal_lookback_months"]),
-            minimum_regime_score=float(config["minimum_regime_score"]),
-            rebalance_frequency=str(config["rebalance_frequency"]),
-            publication_lag_days=int(config["publication_lag_days"]),
             walk_forward_train_days=int(config["walk_forward_train_days"]),
             walk_forward_test_days=int(config["walk_forward_test_days"]),
         )
@@ -91,7 +72,7 @@ def _config(
 
 def _run_candidate(
     points: Iterable[PricePoint],
-    config: DualMomentumConfig | QuantFactorConfig | MacroRegimeConfig,
+    config: DualMomentumConfig | QuantFactorConfig,
     *,
     execution_cost_model: ExecutionCostModel,
     macro_observations: Iterable[MacroVintageObservation] = (),
@@ -99,13 +80,6 @@ def _run_candidate(
     if isinstance(config, DualMomentumConfig):
         return run_dual_momentum_backtest(
             points,
-            config,
-            execution_cost_model=execution_cost_model,
-        )
-    if isinstance(config, MacroRegimeConfig):
-        return run_macro_regime_backtest(
-            points,
-            macro_observations,
             config,
             execution_cost_model=execution_cost_model,
         )
@@ -251,8 +225,6 @@ def evaluate_hypothesis(
 
     config = _config(hypothesis)
     required = set(config.candidate_symbols) | {config.cash_symbol, "SPY"}
-    if isinstance(config, MacroRegimeConfig):
-        required.update(config.defensive_symbols)
     aligned = _common_history(points, required_symbols=required)
     result = _run_candidate(
         aligned,
@@ -361,8 +333,6 @@ def evaluate_prospective_hypothesis(
         raise ValueError("prospective protocol config does not match hypothesis")
     cutoff = str(protocol["historical_cutoff"])
     required = set(config.candidate_symbols) | {config.cash_symbol, "SPY"}
-    if isinstance(config, MacroRegimeConfig):
-        required.update(config.defensive_symbols)
     aligned = _common_history(points, required_symbols=required)
     result = _run_candidate(
         aligned,
