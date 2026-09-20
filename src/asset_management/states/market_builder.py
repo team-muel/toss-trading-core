@@ -192,7 +192,7 @@ class MarketStateBuilder:
                     component_spec.missing_reason,
                 )
                 continue
-            self._verify_feature_input(component_spec, item, as_of_utc, cutoff_utc)
+            definition_id = self._verify_feature_input(component_spec, item, as_of_utc, cutoff_utc)
             snapshot = item.snapshot
             try:
                 value = Decimal(snapshot.value) if snapshot.value is not None else None
@@ -215,7 +215,7 @@ class MarketStateBuilder:
                 confidence=Decimal(1),
                 quality_status=QualityStatus.VALID,
                 freshness_seconds=freshness_seconds,
-                input_evidence_ids=tuple(sorted((spec_catalog_id, item.manifest_id))),
+                input_evidence_ids=tuple(sorted((spec_catalog_id, item.manifest_id, definition_id))),
                 parameter_set_id=spec.spec_hash,
                 formula_version=component_spec.formula_version,
                 input_features=(item,),
@@ -253,7 +253,7 @@ class MarketStateBuilder:
 
     def _verify_feature_input(self, component_spec: MarketStateComponentSpec,
                               item: StateFeatureInput, as_of: datetime,
-                              cutoff: datetime) -> None:
+                              cutoff: datetime) -> str:
         snapshot = item.snapshot
         if (snapshot.feature_id != component_spec.source_feature_id or
                 snapshot.instrument_id != component_spec.source_instrument_id):
@@ -338,3 +338,4 @@ class MarketStateBuilder:
                 manifest_provider != max(parent_provider) or
                 not isinstance(body, dict) or body != expected):
             raise DataQualityError("MARKET_STATE_FEATURE_MANIFEST_INVALID")
+        return definition_id
