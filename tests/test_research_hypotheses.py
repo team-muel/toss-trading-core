@@ -140,6 +140,9 @@ class ResearchHypothesisTests(unittest.TestCase):
         self.assertEqual(self.policy["minimum_prospective_rebalances"], 12)
         self.assertEqual(self.policy["minimum_benchmark_outperformance_ratio"], 0.5)
         self.assertNotIn("minimum_positive_walk_forward_ratio", self.policy)
+        self.assertNotIn("macro_regime", self.policy["strategy_families"])
+        self.assertNotIn("macro_regime", self.policy["family_rotation"])
+        self.assertNotIn("allowed_macro_regime_score", self.policy)
 
     def test_proposal_is_content_addressed_and_policy_bounded(self) -> None:
         first = hypothesis_from_proposal(
@@ -253,30 +256,13 @@ class ResearchHypothesisTests(unittest.TestCase):
                 model="gemini-test",
             )
 
-    def test_macro_family_is_point_in_time_bounded(self) -> None:
-        hypothesis = hypothesis_from_proposal(
-            macro_proposal(), policy=self.policy, model="gemini-test"
-        )
-        self.assertEqual(hypothesis.strategy_family, "macro_regime")
-        self.assertEqual(hypothesis.config["publication_lag_days"], 1)
-
-        unsafe = macro_proposal()
-        unsafe["config"]["publication_lag_days"] = 0
-        with self.assertRaisesRegex(ValueError, "locked policy"):
+    def test_macro_family_is_retired_from_new_hypotheses(self) -> None:
+        with self.assertRaisesRegex(ValueError, "legacy macro_regime research family is read-only"):
             hypothesis_from_proposal(
-                unsafe, policy=self.policy, model="gemini-test"
+                macro_proposal(), policy=self.policy, model="gemini-test"
             )
 
-        misleading = macro_proposal()
-        misleading["falsification_criteria"] = [
-            "선택하지 않은 VTV 대비 성과가 낮으면 기각한다."
-        ]
-        with self.assertRaisesRegex(ValueError, "unconfigured assets"):
-            hypothesis_from_proposal(
-                misleading, policy=self.policy, model="gemini-test"
-            )
-
-    def test_vertex_uses_macro_schema_for_macro_rotation(self) -> None:
+    def test_vertex_cannot_reactivate_retired_macro_rotation(self) -> None:
         session = _Session(macro_proposal())
         planner = VertexHypothesisPlanner(
             project_id="project",
@@ -285,19 +271,13 @@ class ResearchHypothesisTests(unittest.TestCase):
         )
         macro_policy = {**self.policy, "target_strategy_families": ["macro_regime"]}
 
-        proposals = planner.propose(
-            policy=macro_policy,
-            registered=[],
-            available_symbols=self.policy["allowed_candidate_symbols"],
-        )
-
-        self.assertEqual(proposals, [macro_proposal()])
-        request = session.calls[0][1]["json"]
-        schema = request["generationConfig"]["responseSchema"]["properties"][
-            "hypotheses"
-        ]["items"]["properties"]["config"]
-        self.assertEqual(set(schema["required"]), set(macro_proposal()["config"]))
-        self.assertIn("macro_signal_weights", schema["properties"])
+        with self.assertRaisesRegex(ValueError, "legacy macro_regime research family is read-only"):
+            planner.propose(
+                policy=macro_policy,
+                registered=[],
+                available_symbols=self.policy["allowed_candidate_symbols"],
+            )
+        self.assertEqual(session.calls, [])
 
     def test_structural_novelty_rejects_near_duplicates_but_not_new_families(self) -> None:
         first = hypothesis_from_proposal(
