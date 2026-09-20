@@ -124,17 +124,16 @@ def test_market_state_stays_continuous_without_generic_regime_inference():
     engine = MarketStateEngine()
     state = build(engine, raw_components)
 
-    assert state.regime_label is None
+    assert "regime_label" not in state.payload()
     assert state.components["growth"].value == Decimal("0.4")
     assert len(state.components) == 9
     assert not hasattr(engine, "_derive_regime")
 
 
-def test_legacy_regime_label_is_read_schema_tombstone_not_a_new_write_path():
+def test_legacy_regime_label_is_absent_from_canonical_state_snapshot():
     state = build(MarketStateEngine(), components(MARKET_COMPONENTS))
-    assert state.regime_label is None
-    with pytest.raises(ValueError, match="STATE_LEGACY_REGIME_LABEL_WRITE_FORBIDDEN"):
-        replace(state, regime_label="EXPANSION")
+    assert "regime_label" not in state.payload()
+    assert not hasattr(state, "regime_label")
 
 
 def test_feature_snapshot_and_manifest_stay_atomically_bound_to_component():
@@ -248,7 +247,7 @@ def test_stale_or_invalid_component_blocks_new_trades():
 def test_common_fields_preserve_pit_and_feature_lineage():
     state = build(CompanyStateEngine(), components(
         COMPANY_COMPONENTS, state_type=StateType.COMPANY))
-    assert state.schema_version == "state-snapshot-v2"
+    assert state.schema_version == "state-snapshot-v3"
     assert state.as_of == NOW.isoformat()
     assert state.information_cutoff == CUTOFF.isoformat()
     assert state.confidence == "0.9" and state.quality_status is QualityStatus.VALID
@@ -274,7 +273,7 @@ def test_state_snapshot_is_deterministic_and_semantic_metadata_changes_identity(
     assert repository.publish(first) == repository.publish(second) == first.state_id
     path = tmp_path / "catalog" / "state-snapshots" / f"{first.state_id}.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "state-snapshot-v2"
+    assert payload["schema_version"] == "state-snapshot-v3"
     assert payload["information_cutoff"] == CUTOFF.isoformat()
     assert payload["components"]["growth"]["normalization"] == "RAW"
     assert payload["input_data_manifest_ids"] == list(first.input_data_manifest_ids)
