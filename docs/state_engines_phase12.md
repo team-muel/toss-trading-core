@@ -141,3 +141,36 @@ does not falsely claim that a graph exists when one has not been materialized.
 - every component remains visible; there is no single opaque state score
 - identical semantic inputs reproduce the same state hash
 - no actual regime classifier or new trading authority is introduced by this contract
+
+
+## AMA-177 regime inference boundary
+
+Generic State construction no longer derives a market regime. The legacy
+`regime_label` field remains a null replay-compatibility tombstone until the
+final AMA-180 retirement pass, and it is no longer part of State identity.
+
+Future regime inference uses a separate typed contract:
+
+- `RegimeModelSpec` binds the model/version, source State type, consumed State
+  components, opaque latent-state IDs, parameter set, and purpose.
+- `RegimeSnapshot` binds one source State identity, model-spec identity,
+  `as_of`, `information_cutoff`, probability simplex, entropy, confidence,
+  evidence lineage, and code revision.
+- `FILTERED_CAUSAL` means the output is intended to be knowable from
+  information available at the snapshot cutoff.
+- `SMOOTHED_RETROSPECTIVE` means the output may use later observations and is
+  research evidence only. The two semantics have different content identities.
+- Latent state IDs are intentionally opaque. Economic names such as
+  `EXPANSION` or `CONTRACTION` are not canonical model outputs at this
+  boundary.
+- The regime payload contains no forecast, expected return, risk multiplier,
+  target weight, order intent, or broker-write authority.
+
+The model may later be registered under the existing
+`ModelScope.STATE_INFERENCE`, but registry authorization does not turn the
+RegimeSnapshot itself into trading authority. Forecast/Risk consumer policy is
+owned separately by AMA-179.
+
+`alpha_management` Fast Expression is not a required runtime dependency of
+this contract. Research-language outputs may enter only after explicit
+materialization into canonical Feature/State evidence through an outer bridge.
