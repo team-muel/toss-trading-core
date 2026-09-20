@@ -1,22 +1,54 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "state_snapshot.schema.json",
-  "title": "Phase 12 State Snapshot v2",
+  "title": "Phase 12 State Snapshot v3",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "state_id", "state_type", "as_of", "information_cutoff",
-    "components", "confidence", "quality_status", "freshness", "input_evidence_ids",
-    "input_feature_ids", "input_feature_run_ids", "input_feature_manifest_ids",
-    "input_data_manifest_ids", "calculation_lineage_ids", "policy_version", "code_revision",
-    "operational_state", "risk_multiplier", "regime_label"
+    "schema_version",
+    "state_id",
+    "state_type",
+    "as_of",
+    "information_cutoff",
+    "components",
+    "confidence",
+    "quality_status",
+    "freshness",
+    "input_evidence_ids",
+    "input_feature_ids",
+    "input_feature_run_ids",
+    "input_feature_manifest_ids",
+    "input_data_manifest_ids",
+    "calculation_lineage_ids",
+    "policy_version",
+    "code_revision",
+    "operational_state",
+    "risk_multiplier"
   ],
   "properties": {
-    "schema_version": {"const": "state-snapshot-v2"},
-    "state_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "state_type": {"enum": ["MARKET", "COMPANY", "PORTFOLIO", "SYSTEM"]},
-    "as_of": {"type": "string", "format": "date-time"},
-    "information_cutoff": {"type": "string", "format": "date-time"},
+    "schema_version": {
+      "const": "state-snapshot-v3"
+    },
+    "state_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "state_type": {
+      "enum": [
+        "MARKET",
+        "COMPANY",
+        "PORTFOLIO",
+        "SYSTEM"
+      ]
+    },
+    "as_of": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "information_cutoff": {
+      "type": "string",
+      "format": "date-time"
+    },
     "components": {
       "type": "object",
       "minProperties": 1,
@@ -24,71 +56,222 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "component_id", "value", "semantic_type", "unit", "normalization", "as_of",
-          "information_cutoff", "confidence", "quality_status", "freshness_seconds",
-          "input_evidence_ids", "parameter_set_id", "formula_version", "input_features",
+          "component_id",
+          "value",
+          "semantic_type",
+          "unit",
+          "normalization",
+          "as_of",
+          "information_cutoff",
+          "confidence",
+          "quality_status",
+          "freshness_seconds",
+          "input_evidence_ids",
+          "parameter_set_id",
+          "formula_version",
+          "input_features",
           "calculation_lineage_id"
         ],
         "properties": {
-          "component_id": {"type": "string", "pattern": "^[a-z][a-z0-9_.-]*$"},
+          "component_id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_.-]*$"
+          },
           "value": {},
-          "semantic_type": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
-          "unit": {"type": "string", "minLength": 1},
+          "semantic_type": {
+            "type": "string",
+            "pattern": "^[A-Z][A-Z0-9_]*$"
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1
+          },
           "normalization": {
-            "enum": ["RAW", "Z_SCORE", "PERCENTILE", "DIRECTIONAL_SCORE", "STANDARDIZED_COMPOSITE", "STRUCTURED", "CATEGORICAL"]
+            "enum": [
+              "RAW",
+              "Z_SCORE",
+              "PERCENTILE",
+              "DIRECTIONAL_SCORE",
+              "STANDARDIZED_COMPOSITE",
+              "STRUCTURED",
+              "CATEGORICAL"
+            ]
           },
-          "as_of": {"type": "string", "format": "date-time"},
-          "information_cutoff": {"type": "string", "format": "date-time"},
-          "confidence": {"type": "string"},
-          "quality_status": {"enum": ["VALID", "STALE", "MISSING", "CONFLICT", "PRIMARY_PENDING", "VENDOR_DELAY", "ESTIMATED", "MANUAL", "BLOCKED", "QUARANTINED"]},
-          "freshness_seconds": {"type": "integer", "minimum": 0},
+          "as_of": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "information_cutoff": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "confidence": {
+            "type": "string"
+          },
+          "quality_status": {
+            "enum": [
+              "VALID",
+              "STALE",
+              "MISSING",
+              "CONFLICT",
+              "PRIMARY_PENDING",
+              "VENDOR_DELAY",
+              "ESTIMATED",
+              "MANUAL",
+              "BLOCKED",
+              "QUARANTINED"
+            ]
+          },
+          "freshness_seconds": {
+            "type": "integer",
+            "minimum": 0
+          },
           "input_evidence_ids": {
-            "type": "array", "minItems": 1, "uniqueItems": true,
-            "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            }
           },
-          "parameter_set_id": {"type": "string", "minLength": 1},
-          "formula_version": {"type": "string", "minLength": 1},
+          "parameter_set_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "formula_version": {
+            "type": "string",
+            "minLength": 1
+          },
           "input_features": {
             "type": "array",
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["snapshot", "manifest_id"],
+              "required": [
+                "snapshot",
+                "manifest_id"
+              ],
               "properties": {
-                "manifest_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "manifest_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$"
+                },
                 "snapshot": {
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
-                    "feature_run_id", "instrument_id", "feature_id", "as_of",
-                    "information_cutoff", "value", "quality_status", "input_manifest_ids",
-                    "parameter_set_id", "parent_state_id", "code_revision", "validity"
+                    "feature_run_id",
+                    "instrument_id",
+                    "feature_id",
+                    "as_of",
+                    "information_cutoff",
+                    "value",
+                    "quality_status",
+                    "input_manifest_ids",
+                    "parameter_set_id",
+                    "parent_state_id",
+                    "code_revision",
+                    "validity"
                   ],
                   "properties": {
-                    "feature_run_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-                    "instrument_id": {"type": "string", "minLength": 1},
-                    "feature_id": {"type": "string", "minLength": 1},
-                    "as_of": {"type": "string", "format": "date-time"},
-                    "information_cutoff": {"type": "string", "format": "date-time"},
-                    "value": {"type": ["string", "null"]},
-                    "quality_status": {"enum": ["VALID", "STALE", "MISSING", "CONFLICT", "PRIMARY_PENDING", "VENDOR_DELAY", "ESTIMATED", "MANUAL", "BLOCKED", "QUARANTINED"]},
-                    "input_manifest_ids": {
-                      "type": "array", "minItems": 1, "uniqueItems": true,
-                      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+                    "feature_run_id": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
                     },
-                    "parameter_set_id": {"type": "string", "minLength": 1},
-                    "parent_state_id": {"type": ["string", "null"]},
-                    "code_revision": {"type": "string", "pattern": "^git:[0-9a-f]{7,40}$"},
+                    "instrument_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "feature_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "as_of": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "information_cutoff": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "quality_status": {
+                      "enum": [
+                        "VALID",
+                        "STALE",
+                        "MISSING",
+                        "CONFLICT",
+                        "PRIMARY_PENDING",
+                        "VENDOR_DELAY",
+                        "ESTIMATED",
+                        "MANUAL",
+                        "BLOCKED",
+                        "QUARANTINED"
+                      ]
+                    },
+                    "input_manifest_ids": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[0-9a-f]{64}$"
+                      }
+                    },
+                    "parameter_set_id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "parent_state_id": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "code_revision": {
+                      "type": "string",
+                      "pattern": "^git:[0-9a-f]{7,40}$"
+                    },
                     "validity": {
                       "type": "object",
                       "additionalProperties": false,
-                      "required": ["forecast_horizon", "holding_horizon", "valid_until", "decay_profile", "half_life_seconds"],
+                      "required": [
+                        "forecast_horizon",
+                        "holding_horizon",
+                        "valid_until",
+                        "decay_profile",
+                        "half_life_seconds"
+                      ],
                       "properties": {
-                        "forecast_horizon": {"type": "integer"},
-                        "holding_horizon": {"type": "integer"},
-                        "valid_until": {"type": "string", "format": "date-time"},
-                        "decay_profile": {"enum": ["STEP", "LINEAR", "EXPONENTIAL"]},
-                        "half_life_seconds": {"type": ["integer", "null"]}
+                        "forecast_horizon": {
+                          "type": "integer"
+                        },
+                        "holding_horizon": {
+                          "type": "integer"
+                        },
+                        "valid_until": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "decay_profile": {
+                          "enum": [
+                            "STEP",
+                            "LINEAR",
+                            "EXPONENTIAL"
+                          ]
+                        },
+                        "half_life_seconds": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        }
                       }
                     }
                   }
@@ -97,45 +280,111 @@
             }
           },
           "calculation_lineage_id": {
-            "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
           },
           "reason_code": {
-            "type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9_]*$"
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[A-Z][A-Z0-9_]*$"
           }
         }
       }
     },
-    "confidence": {"type": "string"},
-    "quality_status": {"enum": ["VALID", "STALE", "MISSING", "CONFLICT", "PRIMARY_PENDING", "VENDOR_DELAY", "ESTIMATED", "MANUAL", "BLOCKED", "QUARANTINED"]},
-    "freshness": {"type": "integer", "minimum": 0},
+    "confidence": {
+      "type": "string"
+    },
+    "quality_status": {
+      "enum": [
+        "VALID",
+        "STALE",
+        "MISSING",
+        "CONFLICT",
+        "PRIMARY_PENDING",
+        "VENDOR_DELAY",
+        "ESTIMATED",
+        "MANUAL",
+        "BLOCKED",
+        "QUARANTINED"
+      ]
+    },
+    "freshness": {
+      "type": "integer",
+      "minimum": 0
+    },
     "input_evidence_ids": {
-      "type": "array", "minItems": 1, "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
     },
     "input_feature_ids": {
-      "type": "array", "uniqueItems": true,
-      "items": {"type": "string", "minLength": 1}
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "input_feature_run_ids": {
-      "type": "array", "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
     },
     "input_feature_manifest_ids": {
-      "type": "array", "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
     },
     "input_data_manifest_ids": {
-      "type": "array", "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
     },
     "calculation_lineage_ids": {
-      "type": "array", "uniqueItems": true,
-      "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
     },
-    "policy_version": {"type": "string", "minLength": 1},
-    "code_revision": {"type": "string", "pattern": "^git:[0-9a-f]{7,40}$"},
-    "operational_state": {"enum": ["NORMAL", "CAUTION", "REDUCED_RISK", "NO_NEW_TRADES", "HALTED"]},
-    "risk_multiplier": {"type": "string"},
-    "regime_label": {"type": ["string", "null"]}
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "code_revision": {
+      "type": "string",
+      "pattern": "^git:[0-9a-f]{7,40}$"
+    },
+    "operational_state": {
+      "enum": [
+        "NORMAL",
+        "CAUTION",
+        "REDUCED_RISK",
+        "NO_NEW_TRADES",
+        "HALTED"
+      ]
+    },
+    "risk_multiplier": {
+      "type": "string"
+    }
   }
 }
