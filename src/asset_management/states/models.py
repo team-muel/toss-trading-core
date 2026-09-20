@@ -15,7 +15,7 @@ from asset_management.features.models import FeatureSnapshot
 from asset_management.quality.models import BLOCKING_QUALITY, QualityStatus
 
 
-STATE_SNAPSHOT_SCHEMA_VERSION = "state-snapshot-v2"
+STATE_SNAPSHOT_SCHEMA_VERSION = "state-snapshot-v3"
 _HASH = re.compile(r"[0-9a-f]{64}")
 _COMPONENT_ID = re.compile(r"[a-z][a-z0-9_.-]*")
 _SEMANTIC = re.compile(r"[A-Z][A-Z0-9_]*")
@@ -260,13 +260,7 @@ class StateSnapshot:
     code_revision: str
     operational_state: OperationalState
     risk_multiplier: str
-    # Legacy replay tombstone. Canonical State construction no longer derives regimes.
-    regime_label: str | None = None
     schema_version: str = STATE_SNAPSHOT_SCHEMA_VERSION
-
-    def __post_init__(self) -> None:
-        if self.regime_label is not None:
-            raise ValueError("STATE_LEGACY_REGIME_LABEL_WRITE_FORBIDDEN")
 
     def payload(self) -> dict[str, object]:
         return {
@@ -290,7 +284,6 @@ class StateSnapshot:
             "code_revision": self.code_revision,
             "operational_state": self.operational_state.value,
             "risk_multiplier": self.risk_multiplier,
-            "regime_label": self.regime_label,
         }
 
 
