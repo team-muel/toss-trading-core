@@ -1,5 +1,10 @@
 # ALFRED 시점 데이터 기반 거시경제 레짐 연구
 
+> **AMA-180 상태:** 이 문서는 legacy `MacroRegimeConfig` 백테스트의 historical
+> replay 규약이다. 신규 autonomous hypothesis/candidate evaluation 또는 canonical
+> allocation authority가 아니다. 직접 재현 코드는 `toss_trading.research.backtest`
+> 아래에만 보존된다.
+
 ## 목적
 
 FRED의 현재 최신값을 과거 모든 시점에 적용하면 당시에는 알 수 없었던 수정치가
@@ -61,9 +66,9 @@ LLM이 만든 코드나 외부 데이터는 허용하지 않는다.
 
 ## 메일에서 확인할 내용
 
-메일의 자율 연구 섹션에 `macro_regime` 계열, 경제적 가설, 반증 조건,
-사용한 신호 가중치, 변화 관측기간, 위험·방어 자산, 실패한 검증 게이트가
-그 실행 결과로 표시된다. `historical_not_qualified` 후보는 발견된 전략이
+과거 이 계열이 자율 연구에 포함되어 생성한 메일/산출물에는 `macro_regime`,
+경제적 가설, 반증 조건, 신호 가중치, 관측기간, 위험·방어 자산과 검증 게이트가
+남아 있을 수 있다. AMA-180 이후 신규 자율 연구 메일에는 이 계열을 생성하지 않는다. `historical_not_qualified` 후보는 발견된 전략이
 아니며 재검정 또는 승격되지 않는다.
 
 ## 현재 한계
