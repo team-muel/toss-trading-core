@@ -93,12 +93,24 @@ class RegimeUncertaintyEvidence:
             or self.uncertain != bool(self.reason_codes)
         ):
             raise InvariantViolation("REGIME_UNCERTAINTY_EVIDENCE_INVALID")
-        object.__setattr__(self, "evaluated_at", evaluated.astimezone(timezone.utc).isoformat())
-        object.__setattr__(
-            self,
-            "reason_codes",
-            tuple(sorted(self.reason_codes, key=lambda reason: reason.value)),
-        )
+        evaluated_utc = evaluated.astimezone(timezone.utc)
+        ordered_reasons = tuple(sorted(self.reason_codes, key=lambda reason: reason.value))
+        object.__setattr__(self, "evaluated_at", evaluated_utc.isoformat())
+        object.__setattr__(self, "reason_codes", ordered_reasons)
+        body = {
+            "regime_id": self.regime_id,
+            "source_state_id": self.source_state_id,
+            "policy_version": self.policy_version,
+            "policy_hash": self.policy_hash,
+            "evaluated_at": evaluated_utc.isoformat(),
+            "uncertain": self.uncertain,
+            "reason_codes": [reason.value for reason in ordered_reasons],
+        }
+        expected_id = sha256(
+            json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        if self.evidence_id != expected_id:
+            raise InvariantViolation("REGIME_UNCERTAINTY_EVIDENCE_IDENTITY_MISMATCH")
 
     def payload(self) -> dict[str, object]:
         return {
@@ -173,6 +185,16 @@ def bind_regime_uncertainty(
         raise InvariantViolation("RISK_INPUTS_REQUIRED")
     if not isinstance(evidence, RegimeUncertaintyEvidence):
         raise InvariantViolation("REGIME_UNCERTAINTY_EVIDENCE_REQUIRED")
+    try:
+        risk_as_of = datetime.fromisoformat(inputs.as_of_utc)
+        evidence_at = datetime.fromisoformat(evidence.evaluated_at)
+    except (TypeError, ValueError) as exc:
+        raise InvariantViolation("REGIME_UNCERTAINTY_TIME_INVALID") from exc
+    if (risk_as_of.tzinfo is None or risk_as_of.utcoffset() is None or
+            evidence_at.tzinfo is None or evidence_at.utcoffset() is None):
+        raise InvariantViolation("REGIME_UNCERTAINTY_TIME_INVALID")
+    if evidence_at.astimezone(timezone.utc) > risk_as_of.astimezone(timezone.utc):
+        raise InvariantViolation("FUTURE_REGIME_EVIDENCE_FORBIDDEN")
     evidence_ids = tuple(sorted(set(inputs.evidence_ids) | {evidence.evidence_id}))
     return replace(
         inputs,
