@@ -72,14 +72,6 @@ def _factor_proposal(family: str) -> dict:
     }
 
 
-def _macro_proposal() -> dict:
-    return {
-        "strategy_family": "macro_regime",
-        "thesis": "당시 공개된 거시 빈티지로 위험 선호 국면을 구분한다.",
-        "falsification_criteria": ["비용 후 SPY 초과 성과가 없으면 폐기한다."],
-        "config": {},
-    }
-
 
 class ResearchPlanHypothesesTests(unittest.TestCase):
     def test_planner_registers_once_and_reuses_duplicate_config(self) -> None:
