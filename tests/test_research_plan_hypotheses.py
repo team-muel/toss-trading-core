@@ -48,31 +48,6 @@ def _factor_proposal(family: str) -> dict:
         "low_volatility": 0.0,
         "trend_acceleration": 0.0,
     }
-
-
-def _macro_proposal() -> dict:
-    return {
-        "strategy_family": "macro_regime",
-        "thesis": "당시 공개된 거시 빈티지로 위험 선호 국면을 구분한다.",
-        "falsification_criteria": ["비용 후 SPY 초과 성과가 없으면 폐기한다."],
-        "config": {
-            "risk_on_symbols": ["SPY", "QQQ"],
-            "defensive_symbols": ["SGOV", "TLT"],
-            "cash_symbol": "SGOV",
-            "macro_signal_weights": {
-                "yield_curve": 0.25,
-                "inflation_trend": 0.25,
-                "unemployment_trend": 0.25,
-                "policy_rate_trend": 0.25,
-            },
-            "signal_lookback_months": 6,
-            "minimum_regime_score": 0.0,
-            "rebalance_frequency": "monthly",
-            "publication_lag_days": 1,
-            "walk_forward_train_days": 504,
-            "walk_forward_test_days": 126,
-        },
-    }
     weights[active] = 1.0
     return {
         "strategy_family": family,
@@ -95,6 +70,7 @@ def _macro_proposal() -> dict:
             "walk_forward_test_days": 126,
         },
     }
+
 
 
 class ResearchPlanHypothesesTests(unittest.TestCase):
@@ -230,16 +206,14 @@ class ResearchPlanHypothesesTests(unittest.TestCase):
             self.assertEqual(result["created"], [])
             self.assertEqual(len(result["rejected_invalid"]), 1)
 
-    def test_daily_family_rotation_starts_with_least_researched_direction(self) -> None:
+    def test_daily_family_rotation_skips_retired_macro_regime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             universe = root / "universe.csv"
             universe.write_text(
                 "symbol\nSPY\nQQQ\nTLT\nGLD\nSGOV\n", encoding="utf-8"
             )
-            second = _macro_proposal()
-            second["config"]["minimum_regime_score"] = 0.25
-            planner = _Planner([_macro_proposal(), second])
+            planner = _Planner([_factor_proposal("short_term_reversal")])
             result = plan_hypotheses(
                 policy_path="config/autonomous_research_policy.json",
                 universe_path=universe,
@@ -253,13 +227,12 @@ class ResearchPlanHypothesesTests(unittest.TestCase):
             )
 
             self.assertEqual(
-                result["target_strategy_families"], ["macro_regime"]
+                result["target_strategy_families"], ["short_term_reversal"]
             )
             self.assertEqual(len(result["created"]), 1)
-            self.assertEqual(result["registered_count"], 1)
             created_id = result["created"][0]
             self.assertEqual(
-                result["created_families"][created_id], "macro_regime"
+                result["created_families"][created_id], "short_term_reversal"
             )
 
 

@@ -1,11 +1,9 @@
 from .backtest import (
     BacktestResult,
     DualMomentumConfig,
-    MacroRegimeConfig,
     PricePoint,
     QuantFactorConfig,
     run_dual_momentum_backtest,
-    run_macro_regime_backtest,
     run_quant_factor_backtest,
 )
 from .macro import (
@@ -47,7 +45,6 @@ __all__ = [
     "DualMomentumConfig",
     "ExecutionCostModel",
     "MarketBar",
-    "MacroRegimeConfig",
     "MacroVintageObservation",
     "MACRO_SIGNAL_NAMES",
     "PricePoint",
@@ -72,7 +69,6 @@ __all__ = [
     "load_alfred_from_manifests",
     "parse_alfred_payload",
     "run_dual_momentum_backtest",
-    "run_macro_regime_backtest",
     "run_quant_factor_backtest",
     "validate_market_bars",
 ]
