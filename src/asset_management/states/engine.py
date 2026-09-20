@@ -132,7 +132,6 @@ class StateEngine:
             code_revision=code_revision,
             operational_state=operational,
             risk_multiplier=str(multiplier),
-            regime_label=None,
         )
 
     def recompute_component(self, snapshot: StateSnapshot, *, component_name: str,
