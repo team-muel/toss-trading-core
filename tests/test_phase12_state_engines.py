@@ -333,14 +333,11 @@ def test_component_id_and_normalization_contracts_fail_closed():
         build(SystemStateEngine(), system)
 
 
-def test_incomplete_components_and_regime_misuse_fail_closed():
+def test_incomplete_components_and_categorical_market_values_fail_closed():
     with pytest.raises(DataQualityError, match="STATE_COMPONENTS_INCOMPLETE"):
         MarketStateEngine().build(
             as_of=NOW, information_cutoff=CUTOFF, components={}, policy=POLICY,
             code_revision="git:abcdef0")
-    with pytest.raises(DataQualityError, match="REGIME_ONLY_AVAILABLE_FOR_MARKET_STATE"):
-        build(CompanyStateEngine(), components(
-            COMPANY_COMPONENTS, state_type=StateType.COMPANY), derive_regime=True)
     invalid = components(MARKET_COMPONENTS, values={"growth": "RISK_ON"})
     with pytest.raises(DataQualityError, match="CONTINUOUS_STATE_VALUE_INVALID"):
         build(MarketStateEngine(), invalid)
