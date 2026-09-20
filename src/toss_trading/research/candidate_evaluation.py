@@ -19,7 +19,6 @@ from .backtest import (
     _metrics_from_daily_returns,
 )
 from .costs import ExecutionCostModel
-from .macro import MacroVintageObservation
 
 
 EVALUATION_SCHEMA = "historical-candidate-evaluation-v1"
@@ -75,7 +74,6 @@ def _run_candidate(
     config: DualMomentumConfig | QuantFactorConfig,
     *,
     execution_cost_model: ExecutionCostModel,
-    macro_observations: Iterable[MacroVintageObservation] = (),
 ) -> BacktestResult:
     if isinstance(config, DualMomentumConfig):
         return run_dual_momentum_backtest(
@@ -219,7 +217,6 @@ def evaluate_hypothesis(
     run_id: str,
     evaluated_at: str | None = None,
     execution_cost_model: ExecutionCostModel,
-    macro_observations: Iterable[MacroVintageObservation] = (),
 ) -> dict[str, Any]:
     """Evaluate one registered hypothesis without granting promotion authority."""
 
@@ -230,7 +227,6 @@ def evaluate_hypothesis(
         aligned,
         config,
         execution_cost_model=execution_cost_model,
-        macro_observations=macro_observations,
     )
     statistical_test = block_bootstrap_test(
         _paired_excess_returns(result),
@@ -245,7 +241,6 @@ def evaluate_hypothesis(
         aligned,
         config,
         execution_cost_model=result.execution_cost_model.stressed(stress_multiplier),
-        macro_observations=macro_observations,
     )
     stressed_excess = statistics.fmean(_paired_excess_returns(stressed)) * 252.0
     fold_count = len(result.walk_forward_folds)
@@ -316,7 +311,6 @@ def evaluate_prospective_hypothesis(
     run_id: str,
     evaluated_at: str | None = None,
     execution_cost_model: ExecutionCostModel,
-    macro_observations: Iterable[MacroVintageObservation] = (),
 ) -> dict[str, Any]:
     """Observe a sealed future window and hide metrics until it is complete."""
 
@@ -338,7 +332,6 @@ def evaluate_prospective_hypothesis(
         aligned,
         config,
         execution_cost_model=execution_cost_model,
-        macro_observations=macro_observations,
     )
     prospective_returns = [item for item in result.daily_returns if item[0] > cutoff]
     prospective_rebalances = [
@@ -413,7 +406,6 @@ def evaluate_prospective_hypothesis(
         aligned,
         config,
         execution_cost_model=result.execution_cost_model.stressed(stress_multiplier),
-        macro_observations=macro_observations,
     )
     stressed_by_date = dict(stressed.daily_returns)
     stress_excess = statistics.fmean(
