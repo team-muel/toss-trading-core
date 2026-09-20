@@ -64,9 +64,19 @@ remains AMA-166.
 macro model, inclusive intervals, revision lag, timezone boundaries, missing
 tombstones, partial pages, malformed/nonfinite values, monthly gaps, staleness,
 expired-latest evidence, raw-to-silver mismatch and unavailable historical
-collection artifacts. The comparison imports research_platform from AMA-156.
+collection artifacts. The parity comparison uses the retained `toss_trading.research.macro` implementation only as a historical oracle; canonical code does not import it.
 Required exact-head CI and review are recorded in the PR and Linear.
 
 No runtime consumer is switched and no legacy backtester is removed here. Actual
 acquisition completeness, real-data OOS acceptance and allocation/backtest
 retirement require the subsequent integration and parity stages.
+
+
+## AMA-178 convergence decision
+
+This file is now the canonical macro-state migration note for AMA-178. The
+historical `MacroRegimeConfig` risk-on/defensive allocation is explicitly not
+part of the canonical state contract. It remains legacy research evidence until
+AMA-180 disposition. Future heuristic regime work (NBER/Sahm/Drawdown) and
+future probabilistic regime inference consume canonical evidence only after the
+legacy foundation closes.
