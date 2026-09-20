@@ -12,7 +12,7 @@ import json
 from asset_management.domain.errors import InvariantViolation
 from asset_management.states import RegimeOutputSemantics, RegimeSnapshot
 
-from .governor import RiskInputs
+from .governor import RiskInputs, _REGIME_EVIDENCE_BINDING_ISSUER
 
 
 class RegimeUncertaintyReason(StrEnum):
@@ -201,4 +201,5 @@ def bind_regime_uncertainty(
         evidence_ids=evidence_ids,
         regime_uncertain=evidence.uncertain,
         regime_uncertainty_evidence_id=evidence.evidence_id,
+        _regime_evidence_issuer=_REGIME_EVIDENCE_BINDING_ISSUER,
     )
