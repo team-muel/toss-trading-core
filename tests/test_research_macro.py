@@ -7,14 +7,13 @@ from pathlib import Path
 
 from toss_trading.research import (
     DataLake,
-    MacroRegimeConfig,
     MacroVintageObservation,
     PointInTimeMacroStore,
     PricePoint,
     load_alfred_from_manifests,
-    run_macro_regime_backtest,
     parse_alfred_payload,
 )
+from toss_trading.research.backtest import MacroRegimeConfig, run_macro_regime_backtest
 from toss_trading.research.costs import ExecutionCostModel, SlippageTier
 from toss_trading.research.candidate_evaluation import evaluate_hypothesis
 from toss_trading.research.hypotheses import load_research_policy
@@ -189,50 +188,24 @@ class PointInTimeMacroTests(unittest.TestCase):
             self.assertEqual(rows[0].raw_manifest_id, manifest.manifest_id)
             self.assertEqual(rows[0].series_id, "UNRATE")
 
-    def test_macro_family_passes_through_the_same_candidate_gates(self) -> None:
+    def test_macro_family_is_historical_replay_only_not_candidate_evaluation(self) -> None:
         hypothesis = {
             "hypothesis_id": "macro-test",
             "strategy_family": "macro_regime",
-            "config": {
-                "risk_on_symbols": ["SPY", "QQQ"],
-                "defensive_symbols": ["SGOV", "TLT"],
-                "cash_symbol": "SGOV",
-                "macro_signal_weights": {
-                    "yield_curve": 0.25,
-                    "inflation_trend": 0.25,
-                    "unemployment_trend": 0.25,
-                    "policy_rate_trend": 0.25,
-                },
-                "signal_lookback_months": 3,
-                "minimum_regime_score": 0.0,
-                "rebalance_frequency": "monthly",
-                "publication_lag_days": 1,
-                "walk_forward_train_days": 504,
-                "walk_forward_test_days": 126,
-            },
+            "config": {},
         }
-
-        result = evaluate_hypothesis(
-            hypothesis,
-            points=_points(),
-            macro_observations=_macro_observations(),
-            policy=load_research_policy("config/autonomous_research_policy.json"),
-            family_size=7,
-            data_manifest_ids=["prices", "alfred"],
-            code_revision="abc123",
-            run_id="macro-run",
-            execution_cost_model=_cost_model(),
-        )
-
-        self.assertEqual(
-            set(result["gates"]),
-            {
-                "minimum_walk_forward_folds",
-                "benchmark_outperformance_ratio",
-                "multiple_testing_adjusted_benchmark",
-                "double_cost_stress_excess_positive",
-            },
-        )
+        with self.assertRaisesRegex(ValueError, "LEGACY_MACRO_REGIME_READ_ONLY"):
+            evaluate_hypothesis(
+                hypothesis,
+                points=_points(),
+                macro_observations=_macro_observations(),
+                policy=load_research_policy("config/autonomous_research_policy.json"),
+                family_size=7,
+                data_manifest_ids=["prices", "alfred"],
+                code_revision="abc123",
+                run_id="macro-run",
+                execution_cost_model=_cost_model(),
+            )
         self.assertFalse(result["promotion_authorized"])
         self.assertFalse(result["execution_authorized"])
         self.assertEqual(result["data_manifest_ids"], ["alfred", "prices"])
