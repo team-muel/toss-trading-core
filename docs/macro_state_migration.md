@@ -74,9 +74,14 @@ retirement require the subsequent integration and parity stages.
 
 ## AMA-178 convergence decision
 
-This file is now the canonical macro-state migration note for AMA-178. The
-historical `MacroRegimeConfig` risk-on/defensive allocation is explicitly not
-part of the canonical state contract. It remains legacy research evidence until
-AMA-180 disposition. Future heuristic regime work (NBER/Sahm/Drawdown) and
-future probabilistic regime inference consume canonical evidence only after the
-legacy foundation closes.
+This file is now the canonical macro-state migration note for AMA-178. AMA-180
+classifies the historical `MacroRegimeConfig` risk-on/defensive allocation as
+**READ-ONLY HISTORICAL**. Its direct backtest implementation remains available only
+from `toss_trading.research.backtest` for reproducibility of prior evidence; it is
+removed from the active autonomous-research policy, new hypothesis registration,
+canonical candidate evaluation, and the package's public research export surface.
+
+The retained ALFRED/PIT data and macro-state mechanism remain canonical evidence.
+Future heuristic regime work (NBER/Sahm/Drawdown) and future probabilistic regime
+inference must consume those canonical evidence paths and must not reactivate the
+legacy risk-on/defensive allocation contract.
