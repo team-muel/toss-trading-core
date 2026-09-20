@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import InitVar, dataclass, fields
 from decimal import Decimal
 from enum import StrEnum
 from hashlib import sha256
@@ -13,6 +13,9 @@ from asset_management.domain.enums import DataStatus, DecisionAction
 from asset_management.domain.errors import InvariantViolation, NoTrade
 
 from .reason_codes import ReasonCode
+
+
+_REGIME_EVIDENCE_BINDING_ISSUER = object()
 
 
 class DecisionState(StrEnum):
@@ -132,6 +135,7 @@ class RiskInputs:
     turnover_high: bool = False
     regime_uncertain: bool = False
     regime_uncertainty_evidence_id: str | None = None
+    _regime_evidence_issuer: InitVar[object | None] = None
     risk_estimate_uncertain: bool = False
     evidence_insufficient: bool = False
     data_stale: bool = False
@@ -139,7 +143,7 @@ class RiskInputs:
     cost_exceeds_benefit: bool = False
     defer_execution: bool = False
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _regime_evidence_issuer: object | None) -> None:
         for field in fields(self):
             if field.type == "bool" and type(getattr(self, field.name)) is not bool:
                 raise NoTrade(f"RISK_INPUT_INVALID: {field.name} must be an explicit boolean")
@@ -155,6 +159,8 @@ class RiskInputs:
         if self.regime_uncertain and regime_evidence is None:
             raise NoTrade("REGIME_UNCERTAINTY_EVIDENCE_REQUIRED")
         if regime_evidence is not None:
+            if _regime_evidence_issuer is not _REGIME_EVIDENCE_BINDING_ISSUER:
+                raise NoTrade("REGIME_UNCERTAINTY_EVIDENCE_ADAPTER_REQUIRED")
             if (not isinstance(regime_evidence, str) or len(regime_evidence) != 64 or
                     any(char not in "0123456789abcdef" for char in regime_evidence) or
                     regime_evidence not in self.evidence_ids):
