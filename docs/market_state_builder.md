@@ -169,10 +169,11 @@ The builder cannot:
 - create an order or broker-write authority.
 
 AMA-177 removes generic regime derivation from State construction. New canonical State
-snapshots no longer derive EXPANSION/CONTRACTION/TRANSITION; the legacy `regime_label`
-payload field remains only as a null replay-compatibility tombstone until final retirement in
-AMA-180. State-side operational/risk-multiplier responsibilities are reviewed separately in
-AMA-179.
+snapshots no longer derive EXPANSION/CONTRACTION/TRANSITION, and AMA-180 removes the
+legacy `regime_label` field entirely from State v3. The State-side `risk_multiplier`
+remains only an operational/quality scalar with no external authority-bearing consumer;
+regime uncertainty enters risk policy only through the typed AMA-179 adapter and the
+existing RiskGovernor.
 
 ## Completion meaning
 
