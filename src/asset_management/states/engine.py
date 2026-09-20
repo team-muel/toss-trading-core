@@ -11,8 +11,8 @@ from asset_management.data.immutable import ImmutableDatasetStore, canonical
 from asset_management.domain.errors import DataQualityError
 from asset_management.quality.models import QualityStatus
 
-from .models import (OperationalState, StateComponent, StatePolicy, StateSnapshot, StateType,
-                     is_blocking, state_identity, worst_quality)
+from .models import (OperationalState, StateComponent, StateNormalization, StatePolicy,
+                     StateSnapshot, StateType, is_blocking, state_identity, worst_quality)
 
 
 _UNAVAILABLE_WITHOUT_FEATURE = {
