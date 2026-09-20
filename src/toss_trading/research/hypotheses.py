@@ -363,14 +363,10 @@ def hypothesis_from_proposal(
     else:
         if strategy_family not in policy["strategy_families"]:
             raise ValueError("hypothesis strategy_family is outside policy")
-        normalized_config = (
-            _normalize_macro_config(config, policy=policy)
-            if strategy_family == "macro_regime"
-            else _normalize_factor_config(
-                config,
-                policy=policy,
-                strategy_family=strategy_family,
-            )
+        normalized_config = _normalize_factor_config(
+            config,
+            policy=policy,
+            strategy_family=strategy_family,
         )
     configured_assets = set(
         normalized_config.get("candidate_symbols", [])
