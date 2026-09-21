@@ -14,7 +14,8 @@ from .data_truth import (
 )
 from .feature_state_model_integrity import (
     REQUIRED_FEATURE_STATE_MODEL_CHECKS, FeatureStateModelIntegrityGateInput,
-    FeatureStateModelIntegrityGateResult, evaluate_feature_state_model_integrity_gate,
+    FeatureStateModelIntegrityGateResult, FeatureStateModelSourceRevisionVerifier,
+    evaluate_feature_state_model_integrity_gate,
 )
 from .signal_forecast_integrity import (
     REQUIRED_SIGNAL_FORECAST_CHECKS, SignalForecastIntegrityGateInput,
@@ -43,7 +44,8 @@ __all__ = [
     "REQUIRED_DATA_CHECKS", "DataTruthGateInput", "DataTruthGateResult",
     "evaluate_data_truth_gate",
     "REQUIRED_FEATURE_STATE_MODEL_CHECKS", "FeatureStateModelIntegrityGateInput",
-    "FeatureStateModelIntegrityGateResult", "evaluate_feature_state_model_integrity_gate",
+    "FeatureStateModelIntegrityGateResult", "FeatureStateModelSourceRevisionVerifier",
+    "evaluate_feature_state_model_integrity_gate",
     "REQUIRED_SIGNAL_FORECAST_CHECKS", "SignalForecastIntegrityGateInput",
     "SignalForecastIntegrityGateResult", "evaluate_signal_forecast_integrity_gate",
     "REQUIRED_PORTFOLIO_DECISION_INTEGRITY_CHECKS", "PortfolioDecisionIntegrityGateInput",
