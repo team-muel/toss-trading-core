@@ -35,6 +35,9 @@ from .backtest_run_specification import (
 from .canonical_production_evidence import (
     CanonicalD2ProductionEvidence, CanonicalD2ProductionEvidenceRepository,
 )
+from .canonical_d1_runtime_evidence import (
+    CanonicalD1RuntimeEvidence, CanonicalD1RuntimeEvidenceRepository,
+)
 
 __all__ = [
     "REQUIRED_CHECKS", "AcceptanceDecision", "AccountTruthGateInput",
@@ -55,4 +58,5 @@ __all__ = [
     "BacktestPeriod", "BacktestRunEvent", "BacktestRunRegistry", "BacktestRunSpec",
     "BacktestRunStatus",
     "CanonicalD2ProductionEvidence", "CanonicalD2ProductionEvidenceRepository",
+    "CanonicalD1RuntimeEvidence", "CanonicalD1RuntimeEvidenceRepository",
 ]

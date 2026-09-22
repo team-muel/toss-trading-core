@@ -50,19 +50,19 @@ def passing_input(tmp_path: Path):
     checks = _check_evidence(store, code_revision=code_revision, source_tree=source_tree)
     return (
         FeatureStateModelIntegrityGateInput(
-            datetime(2026, 9, 6, tzinfo=timezone.utc), code_revision, code_revision, checks),
+            datetime(2026, 9, 6, tzinfo=timezone.utc), "fixture-runtime", code_revision,
+            code_revision, checks),
         store,
         FeatureStateModelSourceRevisionVerifier(ROOT),
     )
 
 
-def test_current_head_immutable_evidence_can_pass_d1(tmp_path):
+def test_fixture_catalog_labels_cannot_pass_d1_without_a_replayed_runtime_bundle(tmp_path):
     inputs, store, verifier = passing_input(tmp_path)
     result = evaluate_feature_state_model_integrity_gate(
         inputs, evidence_store=store, source_revision_verifier=verifier)
-    assert result.decision is AcceptanceDecision.PASS
-    assert result.reason_codes == ()
-    assert len(result.evidence_artifact_ids) == len(REQUIRED_FEATURE_STATE_MODEL_CHECKS)
+    assert result.decision is AcceptanceDecision.FAIL
+    assert "RUNTIME_EVIDENCE_REPOSITORY_UNVERIFIED" in result.reason_codes
 
 
 @pytest.mark.parametrize("failed_check", REQUIRED_FEATURE_STATE_MODEL_CHECKS)
@@ -73,16 +73,17 @@ def test_every_feature_state_model_check_fails_closed(failed_check, tmp_path):
     result = evaluate_feature_state_model_integrity_gate(
         replace(inputs, checks=checks), evidence_store=store, source_revision_verifier=verifier)
     assert result.decision is AcceptanceDecision.FAIL
-    assert result.reason_codes == (f"CHECK_FAILED:{failed_check}",)
+    assert f"CHECK_FAILED:{failed_check}" in result.reason_codes
 
 
 def test_missing_unknown_or_empty_evidence_is_rejected(tmp_path):
     inputs, _, _ = passing_input(tmp_path)
     with pytest.raises(InvariantViolation, match="CHECK_SET_INVALID"):
-        FeatureStateModelIntegrityGateInput(datetime.now(timezone.utc), "revision", "revision", {})
+        FeatureStateModelIntegrityGateInput(datetime.now(timezone.utc), "runtime", "revision", "revision", {})
     with pytest.raises(InvariantViolation, match="TIME_NOT_AWARE"):
         FeatureStateModelIntegrityGateInput(
-            datetime.now(), inputs.code_revision, inputs.evidence_code_revision, inputs.checks)
+            datetime.now(), inputs.runtime_run_id, inputs.code_revision,
+            inputs.evidence_code_revision, inputs.checks)
     with pytest.raises(InvariantViolation, match="CHECK_UNKNOWN"):
         CheckEvidence(None, ("run",))
     with pytest.raises(InvariantViolation, match="EVIDENCE_INVALID"):
@@ -97,9 +98,8 @@ def test_missing_or_wrong_immutable_store_fails_closed(tmp_path):
     assert absent.decision is AcceptanceDecision.FAIL
     assert "EVIDENCE_STORE_UNVERIFIED" in absent.reason_codes
     assert wrong_store.decision is AcceptanceDecision.FAIL
-    assert set(wrong_store.reason_codes) == {
-        f"EVIDENCE_ARTIFACT_UNVERIFIED:{name}" for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS
-    }
+    assert "RUNTIME_EVIDENCE_REPOSITORY_UNVERIFIED" in wrong_store.reason_codes
+    assert {f"EVIDENCE_ARTIFACT_UNVERIFIED:{name}" for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS} <= set(wrong_store.reason_codes)
 
 
 def test_mismatched_or_nonexistent_source_revision_cannot_pass_d1(tmp_path):
@@ -111,7 +111,8 @@ def test_mismatched_or_nonexistent_source_revision_cannot_pass_d1(tmp_path):
     forged_checks = _check_evidence(store, code_revision=nonexistent, source_tree="e" * 40)
     unknown = evaluate_feature_state_model_integrity_gate(
         FeatureStateModelIntegrityGateInput(
-            datetime(2026, 9, 6, tzinfo=timezone.utc), nonexistent, nonexistent, forged_checks),
+            datetime(2026, 9, 6, tzinfo=timezone.utc), "runtime", nonexistent,
+            nonexistent, forged_checks),
         evidence_store=store, source_revision_verifier=verifier)
     assert "EVIDENCE_CODE_REVISION_MISMATCH" in mismatch.reason_codes
     assert "SOURCE_REVISION_UNVERIFIED" in unknown.reason_codes
@@ -144,7 +145,7 @@ def test_real_non_head_commit_cannot_permit_m4(tmp_path):
     checks = _check_evidence(store, code_revision=historical, source_tree=source_tree)
     result = evaluate_feature_state_model_integrity_gate(
         FeatureStateModelIntegrityGateInput(
-            datetime(2026, 9, 6, tzinfo=timezone.utc), historical, historical, checks),
+            datetime(2026, 9, 6, tzinfo=timezone.utc), "runtime", historical, historical, checks),
         evidence_store=store, source_revision_verifier=FeatureStateModelSourceRevisionVerifier(repository))
     assert result.decision is AcceptanceDecision.FAIL
     assert "SOURCE_REVISION_UNVERIFIED" in result.reason_codes
@@ -156,7 +157,7 @@ def test_historical_record_is_not_current_acceptance_authority(tmp_path):
     assert recorded["decision"] == "PASS"
     assert recorded["code_revision"] == "a80176c"
     assert all(item.startswith("pytest:") for item in recorded["evidence_artifact_ids"])
-    assert "evidence_code_revision" in schema["required"]
+    assert {"runtime_run_id", "evidence_code_revision"} <= set(schema["required"])
     inputs, store, verifier = passing_input(tmp_path)
     assert set(schema["required"]) == set(asdict(
         evaluate_feature_state_model_integrity_gate(

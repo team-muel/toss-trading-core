@@ -13,6 +13,9 @@ from typing import Mapping
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.domain.errors import InvariantViolation
 from .account_truth import AcceptanceDecision, CheckEvidence
+from .canonical_d1_runtime_evidence import (
+    CanonicalD1RuntimeEvidence, CanonicalD1RuntimeEvidenceRepository,
+)
 
 
 REQUIRED_FEATURE_STATE_MODEL_CHECKS = (
@@ -68,6 +71,7 @@ class FeatureStateModelSourceRevisionVerifier:
 @dataclass(frozen=True, slots=True)
 class FeatureStateModelIntegrityGateInput:
     evaluated_at: datetime
+    runtime_run_id: str
     code_revision: str
     evidence_code_revision: str
     checks: Mapping[str, CheckEvidence]
@@ -75,7 +79,8 @@ class FeatureStateModelIntegrityGateInput:
     def __post_init__(self) -> None:
         if self.evaluated_at.tzinfo is None or self.evaluated_at.utcoffset() is None:
             raise InvariantViolation("FEATURE_STATE_MODEL_GATE_TIME_NOT_AWARE")
-        if (not isinstance(self.code_revision, str) or not self.code_revision.strip() or
+        if (not isinstance(self.runtime_run_id, str) or not self.runtime_run_id.strip() or
+                not isinstance(self.code_revision, str) or not self.code_revision.strip() or
                 not isinstance(self.evidence_code_revision, str) or not self.evidence_code_revision.strip() or
                 set(self.checks) != set(REQUIRED_FEATURE_STATE_MODEL_CHECKS)):
             raise InvariantViolation("FEATURE_STATE_MODEL_GATE_CHECK_SET_INVALID")
@@ -89,14 +94,17 @@ class FeatureStateModelIntegrityGateResult:
     reason_codes: tuple[str, ...]
     evidence_artifact_ids: tuple[str, ...]
     evaluated_at: str
+    runtime_run_id: str
     code_revision: str
     evidence_code_revision: str
     content_hash: str
 
 
 def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: str,
-                          check_name: str, source: tuple[str, str] | None) -> bool:
-    if store is None or source is None or _IMMUTABLE_EVIDENCE_ID.fullmatch(artifact_id) is None:
+                          check_name: str, source: tuple[str, str] | None,
+                          runtime_evidence: CanonicalD1RuntimeEvidence | None) -> bool:
+    if (store is None or source is None or runtime_evidence is None or
+            _IMMUTABLE_EVIDENCE_ID.fullmatch(artifact_id) is None):
         return False
     identifier = artifact_id.removeprefix("sha256:")
     try:
@@ -106,10 +114,14 @@ def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: s
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return False
     expected = {
-        "schema_version": "feature-state-model-gate-evidence@1",
+        "schema_version": "feature-state-model-gate-evidence@2",
         "check_name": check_name,
         "code_revision": source[0],
         "source_tree": source[1],
+        "runtime_run_id": runtime_evidence.runtime_run_id,
+        "runtime_code_revision": runtime_evidence.code_revision,
+        "canonical_runtime_evidence_hash": runtime_evidence.content_hash,
+        "canonical_runtime_catalog_object_id": runtime_evidence.catalog_object_id,
     }
     return content == canonical(expected) and digest(content) == identifier and body == expected
 
@@ -118,6 +130,7 @@ def evaluate_feature_state_model_integrity_gate(
         inputs: FeatureStateModelIntegrityGateInput, *,
         evidence_store: ImmutableDatasetStore | None = None,
         source_revision_verifier: FeatureStateModelSourceRevisionVerifier | None = None,
+        runtime_evidence_repository: CanonicalD1RuntimeEvidenceRepository | None = None,
         ) -> FeatureStateModelIntegrityGateResult:
     """Fail closed unless D1 evidence is immutable and bound to current source."""
     reasons: list[str] = []
@@ -134,12 +147,25 @@ def evaluate_feature_state_model_integrity_gate(
         reasons.append("SOURCE_REVISION_UNVERIFIED")
     if not isinstance(evidence_store, ImmutableDatasetStore):
         reasons.append("EVIDENCE_STORE_UNVERIFIED")
+    runtime_evidence = None
+    if not isinstance(runtime_evidence_repository, CanonicalD1RuntimeEvidenceRepository):
+        reasons.append("RUNTIME_EVIDENCE_REPOSITORY_UNVERIFIED")
+    elif isinstance(evidence_store, ImmutableDatasetStore):
+        try:
+            runtime_evidence = runtime_evidence_repository.replay(
+                runtime_run_id=inputs.runtime_run_id, store=evidence_store)
+        except Exception:
+            reasons.append("RUNTIME_EVIDENCE_UNVERIFIED")
+        else:
+            if runtime_evidence.code_revision != inputs.code_revision:
+                reasons.append("RUNTIME_EVIDENCE_CODE_REVISION_MISMATCH")
     for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
         check = inputs.checks[name]
         if not check.passed:
             reasons.append(f"CHECK_FAILED:{name}")
         elif not all(_artifact_is_verified(
-                store=evidence_store, artifact_id=artifact, check_name=name, source=source)
+                store=evidence_store, artifact_id=artifact, check_name=name, source=source,
+                runtime_evidence=runtime_evidence)
                      for artifact in check.artifact_ids):
             reasons.append(f"EVIDENCE_ARTIFACT_UNVERIFIED:{name}")
     reasons_tuple = tuple(reasons)
@@ -151,10 +177,12 @@ def evaluate_feature_state_model_integrity_gate(
         "reason_codes": list(reasons_tuple),
         "evidence_artifact_ids": list(artifacts),
         "evaluated_at": inputs.evaluated_at.isoformat(),
+        "runtime_run_id": inputs.runtime_run_id,
         "code_revision": inputs.code_revision,
         "evidence_code_revision": inputs.evidence_code_revision,
     }
     return FeatureStateModelIntegrityGateResult(
-        decision, reasons_tuple, artifacts, inputs.evaluated_at.isoformat(), inputs.code_revision,
+        decision, reasons_tuple, artifacts, inputs.evaluated_at.isoformat(), inputs.runtime_run_id,
+        inputs.code_revision,
         inputs.evidence_code_revision, digest(canonical(payload)),
     )
