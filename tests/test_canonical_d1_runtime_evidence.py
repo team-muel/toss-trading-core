@@ -17,7 +17,8 @@ from asset_management.time.clock import FrozenClock, ReplayClock
 from asset_management.validation import CanonicalD1RuntimeEvidenceRepository
 from asset_management.validation import (
     AcceptanceDecision, CheckEvidence, FeatureStateModelIntegrityGateInput,
-    FeatureStateModelSourceRevisionVerifier, REQUIRED_FEATURE_STATE_MODEL_CHECKS,
+    CanonicalD1RuntimeAuthorityVerifier, FeatureStateModelSourceRevisionVerifier,
+    REQUIRED_FEATURE_STATE_MODEL_CHECKS,
     evaluate_feature_state_model_integrity_gate,
 )
 
@@ -118,7 +119,7 @@ def test_records_and_replays_only_one_existing_runtime_bundle(tmp_path):
     assert conn.execute("SELECT runtime_run_id FROM am_canonical_d1_runtime_evidence").fetchone() == ("runtime@1",)
 
 
-def test_gate_requires_the_replayed_bundle_and_can_bind_its_catalog_evidence(tmp_path):
+def test_fixture_runtime_bundle_cannot_pass_without_external_canonical_authority(tmp_path):
     conn, store = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
     bundle = repository.record(runtime_run_id="runtime@1", store=store)
@@ -128,18 +129,22 @@ def test_gate_requires_the_replayed_bundle_and_can_bind_its_catalog_evidence(tmp
     checks = {}
     for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
         identifier = store.catalog("feature-state-model-gate-evidence", {
-            "schema_version": "feature-state-model-gate-evidence@2", "check_name": name,
+            "schema_version": "feature-state-model-gate-evidence@3", "check_name": name,
             "code_revision": REVISION, "source_tree": tree, "runtime_run_id": "runtime@1",
             "runtime_code_revision": bundle.code_revision,
             "canonical_runtime_evidence_hash": bundle.content_hash,
             "canonical_runtime_catalog_object_id": bundle.catalog_object_id,
+            "attestor_registry_snapshot_id": "a" * 64,
+            "attestor_registry_content_hash": "b" * 64,
         })
         checks[name] = CheckEvidence(True, (f"sha256:{identifier}",))
     result = evaluate_feature_state_model_integrity_gate(
         FeatureStateModelIntegrityGateInput(NOW, "runtime@1", REVISION, REVISION, checks),
         evidence_store=store, source_revision_verifier=source, runtime_evidence_repository=repository,
+        runtime_authority_verifier=CanonicalD1RuntimeAuthorityVerifier(repository),
     )
-    assert result.decision is AcceptanceDecision.PASS
+    assert result.decision is AcceptanceDecision.FAIL
+    assert "CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED" in result.reason_codes
 
 
 def test_missing_state_is_blocked_and_cannot_be_recorded(tmp_path):

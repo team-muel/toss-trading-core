@@ -78,6 +78,11 @@ class CanonicalD1RuntimeEvidenceRepository:
         self._clock = clock
         self._conn.execute("PRAGMA foreign_keys=ON")
 
+    @property
+    def connection(self) -> sqlite3.Connection:
+        """The persisted source connection for verification-only companion boundaries."""
+        return self._conn
+
     def record(self, *, runtime_run_id: str, store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
         result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, publish_catalog=True)
         recorded_at = self._recorded_at()
@@ -122,6 +127,28 @@ class CanonicalD1RuntimeEvidenceRepository:
         if body != stored or result.content_hash != row[1] or result.catalog_object_id != row[2]:
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_REPLAY_MISMATCH")
         return result
+
+    def runtime_information_cutoff(self, *, runtime_run_id: str,
+                                   code_revision: str) -> datetime:
+        """Return the persisted cutoff for a replayed runtime, never caller time.
+
+        This narrow accessor is intentionally read-only.  Gate D1 uses it only
+        to select a runtime-bound external authority; callers cannot nominate a
+        later cutoff to make an attestation appear valid.
+        """
+        if (not isinstance(runtime_run_id, str) or not runtime_run_id.strip() or
+                not isinstance(code_revision, str) or _REVISION.fullmatch(code_revision) is None):
+            raise InvariantViolation("CANONICAL_D1_RUNTIME_INVALID")
+        row = self._conn.execute(
+            "SELECT as_of_utc, information_cutoff_utc, code_revision FROM am_runtime_run "
+            "WHERE runtime_run_id=?", (runtime_run_id,)).fetchone()
+        if row is None:
+            raise DataQualityError("CANONICAL_D1_RUNTIME_MISSING")
+        as_of = _stored_utc(row[0], "CANONICAL_D1_RUNTIME_INVALID")
+        cutoff = _stored_utc(row[1], "CANONICAL_D1_RUNTIME_INVALID")
+        if cutoff > as_of or row[2] != code_revision:
+            raise InvariantViolation("CANONICAL_D1_RUNTIME_INVALID")
+        return cutoff
 
     def _assemble(self, *, runtime_run_id: str, store: ImmutableDatasetStore,
                   publish_catalog: bool) -> tuple[CanonicalD1RuntimeEvidence, dict[str, object]]:

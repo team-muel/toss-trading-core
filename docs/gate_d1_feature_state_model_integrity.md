@@ -19,10 +19,12 @@ The required checks are:
 `FeatureStateModelIntegrityGateInput` requires the exact check set, one `runtime_run_id`, an exact
 full Git revision for both the evaluation and the producing evidence, and immutable catalog artifact
 IDs. The revision must resolve to the verifier checkout's current HEAD and tree. Each `sha256:`
-artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@2` catalog record
-for the named check, revision/tree, and the replayed canonical runtime-bundle hash/catalog ID. A
-caller-supplied label, test selector, mutable file, fixture-only catalog, or historical result cannot
-produce PASS without that persisted runtime binding.
+artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@3` catalog record
+for the named check, revision/tree, replayed canonical runtime-bundle hash/catalog ID, and the
+runtime-bound external-attestor-registry snapshot/hash. `CanonicalD1RuntimeAuthorityVerifier` verifies
+that registry against the code-bound canonical Cloud KMS authority and the runtime's persisted
+information cutoff. A caller-supplied label, test selector, mutable file, fixture-only catalog, local
+SQLite file, or historical result cannot produce PASS without that independently signed authority.
 
 The result has canonical content hashing, so a recorded PASS can be reproduced without trusting a
 mutable status flag. The historical 2026-09-06 record contains test selectors and a short revision;

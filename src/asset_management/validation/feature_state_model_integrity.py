@@ -16,6 +16,7 @@ from .account_truth import AcceptanceDecision, CheckEvidence
 from .canonical_d1_runtime_evidence import (
     CanonicalD1RuntimeEvidence, CanonicalD1RuntimeEvidenceRepository,
 )
+from .external_attestation import require_runtime_attestor_registry
 
 
 REQUIRED_FEATURE_STATE_MODEL_CHECKS = (
@@ -69,6 +70,60 @@ class FeatureStateModelSourceRevisionVerifier:
 
 
 @dataclass(frozen=True, slots=True)
+class CanonicalD1RuntimeAuthority:
+    """A runtime-bound, independently signed canonical authority identity."""
+
+    attestor_registry_snapshot_id: str
+    attestor_registry_content_hash: str
+
+    def __post_init__(self) -> None:
+        if (_IMMUTABLE_EVIDENCE_ID.fullmatch(f"sha256:{self.attestor_registry_snapshot_id}") is None or
+                _IMMUTABLE_EVIDENCE_ID.fullmatch(f"sha256:{self.attestor_registry_content_hash}") is None):
+            raise InvariantViolation("CANONICAL_D1_RUNTIME_AUTHORITY_INVALID")
+
+
+@dataclass(frozen=True, slots=True)
+class CanonicalD1RuntimeAuthorityVerifier:
+    """Verify the code-bound external trust root selected by this exact runtime.
+
+    A caller-owned SQLite file or local immutable-store directory is never a
+    canonical authority.  The runtime must instead already be bound, before
+    its information cutoff, to the independently signed registry verified by
+    ``external_attestation``.  This class has no write or signing API.
+    """
+
+    runtime_evidence_repository: CanonicalD1RuntimeEvidenceRepository
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.runtime_evidence_repository, CanonicalD1RuntimeEvidenceRepository):
+            raise InvariantViolation("CANONICAL_D1_RUNTIME_AUTHORITY_VERIFIER_INVALID")
+
+    def verify(self, *, runtime_evidence_repository: CanonicalD1RuntimeEvidenceRepository,
+               runtime_evidence: CanonicalD1RuntimeEvidence) -> CanonicalD1RuntimeAuthority | None:
+        if (runtime_evidence_repository is not self.runtime_evidence_repository or
+                not isinstance(runtime_evidence, CanonicalD1RuntimeEvidence)):
+            return None
+        try:
+            cutoff = runtime_evidence_repository.runtime_information_cutoff(
+                runtime_run_id=runtime_evidence.runtime_run_id,
+                code_revision=runtime_evidence.code_revision,
+            )
+            # The registry is verified against the immutable, code-bound Cloud
+            # KMS public authority.  A fixture cannot mint this binding or its
+            # signature from this repository.
+            registry = require_runtime_attestor_registry(
+                conn=runtime_evidence_repository.connection,
+                runtime_run_id=runtime_evidence.runtime_run_id,
+                cutoff=cutoff,
+            )
+            return CanonicalD1RuntimeAuthority(
+                registry.snapshot_id, registry.content_hash,
+            )
+        except Exception:
+            return None
+
+
+@dataclass(frozen=True, slots=True)
 class FeatureStateModelIntegrityGateInput:
     evaluated_at: datetime
     runtime_run_id: str
@@ -97,13 +152,16 @@ class FeatureStateModelIntegrityGateResult:
     runtime_run_id: str
     code_revision: str
     evidence_code_revision: str
+    attestor_registry_snapshot_id: str | None
+    attestor_registry_content_hash: str | None
     content_hash: str
 
 
 def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: str,
                           check_name: str, source: tuple[str, str] | None,
-                          runtime_evidence: CanonicalD1RuntimeEvidence | None) -> bool:
-    if (store is None or source is None or runtime_evidence is None or
+                          runtime_evidence: CanonicalD1RuntimeEvidence | None,
+                          runtime_authority: CanonicalD1RuntimeAuthority | None) -> bool:
+    if (store is None or source is None or runtime_evidence is None or runtime_authority is None or
             _IMMUTABLE_EVIDENCE_ID.fullmatch(artifact_id) is None):
         return False
     identifier = artifact_id.removeprefix("sha256:")
@@ -114,7 +172,7 @@ def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: s
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return False
     expected = {
-        "schema_version": "feature-state-model-gate-evidence@2",
+        "schema_version": "feature-state-model-gate-evidence@3",
         "check_name": check_name,
         "code_revision": source[0],
         "source_tree": source[1],
@@ -122,6 +180,8 @@ def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: s
         "runtime_code_revision": runtime_evidence.code_revision,
         "canonical_runtime_evidence_hash": runtime_evidence.content_hash,
         "canonical_runtime_catalog_object_id": runtime_evidence.catalog_object_id,
+        "attestor_registry_snapshot_id": runtime_authority.attestor_registry_snapshot_id,
+        "attestor_registry_content_hash": runtime_authority.attestor_registry_content_hash,
     }
     return content == canonical(expected) and digest(content) == identifier and body == expected
 
@@ -131,6 +191,7 @@ def evaluate_feature_state_model_integrity_gate(
         evidence_store: ImmutableDatasetStore | None = None,
         source_revision_verifier: FeatureStateModelSourceRevisionVerifier | None = None,
         runtime_evidence_repository: CanonicalD1RuntimeEvidenceRepository | None = None,
+        runtime_authority_verifier: CanonicalD1RuntimeAuthorityVerifier | None = None,
         ) -> FeatureStateModelIntegrityGateResult:
     """Fail closed unless D1 evidence is immutable and bound to current source."""
     reasons: list[str] = []
@@ -148,6 +209,7 @@ def evaluate_feature_state_model_integrity_gate(
     if not isinstance(evidence_store, ImmutableDatasetStore):
         reasons.append("EVIDENCE_STORE_UNVERIFIED")
     runtime_evidence = None
+    runtime_authority = None
     if not isinstance(runtime_evidence_repository, CanonicalD1RuntimeEvidenceRepository):
         reasons.append("RUNTIME_EVIDENCE_REPOSITORY_UNVERIFIED")
     elif isinstance(evidence_store, ImmutableDatasetStore):
@@ -159,13 +221,25 @@ def evaluate_feature_state_model_integrity_gate(
         else:
             if runtime_evidence.code_revision != inputs.code_revision:
                 reasons.append("RUNTIME_EVIDENCE_CODE_REVISION_MISMATCH")
+    if not isinstance(runtime_authority_verifier, CanonicalD1RuntimeAuthorityVerifier):
+        reasons.append("CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED")
+    elif runtime_evidence is not None and isinstance(
+            runtime_evidence_repository, CanonicalD1RuntimeEvidenceRepository):
+        runtime_authority = runtime_authority_verifier.verify(
+            runtime_evidence_repository=runtime_evidence_repository,
+            runtime_evidence=runtime_evidence,
+        )
+        if runtime_authority is None:
+            reasons.append("CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED")
+    else:
+        reasons.append("CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED")
     for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
         check = inputs.checks[name]
         if not check.passed:
             reasons.append(f"CHECK_FAILED:{name}")
         elif not all(_artifact_is_verified(
                 store=evidence_store, artifact_id=artifact, check_name=name, source=source,
-                runtime_evidence=runtime_evidence)
+                runtime_evidence=runtime_evidence, runtime_authority=runtime_authority)
                      for artifact in check.artifact_ids):
             reasons.append(f"EVIDENCE_ARTIFACT_UNVERIFIED:{name}")
     reasons_tuple = tuple(reasons)
@@ -180,9 +254,16 @@ def evaluate_feature_state_model_integrity_gate(
         "runtime_run_id": inputs.runtime_run_id,
         "code_revision": inputs.code_revision,
         "evidence_code_revision": inputs.evidence_code_revision,
+        "attestor_registry_snapshot_id": (runtime_authority.attestor_registry_snapshot_id
+                                           if runtime_authority is not None else None),
+        "attestor_registry_content_hash": (runtime_authority.attestor_registry_content_hash
+                                            if runtime_authority is not None else None),
     }
     return FeatureStateModelIntegrityGateResult(
         decision, reasons_tuple, artifacts, inputs.evaluated_at.isoformat(), inputs.runtime_run_id,
         inputs.code_revision,
-        inputs.evidence_code_revision, digest(canonical(payload)),
+        inputs.evidence_code_revision,
+        (runtime_authority.attestor_registry_snapshot_id if runtime_authority is not None else None),
+        (runtime_authority.attestor_registry_content_hash if runtime_authority is not None else None),
+        digest(canonical(payload)),
     )
