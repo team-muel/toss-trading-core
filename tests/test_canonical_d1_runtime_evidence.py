@@ -1,4 +1,7 @@
+from base64 import b64encode
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+from hashlib import sha256
 import json
 from pathlib import Path
 import sqlite3
@@ -15,12 +18,15 @@ from asset_management.governance import (
 )
 from asset_management.time.clock import FrozenClock, ReplayClock
 from asset_management.validation import CanonicalD1RuntimeEvidenceRepository
+from asset_management.validation import external_attestation as attestation_module
 from asset_management.validation import (
     AcceptanceDecision, CheckEvidence, FeatureStateModelIntegrityGateInput,
     CanonicalD1RuntimeAuthorityVerifier, FeatureStateModelSourceRevisionVerifier,
     REQUIRED_FEATURE_STATE_MODEL_CHECKS,
     evaluate_feature_state_model_integrity_gate,
 )
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 
 ROOT = Path(__file__).parents[1]
@@ -107,6 +113,64 @@ def _repository(tmp_path, *, states=True):
     return conn, store
 
 
+def _copy_signed_runtime_registry(monkeypatch, conn):
+    """Install a valid but reusable registry, without any D1 bundle attestation."""
+    authority_id = "test-d1-registry-governance"
+    authority_key = Ed25519PrivateKey.generate()
+    authority_der = authority_key.public_key().public_bytes(
+        Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    authority = attestation_module.RegistryGovernanceAuthority(
+        authority_id=authority_id, kms_key_version_resource=authority_id,
+        signing_algorithm="EC_SIGN_ED25519", public_key_der_spki_base64=b64encode(authority_der).decode(),
+        public_key_fingerprint_sha256=sha256(authority_der).hexdigest(),
+        effective_from_utc="2020-01-01T00:00:00+00:00", effective_to_utc=None,
+    )
+    attestor_key = Ed25519PrivateKey.generate()
+    payload = {"schema_version": "canonical-evidence-attestor-registry@1", "attestors": [{
+        "attestor_id": "test-d1-attestor", "algorithm": "ed25519",
+        "public_key_base64": b64encode(attestor_key.public_key().public_bytes(
+            Encoding.Raw, PublicFormat.Raw)).decode(),
+        "effective_from_utc": "2020-01-01T00:00:00+00:00", "effective_to_utc": None,
+    }]}
+    snapshot_id = digest(canonical(payload))
+    published_at = CUTOFF
+    authorization = attestation_module.registry_authorization_payload(
+        authority_id=authority_id, snapshot_id=snapshot_id, registry_hash=snapshot_id,
+        published_at=published_at)
+    authority_signature_bytes = authority_key.sign(canonical(authorization))
+    authority_signature = b64encode(authority_signature_bytes).decode()
+    authorization_hash = digest(canonical({"payload": authorization,
+                                           "signature_base64": authority_signature}))
+    monkeypatch.setattr(attestation_module, "_REGISTRY_GOVERNANCE_AUTHORITY_HISTORY", (
+        replace(authority, authorization_evidence=attestation_module.RegistryAuthorizationEvidenceBinding(
+            snapshot_id=snapshot_id, registry_hash=snapshot_id,
+            authorization_payload_sha256=digest(canonical(authorization)),
+            signature_sha256=sha256(authority_signature_bytes).hexdigest(),
+            verification_evidence_sha256=digest(canonical({"test": "registry-copy"})),
+            published_at_utc=published_at.isoformat(), attestor_id="test-d1-attestor",
+            attestor_public_key_base64=payload["attestors"][0]["public_key_base64"],
+            attestor_effective_from_utc="2020-01-01T00:00:00+00:00",
+            attestor_effective_to_utc=None)),
+    ))
+    snapshot_hash = digest(canonical({"registry": payload, "published_at": published_at.isoformat(),
+                                      "registry_authorization_hash": authorization_hash}))
+    conn.execute("INSERT INTO am_evidence_attestor_registry_snapshot VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (snapshot_id, json.dumps(payload, sort_keys=True, separators=(",", ":")), snapshot_hash,
+                  published_at.isoformat(), authority_id,
+                  json.dumps(authorization, sort_keys=True, separators=(",", ":")), authority_signature))
+    runtime = conn.execute(
+        "SELECT as_of_utc, information_cutoff_utc, code_revision, created_at_utc "
+        "FROM am_runtime_run WHERE runtime_run_id='runtime@1'").fetchone()
+    binding = {"runtime_run_id": "runtime@1", "evidence_attestor_registry_snapshot_id": snapshot_id,
+               "snapshot_content_hash": snapshot_hash,
+               "runtime": {"as_of": str(runtime[0]), "information_cutoff": str(runtime[1]),
+                           "code_revision": str(runtime[2]), "created_at": str(runtime[3])},
+               "bound_at": published_at.isoformat()}
+    conn.execute("INSERT INTO am_runtime_evidence_attestor_registry VALUES (?, ?, ?, ?)",
+                 ("runtime@1", snapshot_id, published_at.isoformat(), digest(canonical(binding))))
+    return snapshot_id, snapshot_hash
+
+
 def test_records_and_replays_only_one_existing_runtime_bundle(tmp_path):
     conn, store = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
@@ -129,13 +193,48 @@ def test_fixture_runtime_bundle_cannot_pass_without_external_canonical_authority
     checks = {}
     for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
         identifier = store.catalog("feature-state-model-gate-evidence", {
-            "schema_version": "feature-state-model-gate-evidence@3", "check_name": name,
+            "schema_version": "feature-state-model-gate-evidence@4", "check_name": name,
             "code_revision": REVISION, "source_tree": tree, "runtime_run_id": "runtime@1",
             "runtime_code_revision": bundle.code_revision,
             "canonical_runtime_evidence_hash": bundle.content_hash,
             "canonical_runtime_catalog_object_id": bundle.catalog_object_id,
             "attestor_registry_snapshot_id": "a" * 64,
             "attestor_registry_content_hash": "b" * 64,
+            "runtime_attestation_id": "c" * 64,
+            "runtime_attestation_hash": "d" * 64,
+            "canonical_store_uri": "gs://canonical-fixture-evidence/d1",
+        })
+        checks[name] = CheckEvidence(True, (f"sha256:{identifier}",))
+    result = evaluate_feature_state_model_integrity_gate(
+        FeatureStateModelIntegrityGateInput(NOW, "runtime@1", REVISION, REVISION, checks),
+        evidence_store=store, source_revision_verifier=source, runtime_evidence_repository=repository,
+        runtime_authority_verifier=CanonicalD1RuntimeAuthorityVerifier(repository),
+    )
+    assert result.decision is AcceptanceDecision.FAIL
+    assert "CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED" in result.reason_codes
+
+
+def test_copied_signed_registry_cannot_authorize_a_local_runtime_bundle(tmp_path, monkeypatch):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    bundle = repository.record(runtime_run_id="runtime@1", store=store)
+    snapshot_id, snapshot_hash = _copy_signed_runtime_registry(monkeypatch, conn)
+    source = FeatureStateModelSourceRevisionVerifier(ROOT)
+    _, tree = source.verify(REVISION) or (None, None)
+    assert tree is not None
+    checks = {}
+    for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
+        identifier = store.catalog("feature-state-model-gate-evidence", {
+            "schema_version": "feature-state-model-gate-evidence@4", "check_name": name,
+            "code_revision": REVISION, "source_tree": tree, "runtime_run_id": "runtime@1",
+            "runtime_code_revision": bundle.code_revision,
+            "canonical_runtime_evidence_hash": bundle.content_hash,
+            "canonical_runtime_catalog_object_id": bundle.catalog_object_id,
+            "attestor_registry_snapshot_id": snapshot_id,
+            "attestor_registry_content_hash": snapshot_hash,
+            "runtime_attestation_id": "c" * 64,
+            "runtime_attestation_hash": "d" * 64,
+            "canonical_store_uri": "gs://canonical-fixture-evidence/d1",
         })
         checks[name] = CheckEvidence(True, (f"sha256:{identifier}",))
     result = evaluate_feature_state_model_integrity_gate(

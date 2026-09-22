@@ -19,12 +19,17 @@ The required checks are:
 `FeatureStateModelIntegrityGateInput` requires the exact check set, one `runtime_run_id`, an exact
 full Git revision for both the evaluation and the producing evidence, and immutable catalog artifact
 IDs. The revision must resolve to the verifier checkout's current HEAD and tree. Each `sha256:`
-artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@3` catalog record
+artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@4` catalog record
 for the named check, revision/tree, replayed canonical runtime-bundle hash/catalog ID, and the
 runtime-bound external-attestor-registry snapshot/hash. `CanonicalD1RuntimeAuthorityVerifier` verifies
 that registry against the code-bound canonical Cloud KMS authority and the runtime's persisted
-information cutoff. A caller-supplied label, test selector, mutable file, fixture-only catalog, local
-SQLite file, or historical result cannot produce PASS without that independently signed authority.
+information cutoff; the registry binding must already exist no later than that cutoff. It also requires
+an independently signed, append-only D1 runtime attestation issued after that binding and no later
+than the cutoff, for the exact bundle hash/catalog ID, runtime revision, and canonical `gs://`
+immutable-store URI. A
+copied registry therefore cannot authorize a synthetic local runtime. A caller-supplied label, test
+selector, mutable file, fixture-only catalog, local SQLite file, or historical result cannot produce
+PASS without that independently signed authority.
 
 The result has canonical content hashing, so a recorded PASS can be reproduced without trusting a
 mutable status flag. The historical 2026-09-06 record contains test selectors and a short revision;

@@ -1,17 +1,22 @@
 """AMA-39 Feature, State, and Model Integrity acceptance gate."""
 from __future__ import annotations
 
+from base64 import b64decode
+from binascii import Error as Base64Error
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
 import re
+import sqlite3
 import subprocess
 from types import MappingProxyType
 from typing import Mapping
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
-from asset_management.domain.errors import InvariantViolation
+from asset_management.domain.errors import DataQualityError, InvariantViolation
 from .account_truth import AcceptanceDecision, CheckEvidence
 from .canonical_d1_runtime_evidence import (
     CanonicalD1RuntimeEvidence, CanonicalD1RuntimeEvidenceRepository,
@@ -33,6 +38,8 @@ REQUIRED_FEATURE_STATE_MODEL_CHECKS = (
 _GIT_REVISION = re.compile(r"git:[0-9a-f]{40}")
 _IMMUTABLE_EVIDENCE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 _EVIDENCE_CATALOG_KIND = "feature-state-model-gate-evidence"
+_D1_RUNTIME_ATTESTATION_SCHEMA = "canonical-d1-runtime-attestation@1"
+_CANONICAL_STORE_URI = re.compile(r"gs://[a-z0-9](?:[a-z0-9._-]{1,220}[a-z0-9])?(?:/[^\s?#]*)?")
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,11 +82,35 @@ class CanonicalD1RuntimeAuthority:
 
     attestor_registry_snapshot_id: str
     attestor_registry_content_hash: str
+    runtime_attestation_id: str
+    runtime_attestation_hash: str
+    canonical_store_uri: str
 
     def __post_init__(self) -> None:
-        if (_IMMUTABLE_EVIDENCE_ID.fullmatch(f"sha256:{self.attestor_registry_snapshot_id}") is None or
-                _IMMUTABLE_EVIDENCE_ID.fullmatch(f"sha256:{self.attestor_registry_content_hash}") is None):
+        identifiers = (self.attestor_registry_snapshot_id, self.attestor_registry_content_hash,
+                       self.runtime_attestation_id, self.runtime_attestation_hash)
+        if (any(not isinstance(value, str) or _IMMUTABLE_EVIDENCE_ID.fullmatch(f"sha256:{value}") is None
+                for value in identifiers) or not isinstance(self.canonical_store_uri, str) or
+                _CANONICAL_STORE_URI.fullmatch(self.canonical_store_uri) is None):
             raise InvariantViolation("CANONICAL_D1_RUNTIME_AUTHORITY_INVALID")
+
+
+def _runtime_attestation_payload(*, runtime_evidence: CanonicalD1RuntimeEvidence,
+                                 attestor_id: str, issued_at: datetime,
+                                 registry_snapshot_id: str, registry_content_hash: str,
+                                 canonical_store_uri: str) -> dict[str, str]:
+    return {
+        "schema_version": _D1_RUNTIME_ATTESTATION_SCHEMA,
+        "runtime_run_id": runtime_evidence.runtime_run_id,
+        "runtime_code_revision": runtime_evidence.code_revision,
+        "canonical_runtime_evidence_hash": runtime_evidence.content_hash,
+        "canonical_runtime_catalog_object_id": runtime_evidence.catalog_object_id,
+        "canonical_store_uri": canonical_store_uri,
+        "attestor_id": attestor_id,
+        "attestor_registry_snapshot_id": registry_snapshot_id,
+        "attestor_registry_content_hash": registry_content_hash,
+        "issued_at": issued_at.astimezone(timezone.utc).isoformat(),
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,17 +140,49 @@ class CanonicalD1RuntimeAuthorityVerifier:
                 code_revision=runtime_evidence.code_revision,
             )
             # The registry is verified against the immutable, code-bound Cloud
-            # KMS public authority.  A fixture cannot mint this binding or its
-            # signature from this repository.
+            # KMS public authority.  A separately signed D1 attestation then
+            # binds it to this exact bundle and canonical store URI, so a
+            # copied registry cannot be rebound in a caller-owned SQLite file.
             registry = require_runtime_attestor_registry(
                 conn=runtime_evidence_repository.connection,
                 runtime_run_id=runtime_evidence.runtime_run_id,
                 cutoff=cutoff,
             )
+            row = runtime_evidence_repository.connection.execute(
+                """SELECT attestation_id, attestor_id, payload_json, signature_base64, content_hash,
+                          issued_at_utc
+                   FROM am_canonical_d1_runtime_attestation WHERE runtime_run_id=?""",
+                (runtime_evidence.runtime_run_id,),
+            ).fetchone()
+            if row is None:
+                raise DataQualityError("CANONICAL_D1_RUNTIME_ATTESTATION_MISSING")
+            attestation_id, attestor_id, payload_raw, signature_raw, content_hash, issued_raw = row
+            payload = json.loads(str(payload_raw))
+            issued_at = datetime.fromisoformat(str(issued_raw).replace("Z", "+00:00"))
+            if issued_at.tzinfo is None or issued_at.utcoffset() is None:
+                raise InvariantViolation("CANONICAL_D1_RUNTIME_ATTESTATION_INVALID")
+            issued_at = issued_at.astimezone(timezone.utc)
+            signature = b64decode(str(signature_raw), validate=True)
+            canonical_store_uri = payload.get("canonical_store_uri") if isinstance(payload, dict) else None
+            if (not isinstance(canonical_store_uri, str) or issued_at < registry.bound_at or
+                    issued_at > cutoff or payload != _runtime_attestation_payload(
+                        runtime_evidence=runtime_evidence, attestor_id=str(attestor_id), issued_at=issued_at,
+                        registry_snapshot_id=registry.snapshot_id, registry_content_hash=registry.content_hash,
+                        canonical_store_uri=canonical_store_uri) or
+                    str(content_hash) != digest(canonical({"payload": payload,
+                                                           "signature_base64": str(signature_raw)})) or
+                    str(attestation_id) != str(content_hash)):
+                raise InvariantViolation("CANONICAL_D1_RUNTIME_ATTESTATION_INVALID")
+            rule = registry.attestors.get(str(attestor_id))
+            if rule is None or issued_at < rule[1] or (rule[2] is not None and issued_at >= rule[2]):
+                raise DataQualityError("CANONICAL_D1_RUNTIME_ATTESTATION_UNTRUSTED")
+            Ed25519PublicKey.from_public_bytes(rule[0]).verify(signature, canonical(payload))
             return CanonicalD1RuntimeAuthority(
-                registry.snapshot_id, registry.content_hash,
+                registry.snapshot_id, registry.content_hash, str(attestation_id), str(content_hash),
+                canonical_store_uri,
             )
-        except Exception:
+        except (Base64Error, DataQualityError, InvariantViolation, InvalidSignature,
+                OSError, TypeError, ValueError, json.JSONDecodeError, sqlite3.DatabaseError):
             return None
 
 
@@ -154,6 +217,9 @@ class FeatureStateModelIntegrityGateResult:
     evidence_code_revision: str
     attestor_registry_snapshot_id: str | None
     attestor_registry_content_hash: str | None
+    runtime_attestation_id: str | None
+    runtime_attestation_hash: str | None
+    canonical_store_uri: str | None
     content_hash: str
 
 
@@ -172,7 +238,7 @@ def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: s
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return False
     expected = {
-        "schema_version": "feature-state-model-gate-evidence@3",
+        "schema_version": "feature-state-model-gate-evidence@4",
         "check_name": check_name,
         "code_revision": source[0],
         "source_tree": source[1],
@@ -182,6 +248,9 @@ def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: s
         "canonical_runtime_catalog_object_id": runtime_evidence.catalog_object_id,
         "attestor_registry_snapshot_id": runtime_authority.attestor_registry_snapshot_id,
         "attestor_registry_content_hash": runtime_authority.attestor_registry_content_hash,
+        "runtime_attestation_id": runtime_authority.runtime_attestation_id,
+        "runtime_attestation_hash": runtime_authority.runtime_attestation_hash,
+        "canonical_store_uri": runtime_authority.canonical_store_uri,
     }
     return content == canonical(expected) and digest(content) == identifier and body == expected
 
@@ -258,6 +327,12 @@ def evaluate_feature_state_model_integrity_gate(
                                            if runtime_authority is not None else None),
         "attestor_registry_content_hash": (runtime_authority.attestor_registry_content_hash
                                             if runtime_authority is not None else None),
+        "runtime_attestation_id": (runtime_authority.runtime_attestation_id
+                                    if runtime_authority is not None else None),
+        "runtime_attestation_hash": (runtime_authority.runtime_attestation_hash
+                                      if runtime_authority is not None else None),
+        "canonical_store_uri": (runtime_authority.canonical_store_uri
+                                 if runtime_authority is not None else None),
     }
     return FeatureStateModelIntegrityGateResult(
         decision, reasons_tuple, artifacts, inputs.evaluated_at.isoformat(), inputs.runtime_run_id,
@@ -265,5 +340,8 @@ def evaluate_feature_state_model_integrity_gate(
         inputs.evidence_code_revision,
         (runtime_authority.attestor_registry_snapshot_id if runtime_authority is not None else None),
         (runtime_authority.attestor_registry_content_hash if runtime_authority is not None else None),
+        (runtime_authority.runtime_attestation_id if runtime_authority is not None else None),
+        (runtime_authority.runtime_attestation_hash if runtime_authority is not None else None),
+        (runtime_authority.canonical_store_uri if runtime_authority is not None else None),
         digest(canonical(payload)),
     )

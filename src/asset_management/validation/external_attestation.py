@@ -312,7 +312,7 @@ def require_runtime_attestor_registry(*, conn: sqlite3.Connection, runtime_run_i
     authorization_hash = digest(canonical({"payload": authorization_payload,
                                            "signature_base64": str(authority_signature)}))
     if (cutoff_time != cutoff.astimezone(timezone.utc) or cutoff_time > as_of_time or
-            published > cutoff_time or bound < created or bound > as_of_time or
+            published > cutoff_time or bound < created or bound > cutoff_time or bound > as_of_time or
             str(snapshot_id) != registry_hash or authorization != authorization_payload or
             str(snapshot_hash) != digest(canonical({"registry": payload, "published_at": published.isoformat(),
                                                      "registry_authorization_hash": authorization_hash})) or

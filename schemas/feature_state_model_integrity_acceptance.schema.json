@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["decision", "reason_codes", "evidence_artifact_ids", "evaluated_at", "runtime_run_id", "code_revision", "evidence_code_revision", "attestor_registry_snapshot_id", "attestor_registry_content_hash", "content_hash"],
+  "required": ["decision", "reason_codes", "evidence_artifact_ids", "evaluated_at", "runtime_run_id", "code_revision", "evidence_code_revision", "attestor_registry_snapshot_id", "attestor_registry_content_hash", "runtime_attestation_id", "runtime_attestation_hash", "canonical_store_uri", "content_hash"],
   "properties": {
     "decision": {"enum": ["PASS", "FAIL"]},
     "reason_codes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
@@ -13,6 +13,9 @@
     "evidence_code_revision": {"type": "string", "minLength": 1},
     "attestor_registry_snapshot_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
     "attestor_registry_content_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "runtime_attestation_id": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "runtime_attestation_hash": {"type": ["string", "null"], "pattern": "^[0-9a-f]{64}$"},
+    "canonical_store_uri": {"type": ["string", "null"], "pattern": "^gs://"},
     "content_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   }
 }
