@@ -2,105 +2,163 @@ from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
+from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.domain.errors import InvariantViolation
 from asset_management.validation import (
     REQUIRED_FEATURE_STATE_MODEL_CHECKS, AcceptanceDecision, CheckEvidence,
-    FeatureStateModelIntegrityGateInput, evaluate_feature_state_model_integrity_gate,
+    FeatureStateModelIntegrityGateInput, FeatureStateModelSourceRevisionVerifier,
+    evaluate_feature_state_model_integrity_gate,
 )
 
 
-EVIDENCE = {
-    "FEATURE_PIT_LEAKAGE_BLOCKED": (
-        "pytest:tests/test_phase11_feature_store.py::test_historical_standardization_excludes_current_and_future_information",
-        "pytest:tests/test_phase11_feature_store.py::test_winsorization_uses_exact_historical_cross_section",
-        "pytest:tests/test_phase11_feature_store.py::test_future_quarter_and_missing_history_fail_closed_without_gold",
-    ),
-    "HORIZON_VALIDITY_DECAY_CONTRACT_VERIFIED": (
-        "pytest:tests/test_phase11_horizon_contract.py::test_unknown_or_incomplete_contract_fails_closed",
-        "pytest:tests/test_phase11_horizon_contract.py::test_step_linear_and_exponential_decay_are_deterministic",
-        "pytest:tests/test_phase11_horizon_contract.py::test_horizon_alignment_rejects_forecast_and_holding_mismatch",
-    ),
-    "FOUR_STATE_SNAPSHOTS_REPRODUCIBLE": (
-        "pytest:tests/test_phase12_state_engines.py::test_four_state_engines_are_separate_and_preserve_all_components",
-        "pytest:tests/test_phase12_state_engines.py::test_state_snapshot_is_deterministic_and_immutable",
-    ),
-    "CALCULATION_LINEAGE_TO_RAW_MANIFEST_VERIFIED": (
-        "pytest:tests/test_phase11_calculation_lineage.py::test_final_estimate_traces_to_verified_immutable_raw_manifest",
-        "pytest:tests/test_phase11_calculation_lineage.py::test_raw_manifest_must_exist_be_bronze_and_match_content",
-    ),
-    "QUALITY_FRESHNESS_CONFIDENCE_PROPAGATION_VERIFIED": (
-        "pytest:tests/test_phase10_data_quality.py::test_stale_source_blocks_features_and_decision",
-        "pytest:tests/test_phase10_data_quality.py::test_missing_conflict_and_quarantine_propagate_to_no_trade",
-        "pytest:tests/test_phase10_data_quality.py::test_degraded_source_reduces_confidence_but_unknown_blocks",
-        "pytest:tests/test_phase12_state_engines.py::test_state_quality_and_freshness_reduce_or_block_risk",
-    ),
-    "MODEL_APPROVED_SCOPE_ENFORCED": (
-        "pytest:tests/test_phase11_model_registry.py::test_scope_status_review_and_registry_changes_cannot_be_bypassed",
-        "pytest:tests/test_phase11_model_registry.py::test_future_transition_never_activates_a_model_before_its_effective_time",
-        "pytest:tests/test_phase13_asset_pricing.py::test_capm_cannot_run_without_matching_registry_authorization",
-    ),
-    "IDENTICAL_INPUT_VERSION_STATE_MODEL_OUTPUT_HASH_REPRODUCIBLE": (
-        "pytest:tests/test_phase11_feature_store.py::test_same_inputs_and_parameters_produce_identical_feature_and_lineage",
-        "pytest:tests/test_phase12_state_engines.py::test_state_snapshot_is_deterministic_and_immutable",
-        "pytest:tests/test_phase13_asset_pricing.py::test_pricing_output_hash_is_deterministic_and_bound_to_model_version",
-    ),
-}
+ROOT = Path(__file__).parents[1]
 
 
-def passing_input():
-    return FeatureStateModelIntegrityGateInput(
-        datetime(2026, 9, 6, tzinfo=timezone.utc), "a80176c",
-        {name: CheckEvidence(True, EVIDENCE[name]) for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS},
+def _revision_and_tree(repository: Path = ROOT) -> tuple[str, str]:
+    revision = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"], check=True, capture_output=True,
+        text=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD^{tree}"], check=True,
+        capture_output=True, text=True,
+    ).stdout.strip()
+    return f"git:{revision}", tree
+
+
+def _check_evidence(store: ImmutableDatasetStore, *, code_revision: str,
+                    source_tree: str) -> dict[str, CheckEvidence]:
+    checks = {}
+    for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
+        identifier = store.catalog("feature-state-model-gate-evidence", {
+            "schema_version": "feature-state-model-gate-evidence@1",
+            "check_name": name,
+            "code_revision": code_revision,
+            "source_tree": source_tree,
+        })
+        checks[name] = CheckEvidence(True, (f"sha256:{identifier}",))
+    return checks
+
+
+def passing_input(tmp_path: Path):
+    code_revision, source_tree = _revision_and_tree()
+    store = ImmutableDatasetStore(tmp_path)
+    checks = _check_evidence(store, code_revision=code_revision, source_tree=source_tree)
+    return (
+        FeatureStateModelIntegrityGateInput(
+            datetime(2026, 9, 6, tzinfo=timezone.utc), "fixture-runtime", code_revision,
+            code_revision, checks),
+        store,
+        FeatureStateModelSourceRevisionVerifier(ROOT),
     )
 
 
-def test_all_feature_state_model_integrity_checks_pass_with_bound_evidence():
-    result = evaluate_feature_state_model_integrity_gate(passing_input())
-    assert result.decision is AcceptanceDecision.PASS
-    assert result.reason_codes == ()
-    assert len(result.evidence_artifact_ids) == 19
+def test_fixture_catalog_labels_cannot_pass_d1_without_a_replayed_runtime_bundle(tmp_path):
+    inputs, store, verifier = passing_input(tmp_path)
+    result = evaluate_feature_state_model_integrity_gate(
+        inputs, evidence_store=store, source_revision_verifier=verifier)
+    assert result.decision is AcceptanceDecision.FAIL
+    assert "RUNTIME_EVIDENCE_REPOSITORY_UNVERIFIED" in result.reason_codes
 
 
 @pytest.mark.parametrize("failed_check", REQUIRED_FEATURE_STATE_MODEL_CHECKS)
-def test_every_feature_state_model_check_fails_closed(failed_check):
-    inputs = passing_input()
+def test_every_feature_state_model_check_fails_closed(failed_check, tmp_path):
+    inputs, store, verifier = passing_input(tmp_path)
     checks = dict(inputs.checks)
-    checks[failed_check] = CheckEvidence(False, EVIDENCE[failed_check])
-    result = evaluate_feature_state_model_integrity_gate(replace(inputs, checks=checks))
+    checks[failed_check] = CheckEvidence(False, checks[failed_check].artifact_ids)
+    result = evaluate_feature_state_model_integrity_gate(
+        replace(inputs, checks=checks), evidence_store=store, source_revision_verifier=verifier)
     assert result.decision is AcceptanceDecision.FAIL
-    assert result.reason_codes == (f"CHECK_FAILED:{failed_check}",)
+    assert f"CHECK_FAILED:{failed_check}" in result.reason_codes
 
 
-def test_missing_unknown_or_empty_evidence_is_rejected():
+def test_missing_unknown_or_empty_evidence_is_rejected(tmp_path):
+    inputs, _, _ = passing_input(tmp_path)
     with pytest.raises(InvariantViolation, match="CHECK_SET_INVALID"):
-        FeatureStateModelIntegrityGateInput(datetime.now(timezone.utc), "revision", {})
+        FeatureStateModelIntegrityGateInput(datetime.now(timezone.utc), "runtime", "revision", "revision", {})
     with pytest.raises(InvariantViolation, match="TIME_NOT_AWARE"):
-        FeatureStateModelIntegrityGateInput(datetime.now(), "revision", passing_input().checks)
+        FeatureStateModelIntegrityGateInput(
+            datetime.now(), inputs.runtime_run_id, inputs.code_revision,
+            inputs.evidence_code_revision, inputs.checks)
     with pytest.raises(InvariantViolation, match="CHECK_UNKNOWN"):
         CheckEvidence(None, ("run",))
     with pytest.raises(InvariantViolation, match="EVIDENCE_INVALID"):
         CheckEvidence(True, ())
 
 
-def test_result_is_deterministic_when_check_mapping_order_changes():
-    inputs = passing_input()
-    reversed_checks = dict(reversed(tuple(inputs.checks.items())))
-    assert evaluate_feature_state_model_integrity_gate(inputs) == evaluate_feature_state_model_integrity_gate(
-        replace(inputs, checks=reversed_checks)
-    )
+def test_missing_or_wrong_immutable_store_fails_closed(tmp_path):
+    inputs, _, verifier = passing_input(tmp_path / "published")
+    absent = evaluate_feature_state_model_integrity_gate(inputs, source_revision_verifier=verifier)
+    wrong_store = evaluate_feature_state_model_integrity_gate(
+        inputs, evidence_store=ImmutableDatasetStore(tmp_path / "other"), source_revision_verifier=verifier)
+    assert absent.decision is AcceptanceDecision.FAIL
+    assert "EVIDENCE_STORE_UNVERIFIED" in absent.reason_codes
+    assert wrong_store.decision is AcceptanceDecision.FAIL
+    assert "RUNTIME_EVIDENCE_REPOSITORY_UNVERIFIED" in wrong_store.reason_codes
+    assert {f"EVIDENCE_ARTIFACT_UNVERIFIED:{name}" for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS} <= set(wrong_store.reason_codes)
 
 
-def test_recorded_pass_is_exact_and_schema_complete():
-    root = Path(__file__).parents[1]
-    result = evaluate_feature_state_model_integrity_gate(passing_input())
-    actual = asdict(result)
-    actual["decision"] = actual["decision"].value
-    actual["reason_codes"] = list(actual["reason_codes"])
-    actual["evidence_artifact_ids"] = list(actual["evidence_artifact_ids"])
-    recorded = json.loads((root / "docs/evidence/gate_d1_feature_state_model_integrity_2026-09-06.json").read_text())
-    schema = json.loads((root / "schemas/feature_state_model_integrity_acceptance.schema.json").read_text())
-    assert actual == recorded
-    assert set(schema["required"]) == set(asdict(result))
+def test_mismatched_or_nonexistent_source_revision_cannot_pass_d1(tmp_path):
+    inputs, store, verifier = passing_input(tmp_path)
+    mismatch = evaluate_feature_state_model_integrity_gate(
+        replace(inputs, evidence_code_revision="git:" + "e" * 40),
+        evidence_store=store, source_revision_verifier=verifier)
+    nonexistent = "git:" + "f" * 40
+    forged_checks = _check_evidence(store, code_revision=nonexistent, source_tree="e" * 40)
+    unknown = evaluate_feature_state_model_integrity_gate(
+        FeatureStateModelIntegrityGateInput(
+            datetime(2026, 9, 6, tzinfo=timezone.utc), "runtime", nonexistent,
+            nonexistent, forged_checks),
+        evidence_store=store, source_revision_verifier=verifier)
+    assert "EVIDENCE_CODE_REVISION_MISMATCH" in mismatch.reason_codes
+    assert "SOURCE_REVISION_UNVERIFIED" in unknown.reason_codes
+    assert not mismatch.decision is AcceptanceDecision.PASS
+    assert not unknown.decision is AcceptanceDecision.PASS
+
+
+def test_real_non_head_commit_cannot_permit_m4(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    for command in (
+            ["git", "init", "--quiet", str(repository)],
+            ["git", "-C", str(repository), "config", "user.name", "test"],
+            ["git", "-C", str(repository), "config", "user.email", "test@example.invalid"],
+    ):
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    tracked_file = repository / "tracked.txt"
+    tracked_file.write_text("parent\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "tracked.txt"], check=True,
+                   capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "--quiet", "-m", "parent"],
+                   check=True, capture_output=True, text=True)
+    historical, source_tree = _revision_and_tree(repository)
+    tracked_file.write_text("child\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repository), "add", "tracked.txt"], check=True,
+                   capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(repository), "commit", "--quiet", "-m", "child"],
+                   check=True, capture_output=True, text=True)
+    store = ImmutableDatasetStore(tmp_path / "store")
+    checks = _check_evidence(store, code_revision=historical, source_tree=source_tree)
+    result = evaluate_feature_state_model_integrity_gate(
+        FeatureStateModelIntegrityGateInput(
+            datetime(2026, 9, 6, tzinfo=timezone.utc), "runtime", historical, historical, checks),
+        evidence_store=store, source_revision_verifier=FeatureStateModelSourceRevisionVerifier(repository))
+    assert result.decision is AcceptanceDecision.FAIL
+    assert "SOURCE_REVISION_UNVERIFIED" in result.reason_codes
+
+
+def test_historical_record_is_not_current_acceptance_authority(tmp_path):
+    recorded = json.loads((ROOT / "docs/evidence/gate_d1_feature_state_model_integrity_2026-09-06.json").read_text())
+    schema = json.loads((ROOT / "schemas/feature_state_model_integrity_acceptance.schema.json").read_text())
+    assert recorded["decision"] == "PASS"
+    assert recorded["code_revision"] == "a80176c"
+    assert all(item.startswith("pytest:") for item in recorded["evidence_artifact_ids"])
+    assert {"runtime_run_id", "evidence_code_revision"} <= set(schema["required"])
+    inputs, store, verifier = passing_input(tmp_path)
+    assert set(schema["required"]) == set(asdict(
+        evaluate_feature_state_model_integrity_gate(
+            inputs, evidence_store=store, source_revision_verifier=verifier)))
