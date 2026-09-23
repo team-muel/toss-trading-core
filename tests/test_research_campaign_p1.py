@@ -20,6 +20,12 @@ def group_sessions(sessions, label="industry"):
     }})) for session in sessions]
 
 
+@pytest.mark.parametrize("field", ["", "bad-field", "total_return_index"])
+def test_neutralization_group_source_field_is_valid_and_disjoint(field):
+    with pytest.raises(ValueError, match="neutralization group field"):
+        replace(spec(), neutralization_group_field=field)
+
+
 def test_same_manifest_does_not_approve_wrong_observation_schema(tmp_path):
     research_spec = spec()
     source, sessions = repository_sessions(tmp_path, research_spec)

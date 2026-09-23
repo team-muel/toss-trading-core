@@ -138,7 +138,10 @@ class ResearchSpec:
             raise ValueError("declared fields must exactly match the expression")
         _settings(self.settings)
         if self.neutralization_group_field is not None:
-            object.__setattr__(self, "neutralization_group_field", _text(self.neutralization_group_field, "neutralization group field"))
+            group_field = _text(self.neutralization_group_field, "neutralization group field")
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", group_field) is None or group_field in contracts:
+                raise ValueError("invalid or overlapping neutralization group field")
+            object.__setattr__(self, "neutralization_group_field", group_field)
         if self.settings.neutralization == "group" and self.neutralization_group_field is None:
             raise ValueError("group neutralization requires its canonical group field")
         object.__setattr__(self, "field_contracts", MappingProxyType(dict(sorted(contracts.items()))))
