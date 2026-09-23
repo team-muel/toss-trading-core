@@ -23,7 +23,7 @@ from lark import Lark, Transformer
 from asset_management.time.asof import AsOfContext, require_as_of_context
 
 from . import operators as ops
-from .datafields import RepositoryDataFields
+from .datafields import RepositoryDataFields, _number
 
 Panel: TypeAlias = Mapping[str, Sequence[float | None]]
 PanelValue: TypeAlias = dict[str, list[float | None]]
@@ -117,7 +117,7 @@ OPERATOR_REGISTRY.update({
     name: _spec(name, (ValueType.PANEL, ValueType.INTEGER), Axis.TIME)
     for name in (
         "ts_delay", "ts_delta", "ts_sum", "ts_mean", "ts_stddev",
-        "ts_zscore", "ts_rank", "ts_decay_linear", "ts_max", "ts_min",
+        "ts_zscore", "ts_rank", "ts_decay_linear", "ts_max", "ts_min", "ts_return",
     )
 })
 OPERATOR_REGISTRY.update({
@@ -298,6 +298,20 @@ class RepositoryPanelResolver:
             )
             for instrument_id in self.instrument_ids
         }
+        return self._align_observations(observations)
+
+    def field_with_evidence(self, name: str):
+        """Resolve numeric input values while retaining typed source records."""
+        if len(self.dataset_manifest_ids) != 1:
+            raise ExpressionError("typed observation evidence requires one pinned manifest")
+        records = {instrument: self.fields.source.observation_evidence(
+            name, instrument_id=instrument, context=self.context,
+            dataset_manifest_id=self.dataset_manifest_ids[0]) for instrument in self.instrument_ids}
+        observations = {instrument: [(record.reference_period, _number(record.value)) for record in rows]
+                        for instrument, rows in records.items()}
+        return self._align_observations(observations), records
+
+    def _align_observations(self, observations) -> PanelValue:
         indexed = {}
         for instrument_id, values in observations.items():
             normalized = {}
@@ -335,6 +349,8 @@ class RepositoryPanelResolver:
 
 
 def _copy_panel(value: Panel) -> PanelValue:
+    if any(isinstance(item, bool) for series in value.values() for item in series):
+        raise ExpressionError("boolean values are not numeric datafields")
     lengths = {len(series) for series in value.values()}
     if len(lengths) > 1:
         raise ExpressionError("panel series must have equal length")
