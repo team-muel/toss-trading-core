@@ -360,11 +360,13 @@ def test_repository_rejects_boolean_before_numeric_coercion(tmp_path):
 
 
 def test_group_neutralization_requires_complete_explicit_classifications(tmp_path):
-    research_spec = spec(settings=AlphaSimulationSettings(
-        universe="synthetic", neutralization="group", truncation=1.0, long_only=False))
-    _, sessions = repository_sessions(tmp_path, research_spec)
+    research_spec = replace(spec(), settings=AlphaSimulationSettings(
+        universe="synthetic", neutralization="group", truncation=1.0, long_only=False),
+        neutralization_group_field="sector")
+    source, sessions = repository_sessions(tmp_path, research_spec)
     with pytest.raises(ValueError, match="complete neutralization groups"):
         run_expression_research(research_spec, sessions)
+    append_group_evidence(source, sessions, label="synthetic-sector")
     grouped = [replace(session, neutralization_groups=dict.fromkeys(IDS, "synthetic-sector"))
                for session in sessions]
     run = run_expression_research(research_spec, grouped)
@@ -378,8 +380,25 @@ def test_receipt_preserves_contexts_for_unavailable_points(tmp_path):
     run = run_expression_research(research_spec, sessions)
     assert run.payload()["result_status"] == "NO_OBSERVATIONS"
     assert len(run.payload()["session_input_hashes"]) == len(sessions)
-    first = run.payload()["session_inputs"][0]
+    first = next(run.iter_session_inputs())
     assert first["context"]["information_cutoff_utc"] == sessions[0].context.information_cutoff_utc.isoformat()
     assert first["dataset_manifest_ids"] == list(sessions[0].dataset_manifest_ids)
     assert first["reference_periods"] == list(sessions[0].resolver.reference_periods)
     assert run.result.points[-1].source_run_id == sessions[-2].context.run_id
+
+
+def append_group_evidence(source, sessions, label="industry", future=False):
+    writer = SQLiteTemporalObservationStore(source.observations._conn)
+    for index, session in enumerate(sessions):
+        known = session.context.information_cutoff_utc + timedelta(minutes=1 if future else -1)
+        manifest_id = session.dataset_manifest_ids[0]
+        manifest, _ = source.datasets.read(manifest_id)
+        for instrument in session.instrument_ids:
+            writer.append(observation_id=f"group-{index}-{instrument}", entity_id=instrument,
+                field="sector", value=label, reference_period=session.resolver.reference_periods[-1],
+                event_time=session.context.as_of_utc - timedelta(hours=1),
+                scheduled_release_at=None, official_release_at=None,
+                source_timestamp=known, received_at=known, available_at=known,
+                ingested_at=known, revised_at=None, supersedes_observation_id=None,
+                source_timezone="UTC", schema_version=manifest.schema_version,
+                dataset_manifest_id=manifest_id)

@@ -7,7 +7,7 @@ import pytest
 from alpha_management import HistoricalSession, RepositoryPanelResolver, simulate_history
 from alpha_management.campaign import run_expression_research
 from asset_management.time.asof import AsOfContext
-from test_research_campaign import IDS, T, repository_sessions, settings, spec
+from test_research_campaign import IDS, T, append_group_evidence, repository_sessions, settings, spec
 
 
 def nonmember_sessions(tmp_path, research_spec):
@@ -19,7 +19,7 @@ def nonmember_sessions(tmp_path, research_spec):
         effective_from=T - timedelta(days=2), available_at=T - timedelta(days=2),
         source="synthetic",
     )
-    return source, [replace(session, instrument_ids=IDS[:1], resolver=replace(
+    return source, [replace(session, instrument_ids=IDS[:1], universe_version="unspecified", resolver=replace(
         session.resolver,
         universe_membership={period: frozenset(IDS[:1]) for period in session.resolver.reference_periods},
     )) for session in sessions]
@@ -30,10 +30,11 @@ def nonmember_sessions(tmp_path, research_spec):
 def test_replay_coordinates_preserve_extra_resolver_instruments(tmp_path):
     from alpha_management.campaign import _snapshot
     research_spec = spec(settings=replace(settings(), universe="synthetic-subset"))
-    _, sessions = nonmember_sessions(tmp_path, research_spec)
+    source, sessions = nonmember_sessions(tmp_path, research_spec)
+    append_group_evidence(source, sessions)
     run = run_expression_research(research_spec, sessions)
     rebuilt = []
-    for index, coordinates in enumerate(run.payload()["session_inputs"]):
+    for index, coordinates in enumerate(run.iter_session_inputs()):
         assert coordinates["instrument_ids"] == list(IDS[:1])
         assert coordinates["resolver_instrument_ids"] == list(IDS)
         context = AsOfContext(**{
@@ -66,7 +67,8 @@ def test_expression_group_panels_reject_incomplete_classification(tmp_path, oper
     research_spec = replace(spec(),
         expression=f"{operator}(ts_return(total_return_index,2),sector)",
         group_fields=("sector",))
-    _, sessions = repository_sessions(tmp_path, research_spec)
+    source, sessions = repository_sessions(tmp_path, research_spec)
+    append_group_evidence(source, sessions)
     prepared = []
     for session in sessions:
         history = {p: dict.fromkeys(IDS, "industry") for p in session.resolver.reference_periods}
@@ -86,7 +88,8 @@ def test_complete_expression_groups_keep_canonical_semantics(tmp_path, operator)
     research_spec = replace(spec(),
         expression=f"{operator}(ts_return(total_return_index,2),sector)",
         group_fields=("sector",))
-    _, sessions = repository_sessions(tmp_path, research_spec)
+    source, sessions = repository_sessions(tmp_path, research_spec)
+    append_group_evidence(source, sessions)
     prepared = [replace(session, resolver=replace(session.resolver, groups={"sector": {
         period: dict.fromkeys(IDS, "industry") for period in session.resolver.reference_periods
     }})) for session in sessions]
@@ -97,7 +100,8 @@ def test_complete_expression_groups_keep_canonical_semantics(tmp_path, operator)
 def test_expression_group_validation_does_not_require_nonmembers(tmp_path):
     research_spec = replace(spec(settings=replace(settings(), universe="synthetic-subset")),
         expression="group_rank(ts_return(total_return_index,2),sector)", group_fields=("sector",))
-    _, sessions = nonmember_sessions(tmp_path, research_spec)
+    source, sessions = nonmember_sessions(tmp_path, research_spec)
+    append_group_evidence(source, sessions)
     prepared = [replace(session, resolver=replace(session.resolver, groups={"sector": {
         period: {IDS[0]: "industry"} for period in session.resolver.reference_periods
     }})) for session in sessions]
@@ -110,8 +114,9 @@ def replay_from_receipt(run):
     from types import MappingProxyType
     from alpha_management.campaign import _SnapshotResolver, _hash
     payload = run.payload()
+    coordinates_by_session = list(run.iter_session_inputs())
     sessions = []
-    for index, coordinates in enumerate(payload['session_inputs']):
+    for index, coordinates in enumerate(coordinates_by_session):
         assert _hash(coordinates) == payload['session_input_hashes'][index]
         axis = coordinates['resolver_instrument_ids']
         resolver = _SnapshotResolver(
@@ -142,8 +147,9 @@ def test_receipt_keeps_separate_session_order_and_effective_time(tmp_path):
     sessions = [replace(session, instrument_ids=IDS[::-1])
                 for session in sessions]
     run = run_expression_research(research_spec, sessions)
-    assert run.payload()['session_inputs'][-1]['instrument_ids'] == list(IDS[::-1])
-    assert run.payload()['session_inputs'][-1]['resolver_instrument_ids'] == list(IDS)
+    last = list(run.iter_session_inputs())[-1]
+    assert last['instrument_ids'] == list(IDS[::-1])
+    assert last['resolver_instrument_ids'] == list(IDS)
     restored = replay_from_receipt(run)
     assert simulate_history(research_spec.compiled, restored, research_spec.settings) == run.result
 

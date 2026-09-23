@@ -52,3 +52,26 @@ immutable. Campaign tests: 90 passed. Full local suite: 1,451 passed.
 
 This additive schema correction is made before the initial API is merged or
 consumed in production. Receipts remain mechanism-only, not signed approvals.
+
+## Current-master P1 follow-up — 2026-09-23
+
+The implementation has been replayed on current `master` and closes the three
+remaining P1 findings:
+
+- Every consumed temporal observation is checked against its pinned manifest's
+  schema, manifest identity, cutoff, and event-time boundary before numeric
+  projection. Group classifications are loaded from the same PIT observations;
+  caller-provided labels cannot establish provenance.
+- Research receipt inputs use a sparse delta journal with a 256 MiB encoded
+  evidence limit. Reaching the limit fails closed. Replay verifies every
+  reconstructed snapshot against its committed input hash.
+- Evaluated cross-sections pass through the existing history simulation kernel
+  with strict session-axis, type, and finiteness checks. The receipt remains
+  `MECHANISM_ONLY`, carries no performance metrics, and is not OOS or operational
+  acceptance evidence.
+
+Current local verification: the focused research suite passes 102 tests and the
+complete repository suite passes 1,543 tests. Current-head CI and a fresh
+independent review are required before this implementation is accepted. No
+real-data OOS, production data, runtime, forecast, or trading evidence is
+claimed.

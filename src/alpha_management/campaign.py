@@ -22,7 +22,9 @@ from .dsl import (
     RepositoryPanelResolver, _reference_period_key, compile_expression,
 )
 from .expression import AlphaSimulationSettings
-from .history import HistoricalSession, HistorySimulationResult, simulate_history
+from .history import HistoricalSession, HistoryPoint, HistorySimulationResult, simulate_history, _last_cross_section
+from .input_journal import InputJournal, iter_snapshots
+from asset_management.domain.errors import DataQualityError
 
 
 class ResearchTheme(StrEnum):
@@ -102,6 +104,7 @@ class ResearchSpec:
     dataset_name: str
     dataset_schema_version: str
     group_fields: tuple[str, ...] = ()
+    neutralization_group_field: str | None = None
     compiled: CompiledExpression = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -134,6 +137,10 @@ class ResearchSpec:
         if _used_fields(compiled.root) != (set(contracts), set(groups)):
             raise ValueError("declared fields must exactly match the expression")
         _settings(self.settings)
+        if self.neutralization_group_field is not None:
+            object.__setattr__(self, "neutralization_group_field", _text(self.neutralization_group_field, "neutralization group field"))
+        if self.settings.neutralization == "group" and self.neutralization_group_field is None:
+            raise ValueError("group neutralization requires its canonical group field")
         object.__setattr__(self, "field_contracts", MappingProxyType(dict(sorted(contracts.items()))))
         object.__setattr__(self, "falsification_criteria", criteria)
         object.__setattr__(self, "group_fields", groups)
@@ -147,6 +154,7 @@ class ResearchSpec:
             "thesis": self.thesis, "falsification_criteria": list(self.falsification_criteria),
             "expression": self.compiled.canonical, "expression_hash": self.compiled.expression_hash,
             "field_contracts": dict(self.field_contracts), "group_fields": list(self.group_fields),
+            "neutralization_group_field": self.neutralization_group_field,
             "settings": _settings(self.settings),
             "evaluation_horizon_sessions": self.evaluation_horizon_sessions,
             "policy_version": self.policy_version,
@@ -176,7 +184,7 @@ class _SnapshotResolver:
         return self.membership[index]
 
 
-def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[HistoricalSession]):
+def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[HistoricalSession], group_cache=None):
     resolver = session.resolver
     if not isinstance(resolver, RepositoryPanelResolver):
         raise ValueError("research runs require a canonical repository panel resolver")
@@ -214,6 +222,15 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
             spec.settings.universe, historical.context))
         if members[index] != known_members:
             raise ValueError("historical membership differs from canonical reference truth")
+    # Validate the advertised universe version only after proving historical
+    # membership so failures retain the more specific canonical membership error.
+    membership_identity = ";".join(
+        f"{period}:{','.join(sorted(resolver.universe_membership[period]))}"
+        for period in periods
+    )
+    canonical_universe_version = f"sha256:{sha256(membership_identity.encode('utf-8')).hexdigest()}"
+    if session.universe_version != canonical_universe_version:
+        raise DataQualityError("UNIVERSE_VERSION_PROVENANCE_MISMATCH")
     ids = tuple(session.dataset_manifest_ids)
     if not ids or ids != resolver.dataset_manifest_ids:
         raise ValueError("missing or mismatched repository manifest lineage")
@@ -227,10 +244,14 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
         if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status) != (
                 resolver.fields.source.source, resolver.fields.source.dataset, "silver", "VALID"):
             raise ValueError("invalid research manifest")
-    fields = {}
+    fields, observation_evidence = {}, {}
     for name in spec.field_contracts:
-        panel = resolver.field(name)
+        panel, records = resolver.field_with_evidence(name)
         fields[name] = MappingProxyType({key: tuple(values) for key, values in panel.items()})
+        observation_evidence[name] = {instrument: _hash([
+            {"observation_id": record.observation_id, "content_hash": record.content_hash,
+             "schema_version": record.schema_version, "manifest_id": record.dataset_manifest_id}
+            for record in rows]) for instrument, rows in records.items()}
     groups = {
         name: MappingProxyType({key: tuple(values) for key, values in resolver.group(name).items()})
         for name in spec.group_fields
@@ -246,6 +267,42 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
                     raise ValueError(
                         f"incomplete expression group {name} for {instrument_id} at {periods[index]}"
                     )
+    # Caller-provided dictionaries are not source evidence. Resolve each group
+    # from the observations pinned at that historical session's cutoff.
+    group_cache = {} if group_cache is None else group_cache
+    group_evidence = {}
+    required_groups = set(spec.group_fields)
+    if spec.neutralization_group_field:
+        required_groups.add(spec.neutralization_group_field)
+    for name in sorted(required_groups):
+        lineage = []
+        for index, historical in enumerate(prefix):
+            key = (name, historical.context, historical.dataset_manifest_ids)
+            if key not in group_cache:
+                source = historical.resolver.fields.source
+                period_key = _reference_period_key(periods[index])
+                records = {}
+                for instrument in members[index]:
+                    matching = [record for record in source.observation_evidence(name,
+                        instrument_id=instrument, context=historical.context,
+                        dataset_manifest_id=historical.dataset_manifest_ids[0])
+                        if _reference_period_key(record.reference_period) == period_key]
+                    if len(matching) != 1 or not isinstance(matching[0].value, str) or not matching[0].value.strip():
+                        raise DataQualityError("MISSING_CANONICAL_GROUP_CLASSIFICATION")
+                    record = matching[0]
+                    records[instrument] = {"value": record.value, "observation_id": record.observation_id,
+                        "content_hash": record.content_hash, "manifest_id": record.dataset_manifest_id,
+                        "schema_version": record.schema_version, "available_at": record.available_at.isoformat()}
+                group_cache[key] = records
+            records = group_cache[key]
+            for instrument, record in records.items():
+                if name in groups and groups[name][instrument][index] != record["value"]:
+                    raise DataQualityError("GROUP_CLASSIFICATION_PROVENANCE_MISMATCH")
+                if name == spec.neutralization_group_field and index == len(prefix) - 1:
+                    if session.neutralization_groups.get(instrument) != record["value"]:
+                        raise DataQualityError("GROUP_NEUTRALIZATION_PROVENANCE_MISMATCH")
+            lineage.append(records)
+        group_evidence[name] = lineage
     snapshot = _SnapshotResolver(MappingProxyType(fields), MappingProxyType(groups), members)
     payload = {
         "context": {
@@ -264,6 +321,8 @@ def _snapshot(spec: ResearchSpec, session: HistoricalSession, prefix: Sequence[H
         "resolver_instrument_ids": list(resolver.instrument_ids),
         "dataset_manifest_ids": list(ids), "universe_version": session.universe_version,
         "reference_periods": list(periods), "membership": [sorted(value) for value in members],
+        "observation_evidence_hashes": observation_evidence,
+        "group_evidence": group_evidence,
         "fields": {name: {key: list(values) for key, values in panel.items()}
                    for name, panel in fields.items()},
         "groups": {name: {key: list(values) for key, values in panel.items()}
@@ -304,12 +363,64 @@ class ResearchRun:
     result: HistorySimulationResult
     evidence_json: str
 
+    def __post_init__(self) -> None:
+        if type(self.result) is not HistorySimulationResult or not isinstance(self.evidence_json, str):
+            raise ValueError("research result and evidence types are invalid")
+        if self.result.metrics is not None:
+            raise ValueError("mechanism-only research receipts cannot carry performance metrics")
+        points = tuple(self.result.points)
+        if not points or any(type(point) is not HistoryPoint for point in points):
+            raise ValueError("canonical research history points required")
+        for point in points:
+            for panel in (point.raw, point.base_weights, point.weights):
+                if any(value is not None and (type(value) not in (int, float) or not isfinite(value))
+                       for value in panel.values()):
+                    raise ValueError("research scores must be finite numeric values or unavailable")
+        result = replace(self.result, points=tuple(
+            replace(point, dataset_manifest_ids=tuple(point.dataset_manifest_ids)) for point in points))
+        object.__setattr__(self, "result", result)
+        try:
+            payload = json.loads(self.evidence_json)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("research evidence is not valid JSON") from exc
+        if not isinstance(payload, dict) or payload.get("schema_version") != "expression-research-run-v2":
+            raise ValueError("unsupported research receipt version")
+        if payload.get("validation_scope") != "MECHANISM_ONLY":
+            raise ValueError("research receipt scope must remain MECHANISM_ONLY")
+        history = _history_payload(result)
+        if _json(payload.get("result")) != _json(history) or payload.get("result_hash") != _hash(history):
+            raise ValueError("research result/evidence mismatch")
+        spec = payload.get("spec")
+        if (not isinstance(spec, dict) or payload.get("spec_hash") != _hash(spec) or
+                spec.get("expression") != history["expression"] or
+                spec.get("expression_hash") != history["expression_hash"] or
+                spec.get("settings") != history["settings"] or
+                spec.get("output_semantic_type") != "SIGNAL_VALUE" or
+                spec.get("return_basis") != "NOT_A_RETURN"):
+            raise ValueError("research spec/evidence mismatch")
+        status = "COMPUTED" if any(value is not None for point in points for value in point.raw.values()) else "NO_OBSERVATIONS"
+        if payload.get("result_status") != status:
+            raise ValueError("research result status mismatch")
+
     @property
     def evidence_hash(self) -> str:
         return sha256(self.evidence_json.encode("utf-8")).hexdigest()
 
     def payload(self) -> dict:
         return json.loads(self.evidence_json)
+
+    def iter_session_inputs(self):
+        payload = self.payload()
+        if payload.get("schema_version") != "expression-research-run-v2":
+            raise ValueError("unsupported research receipt version")
+        deltas = payload["session_input_deltas"]
+        hashes = payload["session_input_hashes"]
+        if len(deltas) != len(hashes):
+            raise ValueError("research input count mismatch")
+        for snapshot, expected in zip(iter_snapshots(deltas), hashes):
+            if _hash(snapshot) != expected:
+                raise ValueError("research input snapshot hash mismatch")
+            yield snapshot
 
 
 def run_expression_research(spec: ResearchSpec, sessions: Sequence[HistoricalSession]) -> ResearchRun:
@@ -333,15 +444,21 @@ def run_expression_research(spec: ResearchSpec, sessions: Sequence[HistoricalSes
         raise ValueError("information cutoffs must not move backwards")
     if len({item.context.code_revision for item in sessions}) != 1:
         raise ValueError("one research run must use one code revision")
-    snapshots, hashes, coordinates = zip(*(_snapshot(spec, session, sessions[:index + 1])
-                             for index, session in enumerate(sessions)))
-    result = simulate_history(spec.compiled, snapshots, spec.settings)
+    journal, hashes, scores, group_cache = InputJournal(), [], [], {}
+    for index, session in enumerate(sessions):
+        snapshot, input_hash, coordinates = _snapshot(spec, session, sessions[:index + 1], group_cache)
+        scores.append(_last_cross_section(spec.compiled, snapshot, snapshot.instrument_ids))
+        hashes.append(input_hash)
+        journal.append(coordinates)
+        # Keep just this prefix's score and sparse evidence delta in memory.
+        del snapshot, coordinates
+    result = simulate_history(spec.compiled, sessions, spec.settings, evaluated_scores=scores)
     history = _history_payload(result)
     evidence = {
-        "schema_version": "expression-research-run-v1",
+        "schema_version": "expression-research-run-v2",
         "validation_scope": "MECHANISM_ONLY", "spec": spec.payload(), "spec_hash": spec.spec_hash,
         "result_status": "COMPUTED" if any(value is not None for point in result.points for value in point.raw.values()) else "NO_OBSERVATIONS",
-        "session_input_hashes": list(hashes), "session_inputs": list(coordinates),
+        "session_input_hashes": list(hashes), "session_input_deltas": journal.finish(),
         "result": history, "result_hash": _hash(history),
     }
     return ResearchRun(result, _json(evidence))
