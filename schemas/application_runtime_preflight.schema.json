@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toss-trading.invalid/schemas/application_runtime_preflight.schema.json",
+  "title": "Canonical ApplicationRuntime deployment preflight plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "manifest_status", "authority", "target", "runtime", "apis", "artifact", "storage", "secrets", "observability", "rollback", "post_deployment_evidence", "preflight"],
+  "properties": {
+    "schema_version": {"const": "canonical-application-runtime-preflight@1"},
+    "manifest_status": {"const": "PLAN_ONLY_NOT_READY"},
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deployment_approved", "deployment_executed", "api_enablement_performed", "resource_mutation_performed", "secrets_read_or_changed", "source"],
+      "properties": {
+        "deployment_approved": {"const": false}, "deployment_executed": {"const": false},
+        "api_enablement_performed": {"const": false}, "resource_mutation_performed": {"const": false},
+        "secrets_read_or_changed": {"const": false}, "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["project_id", "project_number", "project_identity_file", "prior_display_name_project_id", "deployment_model", "zone", "instance_id", "observation_state"],
+      "properties": {
+        "project_id": {"type": "string", "minLength": 1}, "project_number": {"type": "string", "pattern": "^[0-9]+$"},
+        "project_identity_file": {"const": "config/research_operations_identity.json"},
+        "prior_display_name_project_id": {"type": "string", "minLength": 1},
+        "deployment_model": {"const": "single_gce_vm_single_application_runtime"},
+        "zone": {"type": ["string", "null"]}, "instance_id": {"type": ["string", "null"]},
+        "observation_state": {"const": "NOT_CURRENTLY_OBSERVED"}
+      }
+    },
+    "runtime": {
+      "type": "object", "additionalProperties": false,
+      "required": ["entrypoint", "runtime_mode", "live_trading_enabled", "inbound_network_listener", "invocation", "scheduler_enabled", "cohosted_legacy_units", "service_name", "service_account", "deployer_service_account"],
+      "properties": {
+        "entrypoint": {"const": "ApplicationRuntime.boot -> PipelineEvidenceRepository -> DecisionKernel"},
+        "runtime_mode": {"const": "READ_ONLY"}, "live_trading_enabled": {"const": false},
+        "inbound_network_listener": {"const": false}, "invocation": {"const": "operator_manual_only"},
+        "scheduler_enabled": {"const": false}, "cohosted_legacy_units": {"type": "array", "maxItems": 0},
+        "service_name": {"type": "string", "pattern": "^asset-management-application-runtime\\.service$"},
+        "service_account": {"$ref": "#/$defs/identity"}, "deployer_service_account": {"$ref": "#/$defs/identity"}
+      }
+    },
+    "apis": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/api"}},
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["registry_resource", "image_digest", "approval_state"],
+      "properties": {"registry_resource": {"type": ["string", "null"]}, "image_digest": {"type": ["string", "null"]}, "approval_state": {"enum": ["NOT_APPROVED", "APPROVED"]}}
+    },
+    "storage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["engine", "database_path", "device", "disk_resource_id", "approved_data_buckets", "backup_bucket", "backup_retention_policy", "restore_test_evidence"],
+      "properties": {
+        "engine": {"const": "sqlite"}, "database_path": {"type": "string", "minLength": 1},
+        "device": {"const": "dedicated_zonal_persistent_disk"}, "disk_resource_id": {"type": ["string", "null"]},
+        "approved_data_buckets": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "backup_bucket": {"type": ["string", "null"]}, "backup_retention_policy": {"type": ["string", "null"]},
+        "restore_test_evidence": {"type": ["string", "null"]}
+      }
+    },
+    "secrets": {
+      "type": "object", "additionalProperties": false,
+      "required": ["values_accessed", "approved_version_references", "secret_names_and_versions_observed"],
+      "properties": {"values_accessed": {"const": false}, "approved_version_references": {"type": "array", "items": {"type": "string"}}, "secret_names_and_versions_observed": {"type": "boolean"}}
+    },
+    "observability": {
+      "type": "object", "additionalProperties": false,
+      "required": ["logs", "metrics", "legacy_dashboard_or_metrics_reused", "resource_ids_observed"],
+      "properties": {"logs": {"type": "string"}, "metrics": {"type": "string"}, "legacy_dashboard_or_metrics_reused": {"const": false}, "resource_ids_observed": {"type": "boolean"}}
+    },
+    "rollback": {
+      "type": "object", "additionalProperties": false,
+      "required": ["previous_image_digest", "prechange_data_snapshot", "restore_test_evidence", "reviewed_owner"],
+      "properties": {"previous_image_digest": {"type": ["string", "null"]}, "prechange_data_snapshot": {"type": ["string", "null"]}, "restore_test_evidence": {"type": ["string", "null"]}, "reviewed_owner": {"type": ["string", "null"]}}
+    },
+    "post_deployment_evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "required"],
+      "properties": {"schema": {"const": "schemas/application_runtime_deployment_evidence.schema.json"}, "required": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}}
+    },
+    "preflight": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "blockers"],
+      "properties": {"status": {"const": "BLOCKED"}, "blockers": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}}
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["proposed_email", "observation_state", "grants_applied", "planned_access"],
+      "properties": {"proposed_email": {"type": "string", "format": "email"}, "observation_state": {"const": "NOT_OBSERVED"}, "grants_applied": {"const": false}, "planned_access": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}}
+    },
+    "api": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "purpose", "state"],
+      "properties": {"name": {"type": "string", "pattern": "^[a-z0-9-]+\\.googleapis\\.com$"}, "purpose": {"type": "string", "minLength": 1}, "state": {"const": "NOT_ENABLED_BY_THIS_CHANGE"}}
+    }
+  }
+}
