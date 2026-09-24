@@ -17,6 +17,10 @@ def momentum_spec(*, field: str, input_contract_key: str, lookback: int,
     The input contract key must identify the real adjustment/currency/calendar
     contract supplied by the data owner. Naming a field cannot establish it.
     """
+    if field != QUANT_RETURN_INPUT_FIELD:
+        raise ValueError(
+            f"quant momentum requires the canonical {QUANT_RETURN_INPUT_FIELD} field"
+        )
     if type(lookback) is not int or not 1 <= lookback <= MAX_TIME_WINDOW:
         raise ValueError("lookback must be a bounded positive integer")
     return ResearchSpec(
@@ -33,6 +37,8 @@ def momentum_spec(*, field: str, input_contract_key: str, lookback: int,
         dataset_schema_version=dataset_schema_version,
     )
 
+
+QUANT_RETURN_INPUT_FIELD = "total_return_index"
 
 QUANT_FAMILIES = (
     "cross_sectional_momentum", "risk_adjusted_momentum", "short_term_reversal",

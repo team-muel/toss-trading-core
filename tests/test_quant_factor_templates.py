@@ -127,6 +127,13 @@ def test_template_rejects_invalid_contract(overrides):
         factor_spec("cross_sectional_momentum", **overrides)
 
 
+@pytest.mark.parametrize("family", QUANT_FAMILIES)
+@pytest.mark.parametrize("field", ["close", "adjusted_close", "price"])
+def test_quant_families_reject_noncanonical_price_fields(family, field):
+    with pytest.raises(ValueError, match="canonical total_return_index field"):
+        factor_spec(family, field=field)
+
+
 @pytest.mark.parametrize("weights", [
     {"low_volatility": 1}, {"low_volatility": True, "short_term_reversal": 0.5},
     {"low_volatility": 0, "short_term_reversal": 0.5},

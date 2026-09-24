@@ -24,6 +24,13 @@ have a governed currency/adjustment/calendar contract. All windows refer to the
 same supplied trading-session axis. `skip_recent` shifts the input observations;
 it is not a replacement for the simulator's information/effective-time delay.
 
+All six quant compilers accept only the canonical logical field
+`total_return_index`; passing `close`, `adjusted_close` or another price field is
+rejected before a spec is created. This prevents an accidental raw-price DSL
+path. The name and `input_contract_key` remain declarations: AMA-162's pinned
+manifest/observation lineage and the upstream data owner's economic contract
+must still establish the actual adjustment, currency and calendar semantics.
+
 | Family | Raw primitive before canonical rank |
 | --- | --- |
 | cross_sectional_momentum | R(long) |
