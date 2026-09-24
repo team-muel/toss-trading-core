@@ -44,6 +44,37 @@ def _provider_requests(
     return {symbol: mappings[symbol] for symbol in canonical}
 
 
+def _load_tiingo_token(env_file: Path | None = None) -> str:
+    """Prefer the process environment; otherwise read only Tiingo's key from .env."""
+    token = os.environ.get("TIINGO_API_TOKEN", "").strip()
+    if token:
+        return token
+    candidates = [env_file] if env_file is not None else [
+        Path.cwd() / ".env", Path(__file__).resolve().parents[3] / ".env",
+    ]
+    for candidate in candidates:
+        if candidate is None or not candidate.is_file():
+            continue
+        for raw in candidate.read_text(encoding="utf-8-sig").splitlines():
+            line = raw.strip()
+            if line.startswith("export "):
+                line = line[7:].lstrip()
+            key, separator, value = line.partition("=")
+            if not separator or key.strip() != "TIINGO_API_TOKEN":
+                continue
+            value = value.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+                value = value[1:-1]
+            else:
+                if value.startswith("#"):
+                    value = ""
+                elif " #" in value:
+                    value = value.split(" #", 1)[0].rstrip()
+            if value:
+                return value
+    return ""
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Collect licensed Tiingo EOD raw and total-return daily history."
@@ -86,7 +117,7 @@ def main(argv: list[str] | None = None) -> int:
     canonical_symbols = sorted(requests)
     if not requests:
         raise ValueError("at least one Tiingo symbol is required")
-    token = os.environ.get("TIINGO_API_TOKEN", "")
+    token = _load_tiingo_token()
     if not token:
         raise RuntimeError(
             "TIINGO_API_TOKEN is missing; create a Tiingo account, accept the selected "
