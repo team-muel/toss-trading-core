@@ -7,8 +7,8 @@ import hashlib
 import sqlite3
 from zoneinfo import ZoneInfo
 
-from asset_management.data.immutable import ImmutableDatasetStore, StoredDatasetManifest
-from asset_management.data.phase9 import ACTION_FIELDS, PRICE_FIELDS, SESSION_FIELDS
+from asset_management.data.immutable import ImmutableDatasetStore, StoredDatasetManifest, canonical
+from asset_management.data.phase9 import ACTION_FIELDS, PRICE_FIELDS, SESSION_FIELDS, normalize_prices
 from asset_management.data.asof_query import AsOfRepository
 from asset_management.data.prices import PriceBasis, PriceObservationStore
 from asset_management.domain.errors import DataQualityError
@@ -91,6 +91,21 @@ class Phase9PriceObservationIngestor:
                 raise DataQualityError("PRICE_SILVER_ROW_INVALID")
             if not self._matches_schema(row, {**PRICE_FIELDS, "instrument_id": "string"}):
                 raise DataQualityError("PRICE_SILVER_SCHEMA_INVALID")
+        # The immutable store can be written directly. Reapply the producer's
+        # semantic contract before assigning canonical PIT authority.
+        normalize_prices({"result": body})
+        if len(manifest.parent_manifest_ids) != 1:
+            raise DataQualityError("PRICE_SILVER_BRONZE_LINEAGE_INVALID")
+        bronze, raw = self.datasets.read(manifest.parent_manifest_ids[0])
+        if (bronze.source, bronze.dataset, bronze.layer) != (
+            manifest.source, manifest.dataset, "bronze",
+        ):
+            raise DataQualityError("PRICE_SILVER_BRONZE_LINEAGE_INVALID")
+        normalized = normalize_prices(raw)
+        silver_rows = [{key: value for key, value in row.items() if key != "instrument_id"}
+                       for row in body]
+        if sorted(map(canonical, silver_rows)) != sorted(map(canonical, normalized)):
+            raise DataQualityError("PRICE_SILVER_BRONZE_MISMATCH")
 
         lineage_key = hashlib.sha256(
             f"{manifest.manifest_id}:{context_manifest.manifest_id}".encode()
@@ -196,7 +211,7 @@ class Phase9PriceObservationIngestor:
                     "SELECT context_manifest_id FROM am_price_observation_context "
                     "WHERE observation_id=?", (observation_id,),
                 ).fetchone()
-                if admission != (context_manifest.manifest_id,):
+                if admission is None or admission[0] != context_manifest.manifest_id:
                     raise DataQualityError("PRICE_CONTEXT_LINEAGE_MISSING_OR_CONFLICTING")
                 context.require_known_at(recorded.available_at, label="price observation replay")
                 observations.append((row, reference_date, event_time, source_timezone,

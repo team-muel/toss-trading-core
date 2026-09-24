@@ -76,6 +76,24 @@ class PointInTimeDataSource:
             return f"price:{PriceBasis.TOTAL_RETURN.value}"
         return field
 
+    def _require_price_admission(self, observation) -> None:
+        if (self.source, self.dataset) != ("tiingo-eod", "daily-prices") or \
+                observation.field != "price:total_return":
+            return
+        row = self.observations.connection.execute(
+            "SELECT 1 FROM am_price_observation_context admission "
+            "JOIN am_dataset_manifest gold "
+            "ON gold.dataset_manifest_id=admission.context_manifest_id "
+            "JOIN am_manifest_parent parent "
+            "ON parent.child_manifest_id=gold.dataset_manifest_id "
+            "WHERE admission.observation_id=? "
+            "AND parent.parent_manifest_id=? "
+            "AND gold.layer='gold' AND gold.dataset_name='daily-prices-with-context'",
+            (observation.observation_id, observation.dataset_manifest_id),
+        ).fetchone()
+        if row is None:
+            raise DataQualityError("ALPHA_PRICE_CONTEXT_ADMISSION_MISSING")
+
     def _require_manifest(self, manifest, context: AsOfContext) -> str:
         if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status) != (
             self.source,
@@ -126,6 +144,7 @@ class PointInTimeDataSource:
                 context=context,
                 dataset_manifest_id=manifest_id,
             )
+            self._require_price_admission(observation)
             values[instrument_id] = observation.value
         return values
 
@@ -173,6 +192,8 @@ class PointInTimeDataSource:
             context=context,
             dataset_manifest_id=manifest_id,
         )
+        for observation in observations:
+            self._require_price_admission(observation)
         return [
             (observation.reference_period, observation.value)
             for observation in observations
@@ -192,6 +213,7 @@ class PointInTimeDataSource:
         observations = self.observations.series(entity_id=instrument_id, field=source_field,
             context=context, dataset_manifest_id=manifest_id)
         for observation in observations:
+            self._require_price_admission(observation)
             if observation.field != source_field:
                 raise DataQualityError("ALPHA_OBSERVATION_FIELD_MISMATCH")
             if observation.schema_version != manifest.schema_version:

@@ -45,6 +45,10 @@ SQLite link. A later valid session/action context for the same Silver price
 creates a new, explicitly superseding PIT vintage; retrying either context
 reuses only its own immutable observation. Future event timestamps are rejected
 before the observation is available to a research cutoff.
+The importer reapplies the Phase 9 price normalization contract to directly
+published Silver rows and checks them against their normalized Bronze parent.
+Canonical Tiingo total-return reads require the
+exact Gold admission link on every returned observation.
 
 This adapter consumes already collected Phase 9 manifests; it does not fetch
 provider data. Its contract tests use fixtures and are implementation evidence

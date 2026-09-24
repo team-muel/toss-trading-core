@@ -14,6 +14,7 @@ from asset_management.reference.corporate_actions import CorporateActionReposito
 from asset_management.time.asof import AsOfContext
 from asset_management.time.clock import FrozenClock
 from asset_management.data.asof_query import AsOfRepository
+from alpha_management.datafields import PointInTimeDataSource
 
 
 ROOT = __import__("pathlib").Path(__file__).parents[1]
@@ -111,6 +112,92 @@ def test_phase9_silver_is_admitted_only_through_context_gold_and_is_pit_linked(t
         ingested_at=imported_at + timedelta(days=1),
     ) == observation_ids
     assert AsOfRepository(conn).get_by_id(observation_ids[0]).ingested_at == imported_at
+
+
+def test_canonical_price_read_requires_exact_gold_admission(tmp_path):
+    datasets, conn, price_manifest, context_manifest, instrument_id = _admitted_snapshot(tmp_path)
+    ingestor = Phase9PriceObservationIngestor(datasets, conn)
+    observation_id = ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=context_manifest,
+        ingested_at=RECEIVED + timedelta(minutes=1),
+    )[0]
+    context = AsOfContext(
+        run_id="price-read", as_of_utc=RECEIVED + timedelta(minutes=2),
+        information_cutoff_utc=RECEIVED + timedelta(minutes=2),
+        policy_version="test", parameter_set_id="test", code_revision="test",
+    )
+
+    class Universe:
+        def versions(self, kind, context):
+            return {instrument_id: object()}
+
+    source = PointInTimeDataSource(AsOfRepository(conn), datasets, Universe(),
+                                   "tiingo-eod", "daily-prices")
+    assert source.observation_evidence(
+        "total_return_index", instrument_id=instrument_id, context=context,
+        dataset_manifest_id=price_manifest,
+    )[0].observation_id == observation_id
+    assert source.time_series_observations(
+        "total_return_index", instrument_id=instrument_id, context=context,
+        dataset_manifest_id=price_manifest,
+    ) == [("2026-09-04", "101")]
+    conn.execute("DROP TRIGGER am_price_observation_context_delete_block")
+    conn.execute("DELETE FROM am_price_observation_context WHERE observation_id=?", (observation_id,))
+    with pytest.raises(DataQualityError, match="ALPHA_PRICE_CONTEXT_ADMISSION_MISSING"):
+        source.observation_evidence("total_return_index", instrument_id=instrument_id,
+                                    context=context, dataset_manifest_id=price_manifest)
+    with pytest.raises(DataQualityError, match="ALPHA_PRICE_CONTEXT_ADMISSION_MISSING"):
+        source.time_series_observations("total_return_index", instrument_id=instrument_id,
+                                        context=context, dataset_manifest_id=price_manifest)
+
+
+@pytest.mark.parametrize("field,value,error", [
+    ("open", "not-decimal", "OPEN_NOT_DECIMAL_STRING"),
+    ("high", "100", "OHLC_CONFLICT"),
+    ("volume", "-1", "PRICE_SESSION_OR_VOLUME_INVALID"),
+    ("source_revision", "", "SOURCE_REVISION_MISSING"),
+    ("source_revision", "provider-r2", "PRICE_SILVER_BRONZE_MISMATCH"),
+])
+def test_direct_silver_write_cannot_skip_price_semantics(tmp_path, field, value, error):
+    datasets, conn, price_manifest, context_manifest, instrument_id = _admitted_snapshot(tmp_path)
+    manifest, rows = datasets.read(price_manifest)
+    _, gold_body = datasets.read(context_manifest)
+    malformed = dict(rows[0], **{field: value})
+    silver = datasets.write(
+        [malformed], layer="silver", source=manifest.source, dataset=manifest.dataset,
+        schema_version=manifest.schema_version,
+        retrieved_at=datetime.fromisoformat(manifest.retrieved_at),
+        available_at=datetime.fromisoformat(manifest.available_at),
+        provider_timestamp=datetime.fromisoformat(manifest.provider_timestamp),
+        license_tag=manifest.license_tag, code_revision=manifest.code_revision,
+        request_hash=manifest.request_hash, parent_manifest_ids=manifest.parent_manifest_ids,
+    )
+    gold = Phase9Collector(ProviderDatasetAdapter(datasets)).attach_price_context(
+        price_manifest_id=silver.manifest_id,
+        session_manifest_id=gold_body["session_manifest_id"],
+        action_manifest_id=gold_body["action_manifest_id"],
+        instrument_exchange={instrument_id: "XNYS"}, code_revision="git:abcdef0",
+    )
+    with pytest.raises(DataQualityError, match=error):
+        Phase9PriceObservationIngestor(datasets, conn).ingest_total_return_silver(
+            manifest_id=silver.manifest_id, context_manifest_id=gold.manifest_id,
+            ingested_at=RECEIVED + timedelta(minutes=1),
+        )
+    assert conn.execute("SELECT COUNT(*) FROM am_temporal_observation").fetchone()[0] == 0
+
+
+def test_price_import_replays_with_sqlite_row_factory(tmp_path):
+    datasets, conn, price_manifest, context_manifest, _ = _admitted_snapshot(tmp_path)
+    conn.row_factory = sqlite3.Row
+    ingestor = Phase9PriceObservationIngestor(datasets, conn)
+    first = ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=context_manifest,
+        ingested_at=RECEIVED + timedelta(minutes=1),
+    )
+    assert ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=context_manifest,
+        ingested_at=RECEIVED + timedelta(days=1),
+    ) == first
 
 
 def test_phase9_import_rejects_uncontextualized_silver(tmp_path):
