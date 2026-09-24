@@ -30,7 +30,7 @@ def test_same_manifest_does_not_approve_wrong_observation_schema(tmp_path):
     research_spec = spec()
     source, sessions = repository_sessions(tmp_path, research_spec)
     context = sessions[-1].context
-    old = source.observations.series(entity_id=IDS[0], field="total_return_index", context=context,
+    old = source.observations.series(entity_id=IDS[0], field="price:total_return", context=context,
         dataset_manifest_id=sessions[-1].dataset_manifest_ids[0])[-1]
     known = old.available_at + timedelta(seconds=1)
     SQLiteTemporalObservationStore(source.observations._conn).append(

@@ -16,6 +16,7 @@ from typing import Protocol
 from asset_management.data.asof_query import AsOfRepository
 from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.data.phase9 import LatestSuccessfulDataset
+from asset_management.data.prices import PriceBasis
 from asset_management.domain.errors import DataQualityError
 from asset_management.reference.universe import UniverseRepository
 from asset_management.time.asof import AsOfContext, require_as_of_context
@@ -68,6 +69,31 @@ class PointInTimeDataSource:
     source: str
     dataset: str
 
+    @staticmethod
+    def _observation_field(field: str) -> str:
+        """Map the canonical quant input to the existing governed price basis."""
+        if field == "total_return_index":
+            return f"price:{PriceBasis.TOTAL_RETURN.value}"
+        return field
+
+    def _require_price_admission(self, observation) -> None:
+        if (self.source, self.dataset) != ("tiingo-eod", "daily-prices") or \
+                observation.field != "price:total_return":
+            return
+        row = self.observations.connection.execute(
+            "SELECT 1 FROM am_price_observation_context admission "
+            "JOIN am_dataset_manifest gold "
+            "ON gold.dataset_manifest_id=admission.context_manifest_id "
+            "JOIN am_manifest_parent parent "
+            "ON parent.child_manifest_id=gold.dataset_manifest_id "
+            "WHERE admission.observation_id=? "
+            "AND parent.parent_manifest_id=? "
+            "AND gold.layer='gold' AND gold.dataset_name='daily-prices-with-context'",
+            (observation.observation_id, observation.dataset_manifest_id),
+        ).fetchone()
+        if row is None:
+            raise DataQualityError("ALPHA_PRICE_CONTEXT_ADMISSION_MISSING")
+
     def _require_manifest(self, manifest, context: AsOfContext) -> str:
         if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status) != (
             self.source,
@@ -106,6 +132,7 @@ class PointInTimeDataSource:
         self, field: str, *, universe: str, context: AsOfContext,
     ) -> Mapping[str, NumericInput]:
         manifest_id = self._manifest_id(context)
+        source_field = self._observation_field(field)
         members = self.universes.members(universe, context)
         if not members:
             raise DataQualityError("ALPHA_UNIVERSE_EMPTY")
@@ -113,10 +140,11 @@ class PointInTimeDataSource:
         for instrument_id in members:
             observation = self.observations.get_latest(
                 entity_id=instrument_id,
-                field=field,
+                field=source_field,
                 context=context,
                 dataset_manifest_id=manifest_id,
             )
+            self._require_price_admission(observation)
             values[instrument_id] = observation.value
         return values
 
@@ -160,10 +188,12 @@ class PointInTimeDataSource:
         # would drop delisted names and introduce survivor bias.
         observations = self.observations.series(
             entity_id=instrument_id,
-            field=field,
+            field=self._observation_field(field),
             context=context,
             dataset_manifest_id=manifest_id,
         )
+        for observation in observations:
+            self._require_price_admission(observation)
         return [
             (observation.reference_period, observation.value)
             for observation in observations
@@ -179,9 +209,13 @@ class PointInTimeDataSource:
         manifest, _ = self.datasets.read(manifest_id)
         if instrument_id not in self.universes.versions("INSTRUMENT", context):
             raise DataQualityError("ALPHA_INSTRUMENT_HISTORY_MISSING")
-        observations = self.observations.series(entity_id=instrument_id, field=field,
+        source_field = self._observation_field(field)
+        observations = self.observations.series(entity_id=instrument_id, field=source_field,
             context=context, dataset_manifest_id=manifest_id)
         for observation in observations:
+            self._require_price_admission(observation)
+            if observation.field != source_field:
+                raise DataQualityError("ALPHA_OBSERVATION_FIELD_MISMATCH")
             if observation.schema_version != manifest.schema_version:
                 raise DataQualityError("ALPHA_OBSERVATION_SCHEMA_MISMATCH")
             if observation.dataset_manifest_id != manifest_id:

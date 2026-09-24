@@ -90,7 +90,9 @@ python -m toss_trading.cli.research_collect_tiingo `
   --code-revision '<git-sha>'
 ```
 
-토큰은 인자나 파일로 전달하지 않고 `TIINGO_API_TOKEN` 환경 변수로만 읽는다.
+토큰은 인자나 보고서로 출력하지 않는다. CLI는 `TIINGO_API_TOKEN` 환경변수를
+우선 사용하고, 없으면 현재 디렉터리 또는 저장소 루트의 Git 무시 대상 `.env`에서
+해당 키 하나만 읽는다. 로컬 `.env`는 Git에 추가하지 않는다.
 
 ### SEC EDGAR
 
