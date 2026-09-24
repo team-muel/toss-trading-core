@@ -90,8 +90,11 @@ inventory, observation timestamps and the actor/approval. It must distinguish
 current-project observations from unobservable historical environments. It
 also requires runtime run/as-of/information-cutoff/code-revision lineage and a
 replay-only canonical D2 evidence bundle with its persisted component IDs and
-hashes. The evidence contract records no D2 PASS or gate status and does not
-create or replay D2 evidence as part of this preflight.
+hashes. The canonical D2 CLI now distinguishes `RECORD` from `REPLAY_ONLY`,
+returns its runtime lineage, and hashes the complete operation result; the
+offline checker verifies that receipt and matches the returned lineage to the
+deployment record. The evidence contract records no D2 PASS or gate status and
+does not create or replay D2 evidence as part of this preflight.
 
 The evidence schema pins the observed project ID and number to the approved
 repository identity and represents one VM with its attached service account

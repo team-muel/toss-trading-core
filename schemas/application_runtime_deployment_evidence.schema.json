@@ -104,10 +104,19 @@
     },
     "d2Replay": {
       "type": "object", "additionalProperties": false,
-      "required": ["status", "replay_only", "runtime_run_id", "canonical_evidence_hash", "model_registry_snapshot_id", "model_registry_binding_hash", "factor_risk_calculation_id", "risk_free_manifest_id", "risk_free_curve_hash", "accounting_snapshot_id", "observed_at", "evidence_reference"],
+      "required": ["cli_result", "evidence_reference"],
+      "properties": {
+        "cli_result": {"$ref": "#/$defs/d2CliResult"},
+        "evidence_reference": {"type": "string", "pattern": "^https://[^\\s]+$"}
+      }
+    },
+    "d2CliResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "operation_mode", "operation_receipt_sha256", "runtime_run_id", "canonical_evidence_hash", "model_registry_snapshot_id", "model_registry_binding_hash", "factor_risk_calculation_id", "risk_free_manifest_id", "risk_free_curve_hash", "accounting_snapshot_id", "runtime_lineage", "observed_at"],
       "properties": {
         "status": {"const": "EVIDENCE_REPLAYED"},
-        "replay_only": {"const": true},
+        "operation_mode": {"const": "REPLAY_ONLY"},
+        "operation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "runtime_run_id": {"type": "string", "minLength": 1},
         "canonical_evidence_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "model_registry_snapshot_id": {"type": "string", "minLength": 1},
@@ -116,8 +125,17 @@
         "risk_free_manifest_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "risk_free_curve_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "accounting_snapshot_id": {"type": "string", "minLength": 1},
-        "observed_at": {"type": "string", "format": "date-time"},
-        "evidence_reference": {"type": "string", "pattern": "^https://[^\\s]+$"}
+        "runtime_lineage": {
+          "type": "object", "additionalProperties": false,
+          "required": ["runtime_run_id", "as_of_utc", "information_cutoff_utc", "code_revision"],
+          "properties": {
+            "runtime_run_id": {"type": "string", "minLength": 1},
+            "as_of_utc": {"type": "string", "format": "date-time"},
+            "information_cutoff_utc": {"type": "string", "format": "date-time"},
+            "code_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+          }
+        },
+        "observed_at": {"type": "string", "format": "date-time"}
       }
     },
     "diskSnapshotEvidence": {

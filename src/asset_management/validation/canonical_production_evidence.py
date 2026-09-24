@@ -67,6 +67,9 @@ class CanonicalD2ProductionEvidence:
     """Content-addressed evidence binding; it is never an acceptance decision."""
 
     runtime_run_id: str
+    as_of_utc: str
+    information_cutoff_utc: str
+    code_revision: str
     model_registry_snapshot_id: str
     model_registry_binding_hash: str
     factor_risk_calculation_id: str
@@ -77,6 +80,10 @@ class CanonicalD2ProductionEvidence:
 
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_run_id, str) or not self.runtime_run_id.strip():
+            raise InvariantViolation("CANONICAL_D2_EVIDENCE_INVALID")
+        if (not isinstance(self.as_of_utc, str) or not self.as_of_utc.strip() or
+                not isinstance(self.information_cutoff_utc, str) or not self.information_cutoff_utc.strip() or
+                not isinstance(self.code_revision, str) or not self.code_revision.strip()):
             raise InvariantViolation("CANONICAL_D2_EVIDENCE_INVALID")
         if (not isinstance(self.model_registry_snapshot_id, str) or
                 not self.model_registry_snapshot_id.strip() or
@@ -248,7 +255,8 @@ class CanonicalD2ProductionEvidenceRepository:
         }
         content_hash = digest(canonical(body))
         return CanonicalD2ProductionEvidence(
-            runtime_run_id, snapshot_id, binding_hash, factor.factor_risk_calculation_id,
+            runtime_run_id, as_of.isoformat(), cutoff.isoformat(), str(runtime[2]),
+            snapshot_id, binding_hash, factor.factor_risk_calculation_id,
             risk_free_manifest_id, curve_hash, accounting.accounting_snapshot_id, content_hash), body
 
     def _model_binding(self, runtime_run_id: str) -> tuple[str, str]:

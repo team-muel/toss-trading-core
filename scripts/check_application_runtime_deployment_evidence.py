@@ -6,6 +6,7 @@ never authorizes, prepares, or executes a deployment.
 
 import argparse
 from datetime import datetime
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -24,6 +25,8 @@ def validate_evidence(evidence, schema, identity):
         error.message
         for error in Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(evidence)
     ]
+    if errors:
+        return sorted(set(errors))
     approved_project_id = identity.get("approved_project_id")
     approved_project_number = identity.get("approved_project_number")
     project_schema = schema.get("$defs", {}).get("observedProject", {}).get("properties", {})
@@ -43,11 +46,23 @@ def validate_evidence(evidence, schema, identity):
         errors.append("restore test snapshot must match the attached evidence disk snapshot")
 
     lineage = evidence.get("runtime_lineage", {})
-    replay = evidence.get("d2_replay", {})
+    replay = evidence.get("d2_replay", {}).get("cli_result", {})
     if lineage.get("code_revision") != evidence.get("source_sha"):
         errors.append("runtime lineage code_revision must match the deployment source_sha")
     if replay.get("runtime_run_id") != lineage.get("runtime_run_id"):
         errors.append("D2 replay runtime_run_id must match the observed runtime lineage")
+    replay_lineage = replay.get("runtime_lineage", {})
+    for field in ("runtime_run_id", "as_of_utc", "information_cutoff_utc", "code_revision"):
+        if replay_lineage.get(field) != lineage.get(field):
+            errors.append(f"D2 replay runtime lineage {field} must match the deployment lineage")
+    if replay.get("operation_mode") != "REPLAY_ONLY":
+        errors.append("D2 evidence must come from a replay-only CLI operation")
+    receipt = replay.get("operation_receipt_sha256")
+    if isinstance(receipt, str):
+        receipt_body = {key: value for key, value in replay.items() if key != "operation_receipt_sha256"}
+        canonical_receipt = json.dumps(receipt_body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if sha256(canonical_receipt.encode("utf-8")).hexdigest() != receipt:
+            errors.append("D2 operation receipt hash does not match the replay-only CLI result")
     try:
         as_of = datetime.fromisoformat(str(lineage.get("as_of_utc", "")).replace("Z", "+00:00"))
         cutoff = datetime.fromisoformat(str(lineage.get("information_cutoff_utc", "")).replace("Z", "+00:00"))

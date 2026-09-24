@@ -1,10 +1,12 @@
 from copy import deepcopy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
+from asset_management.cli.canonical_d2_production_evidence import _result as canonical_d2_cli_result
 from scripts.check_application_runtime_deployment_evidence import validate_evidence
 from scripts.check_application_runtime_preflight import validate_manifest
 
@@ -38,6 +40,31 @@ def valid_deployment_evidence():
     zone = "asia-northeast3-a"
     disk_id = f"projects/{project_id}/zones/{zone}/disks/runtime-evidence-01"
     snapshot_id = f"projects/{project_id}/global/snapshots/runtime-evidence-20260924"
+    runtime_lineage = {
+        "runtime_run_id": "runtime-run-20260924-001",
+        "as_of_utc": "2026-09-24T00:00:00Z",
+        "information_cutoff_utc": "2026-09-23T23:59:00Z",
+        "code_revision": "a" * 40,
+    }
+    d2_replay = canonical_d2_cli_result(
+        SimpleNamespace(
+            runtime_run_id=runtime_lineage["runtime_run_id"],
+            content_hash="1" * 64,
+            model_registry_snapshot_id="model-registry-snapshot-001",
+            model_registry_binding_hash="2" * 64,
+            factor_risk_calculation_id="3" * 64,
+            risk_free_manifest_id="4" * 64,
+            risk_free_curve_hash="5" * 64,
+            accounting_snapshot_id="accounting-snapshot-001",
+        ),
+        operation_mode="REPLAY_ONLY",
+        runtime_lineage=runtime_lineage,
+        observed_at=observed_at,
+    )
+    d2_replay = {
+        "cli_result": d2_replay,
+        "evidence_reference": "https://evidence.example/d2/replay.json",
+    }
 
     return {
         "schema_version": "canonical-application-runtime-deployment-evidence@1",
@@ -98,26 +125,10 @@ def valid_deployment_evidence():
             }
         },
         "runtime_lineage": {
-            "runtime_run_id": "runtime-run-20260924-001",
-            "as_of_utc": "2026-09-24T00:00:00Z",
-            "information_cutoff_utc": "2026-09-23T23:59:00Z",
-            "code_revision": "a" * 40,
+            **runtime_lineage,
             "evidence_reference": "https://evidence.example/runtime/lineage.json",
         },
-        "d2_replay": {
-            "status": "EVIDENCE_REPLAYED",
-            "replay_only": True,
-            "runtime_run_id": "runtime-run-20260924-001",
-            "canonical_evidence_hash": "1" * 64,
-            "model_registry_snapshot_id": "model-registry-snapshot-001",
-            "model_registry_binding_hash": "2" * 64,
-            "factor_risk_calculation_id": "3" * 64,
-            "risk_free_manifest_id": "4" * 64,
-            "risk_free_curve_hash": "5" * 64,
-            "accounting_snapshot_id": "accounting-snapshot-001",
-            "observed_at": observed_at,
-            "evidence_reference": "https://evidence.example/d2/replay.json",
-        },
+        "d2_replay": d2_replay,
         "iam_policy_export_hash": "sha256:" + "d" * 64,
         "api_state_hash": "sha256:" + "e" * 64,
         "runtime_mode": "READ_ONLY",
@@ -203,8 +214,20 @@ def test_future_deployment_evidence_requires_absence_and_durable_restore_proof()
 
     evidence = valid_deployment_evidence()
     evidence["runtime_lineage"]["information_cutoff_utc"] = "2026-09-24T00:01:00Z"
-    evidence["d2_replay"]["runtime_run_id"] = "different-runtime-run"
+    evidence["d2_replay"]["cli_result"]["runtime_run_id"] = "different-runtime-run"
     evidence["runtime_lineage"]["code_revision"] = "b" * 40
+    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+
+    evidence = valid_deployment_evidence()
+    evidence["d2_replay"]["cli_result"]["operation_mode"] = "RECORD"
+    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+
+    evidence = valid_deployment_evidence()
+    evidence["d2_replay"]["cli_result"]["operation_receipt_sha256"] = "0" * 64
+    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_topology"] = "unknown"
     assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
 
 
