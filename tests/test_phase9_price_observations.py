@@ -9,6 +9,7 @@ from asset_management.data.phase9 import Phase9Collector, ProviderBatch
 from asset_management.data.phase9_price_observations import Phase9PriceObservationIngestor
 from asset_management.domain.errors import ConfigurationError, DataQualityError, TemporalViolation
 from asset_management.reference.instruments import InstrumentRepository
+from asset_management.reference.corporate_actions import CorporateActionRepository
 from asset_management.time.asof import AsOfContext
 from asset_management.time.clock import FrozenClock
 from asset_management.data.asof_query import AsOfRepository
@@ -131,16 +132,47 @@ def test_price_availability_cannot_precede_late_context_gold(tmp_path):
 
 
 def test_import_uses_instrument_version_effective_at_price_event(tmp_path):
-    datasets, conn, price_manifest, context_manifest, _ = _admitted_snapshot(
+    datasets, conn, price_manifest, context_manifest, instrument_id = _admitted_snapshot(
         tmp_path, instrument_updates=({"mic": "XPAR", "currency": "EUR",
                                       "timezone": "Europe/Paris"},),
     )
-    ids = Phase9PriceObservationIngestor(datasets, conn).ingest_total_return_silver(
+    ingestor = Phase9PriceObservationIngestor(datasets, conn)
+    imported_at = RECEIVED + timedelta(days=2)
+    ids = ingestor.ingest_total_return_silver(
         manifest_id=price_manifest, context_manifest_id=context_manifest,
-        ingested_at=RECEIVED + timedelta(minutes=1),
+        ingested_at=imported_at,
     )
     assert len(ids) == 1
+    observation = AsOfRepository(conn).get_by_id(ids[0])
+    assert observation.entity_id == instrument_id
+    assert observation.source_timezone == "America/New_York"
+    assert observation.ingested_at == imported_at
+    assert ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=context_manifest,
+        ingested_at=imported_at + timedelta(days=1),
+    ) == ids
+    assert AsOfRepository(conn).get_by_id(ids[0]).ingested_at == imported_at
+
+
+def test_pre_delisting_price_can_be_imported_after_delisting(tmp_path):
+    datasets, conn, price_manifest, context_manifest, instrument_id = _admitted_snapshot(tmp_path)
+    CorporateActionRepository(conn).record(
+        action_id="delist-spy", instrument_id=instrument_id,
+        action_type="DELISTING", terms={"reason": "fixture"},
+        effective_from=EVENT + timedelta(days=1), available_at=RECEIVED,
+        source="reference:fixture",
+    )
+    imported_at = RECEIVED + timedelta(days=2)
+    ingestor = Phase9PriceObservationIngestor(datasets, conn)
+    ids = ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=context_manifest,
+        ingested_at=imported_at,
+    )
     assert AsOfRepository(conn).get_by_id(ids[0]).source_timezone == "America/New_York"
+    assert ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=context_manifest,
+        ingested_at=imported_at + timedelta(days=1),
+    ) == ids
 
 
 @pytest.mark.parametrize("field,value", [

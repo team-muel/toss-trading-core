@@ -153,6 +153,7 @@ class Phase9PriceObservationIngestor:
             seen.add(key)
             if instrument["currency"] != row["currency"]:
                 raise DataQualityError("PRICE_CURRENCY_MISMATCH")
+            source_timezone = ZoneInfo(instrument["timezone"]).key
             available = max(
                 row_available,
                 _instant(manifest.available_at, "available_at"),
@@ -174,7 +175,7 @@ class Phase9PriceObservationIngestor:
                     reference_date.isoformat(), event_time,
                     _instant(manifest.provider_timestamp, "provider_timestamp"),
                     _instant(manifest.retrieved_at, "retrieved_at"),
-                    ZoneInfo(instrument["timezone"]).key, manifest.schema_version,
+                    source_timezone, manifest.schema_version,
                     manifest.manifest_id,
                 )
                 actual = (
@@ -187,7 +188,8 @@ class Phase9PriceObservationIngestor:
                 if actual != expected:
                     raise DataQualityError("PRICE_OBSERVATION_REPLAY_CONFLICT")
                 context.require_known_at(recorded.available_at, label="price observation replay")
-                observations.append((row, reference_date, event_time, recorded.available_at,
+                observations.append((row, reference_date, event_time, source_timezone,
+                                     recorded.available_at,
                                      observation_id, None, True))
                 continue
             prior = self.conn.execute(
@@ -200,14 +202,15 @@ class Phase9PriceObservationIngestor:
             if len(prior) > 1 and prior[0][1] == prior[1][1] and prior[0][2] != prior[1][2]:
                 raise DataQualityError("PRICE_VINTAGE_CONFLICT")
             supersedes = str(prior[0][0]) if prior and prior[0][3] != manifest.manifest_id else None
-            observations.append((row, reference_date, event_time, available, observation_id, supersedes, False))
+            observations.append((row, reference_date, event_time, source_timezone,
+                                 available, observation_id, supersedes, False))
 
         # Validate and write the entire import in one transaction. The underlying
         # observation repository preserves an enclosing transaction.
         with self.conn:
             self._register_lineage(context_manifest, imported)
             inserted = []
-            for row, period, event_time, available, observation_id, supersedes, reused in observations:
+            for row, period, event_time, source_timezone, available, observation_id, supersedes, reused in observations:
                 if reused:
                     inserted.append(observation_id)
                     continue
@@ -220,7 +223,7 @@ class Phase9PriceObservationIngestor:
                     received_at=_instant(manifest.retrieved_at, "retrieved_at"),
                     available_at=available, ingested_at=imported,
                     revised_at=available if supersedes else None,
-                    source_timezone=ZoneInfo(self._instrument_timezone(row["instrument_id"], context)).key,
+                    source_timezone=source_timezone,
                     schema_version=manifest.schema_version,
                     raw_response_id=None, dataset_manifest_id=manifest.manifest_id,
                     supersedes_observation_id=supersedes,
@@ -268,9 +271,6 @@ class Phase9PriceObservationIngestor:
                     date.fromisoformat(row["effective_date"])
                 except ValueError as exc:
                     raise DataQualityError("PRICE_ACTION_EFFECTIVE_DATE_INVALID") from exc
-
-    def _instrument_timezone(self, instrument_id: str, context: AsOfContext):
-        return self.instruments.get(instrument_id, context)["timezone"]
 
     def _register_lineage(
         self, root: StoredDatasetManifest, ingested_at: datetime,
