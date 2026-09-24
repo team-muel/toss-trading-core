@@ -14,7 +14,7 @@
 - 로그
 - 스크린샷
 
-로컬 단일 사용자 개발에서는 Git에 올라가지 않는 `.env`를 사용할 수 있습니다. Toss credential loader는 프로세스 환경변수를 우선하고, 없으면 현재 디렉터리 또는 저장소 루트의 `.env`에서 접속용 키만 자동으로 읽습니다. 운영 환경은 OS credential manager, KMS, Vault, Secrets Manager 같은 secret store를 사용합니다. `.env`는 API host 허용 우회나 거래 안전 설정을 바꾸지 못합니다.
+로컬 단일 사용자 개발에서는 Git에 올라가지 않는 `.env`를 임시로 사용할 수 있습니다. 운영 환경은 OS credential manager, KMS, Vault, Secrets Manager 같은 secret store를 사용합니다.
 
 표준 환경 변수:
 

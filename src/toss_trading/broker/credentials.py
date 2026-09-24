@@ -14,34 +14,26 @@ class TossCredentials:
 
 
 def _load_local_dotenv() -> None:
-    """Load allowlisted desktop credentials from a Git-ignored .env file.
+    """Loads a local .env file for desktop development only.
 
-    Process variables always win. Only connection identity/secret variables are
-    read; local files cannot change safety overrides or live-trading controls.
+    Existing process environment variables win.
     """
-    names = {"TOSS_BROKER_BASE_URL", "TOSS_CLIENT_ID", "TOSS_CLIENT_SECRET",
-             "TOSS_ACCOUNT_SEQ", "TOSS_API_ENV"}
-    candidates = (Path.cwd() / ".env", Path(__file__).resolve().parents[3] / ".env")
-    for env_path in dict.fromkeys(candidates):
-        if not env_path.is_file():
+
+    if os.environ.get("TOSS_LOAD_LOCAL_DOTENV") != "1":
+        return
+    env_path = Path(".env")
+    if not env_path.exists():
+        return
+
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
             continue
-        for raw_line in env_path.read_text(encoding="utf-8-sig").splitlines():
-            line = raw_line.strip()
-            if line.startswith("export "):
-                line = line[7:].lstrip()
-            key, separator, value = line.partition("=")
-            key = key.strip()
-            if not separator or key not in names or os.environ.get(key):
-                continue
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            elif value.startswith("#"):
-                value = ""
-            elif " #" in value:
-                value = value.split(" #", 1)[0].rstrip()
-            if value:
-                os.environ[key] = value
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def load_toss_credentials_from_env() -> TossCredentials:
