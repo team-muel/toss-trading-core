@@ -126,6 +126,10 @@ class Phase9PriceObservationIngestor:
                 raise DataQualityError("PRICE_REFERENCE_PERIOD_INVALID") from exc
             event_time = _instant(row["event_time_utc"], "event_time_utc")
             row_available = _instant(row["available_at"], "available_at")
+            if (event_time > imported or
+                    event_time > _instant(manifest.retrieved_at, "retrieved_at") or
+                    row_available < event_time):
+                raise DataQualityError("PRICE_EVENT_TIME_ORDER_INVALID")
             # Resolve canonical metadata at the market event instant. Import-time
             # metadata can describe a later listing, venue, currency, or timezone.
             instrument = self.instruments.effective("INSTRUMENT", event_time, context).get(
@@ -162,7 +166,8 @@ class Phase9PriceObservationIngestor:
             )
             context.require_known_at(available, label="price observation")
             observation_id = hashlib.sha256(
-                f"{manifest.manifest_id}:{row['instrument_id']}:{reference_date.isoformat()}".encode()
+                f"{manifest.manifest_id}:{context_manifest.manifest_id}:"
+                f"{row['instrument_id']}:{reference_date.isoformat()}".encode()
             ).hexdigest()
             existing = self.conn.execute(
                 "SELECT observation_id FROM am_temporal_observation WHERE observation_id=?",
@@ -187,6 +192,12 @@ class Phase9PriceObservationIngestor:
                 )
                 if actual != expected:
                     raise DataQualityError("PRICE_OBSERVATION_REPLAY_CONFLICT")
+                admission = self.conn.execute(
+                    "SELECT context_manifest_id FROM am_price_observation_context "
+                    "WHERE observation_id=?", (observation_id,),
+                ).fetchone()
+                if admission != (context_manifest.manifest_id,):
+                    raise DataQualityError("PRICE_CONTEXT_LINEAGE_MISSING_OR_CONFLICTING")
                 context.require_known_at(recorded.available_at, label="price observation replay")
                 observations.append((row, reference_date, event_time, source_timezone,
                                      recorded.available_at,
@@ -201,7 +212,16 @@ class Phase9PriceObservationIngestor:
             ).fetchall()
             if len(prior) > 1 and prior[0][1] == prior[1][1] and prior[0][2] != prior[1][2]:
                 raise DataQualityError("PRICE_VINTAGE_CONFLICT")
-            supersedes = str(prior[0][0]) if prior and prior[0][3] != manifest.manifest_id else None
+            if prior and prior[0][3] == manifest.manifest_id:
+                admission = self.conn.execute(
+                    "SELECT context_manifest_id FROM am_price_observation_context "
+                    "WHERE observation_id=?", (prior[0][0],),
+                ).fetchone()
+                if admission is None:
+                    raise DataQualityError("PRICE_PRIOR_CONTEXT_LINEAGE_MISSING")
+            if prior and available <= _instant(prior[0][1], "prior_available_at"):
+                raise DataQualityError("PRICE_CONTEXT_REVISION_NOT_LATER")
+            supersedes = str(prior[0][0]) if prior else None
             observations.append((row, reference_date, event_time, source_timezone,
                                  available, observation_id, supersedes, False))
 
@@ -227,6 +247,10 @@ class Phase9PriceObservationIngestor:
                     schema_version=manifest.schema_version,
                     raw_response_id=None, dataset_manifest_id=manifest.manifest_id,
                     supersedes_observation_id=supersedes,
+                )
+                self.conn.execute(
+                    "INSERT INTO am_price_observation_context VALUES (?, ?)",
+                    (observation.observation_id, context_manifest.manifest_id),
                 )
                 inserted.append(observation.observation_id)
         return tuple(inserted)

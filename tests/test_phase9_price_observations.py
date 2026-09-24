@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import sqlite3
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -99,6 +100,10 @@ def test_phase9_silver_is_admitted_only_through_context_gold_and_is_pit_linked(t
     assert observation.dataset_manifest_id == price_manifest
     assert observation.available_at == imported_at
     assert conn.execute(
+        "SELECT context_manifest_id FROM am_price_observation_context WHERE observation_id=?",
+        observation_ids,
+    ).fetchone() == (context_manifest,)
+    assert conn.execute(
         "SELECT COUNT(*) FROM am_manifest_parent WHERE child_manifest_id=?", (context_manifest,),
     ).fetchone()[0] == 3
     assert ingestor.ingest_total_return_silver(
@@ -173,6 +178,83 @@ def test_pre_delisting_price_can_be_imported_after_delisting(tmp_path):
         manifest_id=price_manifest, context_manifest_id=context_manifest,
         ingested_at=imported_at + timedelta(days=1),
     ) == ids
+
+
+def test_new_gold_context_for_same_silver_creates_a_bound_revision(tmp_path):
+    datasets, conn, price_manifest, first_context, instrument_id = _admitted_snapshot(tmp_path)
+    ingestor = Phase9PriceObservationIngestor(datasets, conn)
+    first = ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=first_context,
+        ingested_at=RECEIVED + timedelta(minutes=1),
+    )[0]
+    first_body = datasets.read(first_context)[1]
+    collector = Phase9Collector(ProviderDatasetAdapter(datasets))
+    newer_actions = collector.corporate_actions(
+        _batch("actions", [], revision="provider-r2",
+               available=RECEIVED + timedelta(minutes=2)),
+        {"SPY": instrument_id},
+    )
+    second_context = collector.attach_price_context(
+        price_manifest_id=price_manifest,
+        session_manifest_id=first_body["session_manifest_id"],
+        action_manifest_id=newer_actions.silver_manifest_id,
+        instrument_exchange={instrument_id: "XNYS"}, code_revision="git:abcdef0",
+    ).manifest_id
+    second = ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=second_context,
+        ingested_at=RECEIVED + timedelta(minutes=3),
+    )[0]
+    assert second != first
+    assert AsOfRepository(conn).get_by_id(second).supersedes_observation_id == first
+    assert conn.execute(
+        "SELECT observation_id, context_manifest_id FROM am_price_observation_context "
+        "ORDER BY observation_id",
+    ).fetchall() == sorted([(first, first_context), (second, second_context)])
+    assert ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=second_context,
+        ingested_at=RECEIVED + timedelta(days=1),
+    ) == (second,)
+
+
+def test_future_price_cannot_enter_current_pit_cutoff(tmp_path):
+    datasets, conn, original_price, original_context, instrument_id = _admitted_snapshot(tmp_path)
+    original_row = datasets.read(original_price)[1][0]
+    original_body = datasets.read(original_context)[1]
+    future_event = EVENT + timedelta(days=10)
+    future_date = future_event.astimezone(ZoneInfo("America/New_York")).date().isoformat()
+    future_price = dict(original_row, event_time_utc=future_event.isoformat(),
+                        exchange_local_date=future_date,
+                        available_at=(future_event + timedelta(hours=1)).isoformat())
+    future_session = dict(datasets.read(original_body["session_manifest_id"])[1][0],
+                          exchange_local_date=future_date,
+                          regular_open_at=(future_event - timedelta(hours=6)).isoformat(),
+                          regular_close_at=future_event.isoformat(),
+                          event_time_utc=future_event.isoformat())
+    collector = Phase9Collector(ProviderDatasetAdapter(datasets))
+    price = collector.daily_prices(
+        _batch("daily-prices", [
+            {key: value for key, value in future_price.items() if key != "instrument_id"}
+        ], available=future_event + timedelta(hours=1)),
+        {"SPY": instrument_id},
+    )
+    session = collector.trading_sessions(
+        _batch("sessions", [
+            {key: value for key, value in future_session.items() if key != "entity_id"}
+        ], available=future_event + timedelta(hours=1)),
+        {"XNYS": "XNYS"},
+    )
+    context = collector.attach_price_context(
+        price_manifest_id=price.silver_manifest_id,
+        session_manifest_id=session.silver_manifest_id,
+        action_manifest_id=original_body["action_manifest_id"],
+        instrument_exchange={instrument_id: "XNYS"}, code_revision="git:abcdef0",
+    )
+    with pytest.raises(DataQualityError, match="PRICE_EVENT_TIME_ORDER_INVALID"):
+        Phase9PriceObservationIngestor(datasets, conn).ingest_total_return_silver(
+            manifest_id=price.silver_manifest_id, context_manifest_id=context.manifest_id,
+            ingested_at=RECEIVED + timedelta(minutes=1),
+        )
+    assert conn.execute("SELECT COUNT(*) FROM am_temporal_observation").fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("field,value", [

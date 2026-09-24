@@ -40,6 +40,11 @@ lineage in the AMA-162 SQLite manifest registry, checks canonical instrument
 currency, MIC session and local event date, and keeps each PIT observation
 pinned to the exact Silver manifest. Receipt, local import, provider timestamp,
 schema and revision lineage remain explicit on each observation.
+Each admission also records the exact Gold context manifest in an append-only
+SQLite link. A later valid session/action context for the same Silver price
+creates a new, explicitly superseding PIT vintage; retrying either context
+reuses only its own immutable observation. Future event timestamps are rejected
+before the observation is available to a research cutoff.
 
 This adapter consumes already collected Phase 9 manifests; it does not fetch
 provider data. Its contract tests use fixtures and are implementation evidence
