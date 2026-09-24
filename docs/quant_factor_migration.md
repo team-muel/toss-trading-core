@@ -32,8 +32,19 @@ existing AMA-162 observation field `price:total_return`, preserving its pinned
 manifest, PIT cutoff and observation evidence. It does not fall back to `close`,
 a raw or split-adjusted price, or the legacy research Parquet reader. The
 observation field and `input_contract_key` still do not prove provider-level
-currency, calendar or corporate-action correctness; those remain
-responsibilities of the upstream data owner and its admitted manifest contract.
+currency, calendar or corporate-action correctness. The Phase 9 admission path
+now admits Tiingo total-return rows to `PriceObservationStore` only when the
+Silver price manifest is named by a valid `daily-prices-with-context` Gold
+manifest with its session and action parents. It registers the complete immutable
+lineage in the AMA-162 SQLite manifest registry, checks canonical instrument
+currency, MIC session and local event date, and keeps each PIT observation
+pinned to the exact Silver manifest. Receipt, local import, provider timestamp,
+schema and revision lineage remain explicit on each observation.
+
+This adapter consumes already collected Phase 9 manifests; it does not fetch
+provider data. Its contract tests use fixtures and are implementation evidence
+only. They are not matured real-data OOS evidence. No predictive acceptance or
+promotion state follows from this migration.
 
 | Family | Raw primitive before canonical rank |
 | --- | --- |
@@ -76,13 +87,15 @@ Retirement remains AMA-167, coordinated with the unpublished AMA-156 cleanup.
 
 ## Acceptance evidence
 
-The initial 54 tests cover all six templates through actual immutable/PIT stores,
+The original 54 tests cover all six templates through actual immutable/PIT stores,
 per-instrument price-unit invariance, future-column isolation, stable/changed
 identities, zero volatility, invalid weights, arithmetic axis/finite/missing
 semantics, positive controls and the legacy golden comparisons. The first
 integration fixture did not include enough observations for lag plus simulation
 delay; it correctly returned NO_OBSERVATIONS. The fixture was extended, not the
-unavailability guard weakened. Full local suite: 1,503 passed.
+unavailability guard weakened. The earlier full-suite count (1,503) is
+historical and predates the Phase 9 Silver-to-PIT admission tests. Current
+verification is recorded with the exact implementation head and CI run.
 
 This is executable model mechanism evidence, not real-data predictive acceptance.
 No broker authority, live flag, cost model, runtime entrypoint or deployment is

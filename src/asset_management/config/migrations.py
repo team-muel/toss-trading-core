@@ -15,6 +15,7 @@ class Migration:
     version: int
     name: str
     sql: str
+    requires_foreign_keys_disabled: bool = False
 
     def __post_init__(self) -> None:
         if self.version <= 0 or not self.name.strip() or not self.sql.strip():
@@ -83,12 +84,25 @@ class Migrator:
                 + f"{migration.version}, {sql_literal(migration.name)}, {sql_literal(migration.content_hash)}, "
                 + f"{sql_literal(self._clock.now_utc().isoformat())});\nCOMMIT;"
             )
+            if migration.requires_foreign_keys_disabled:
+                if self._conn.in_transaction:
+                    raise ConfigurationError("table rebuild migration cannot run inside a transaction")
+                self._conn.execute("PRAGMA foreign_keys=OFF")
+                self._conn.execute("PRAGMA legacy_alter_table=ON")
             try:
                 self._conn.executescript(script)
             except sqlite3.DatabaseError:
                 if self._conn.in_transaction:
                     self._conn.rollback()
                 raise
+            finally:
+                if migration.requires_foreign_keys_disabled:
+                    self._conn.execute("PRAGMA legacy_alter_table=OFF")
+                    self._conn.execute("PRAGMA foreign_keys=ON")
+            if migration.requires_foreign_keys_disabled and self._conn.execute(
+                "PRAGMA foreign_key_check"
+            ).fetchone() is not None:
+                raise ConfigurationError("table rebuild migration left invalid foreign keys")
             completed.append(migration.version)
         return tuple(completed)
 
@@ -106,5 +120,9 @@ def load_migration_catalog(schema_root: str | Path) -> tuple[Migration, ...]:
     migration_dir = root / "migrations"
     for path in sorted(migration_dir.glob("[0-9][0-9][0-9][0-9]_*.sql")):
         version_text, name = path.stem.split("_", 1)
-        migrations.append(Migration(int(version_text), name, path.read_text(encoding="utf-8")))
+        version = int(version_text)
+        migrations.append(Migration(
+            version, name, path.read_text(encoding="utf-8"),
+            requires_foreign_keys_disabled=version == 21,
+        ))
     return tuple(migrations)

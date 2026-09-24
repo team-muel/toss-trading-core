@@ -151,7 +151,7 @@ class SQLiteTemporalObservationStore:
                 return observation
             raise InvariantViolation("observation id was reused with different content")
         try:
-            with self._conn:
+            if self._conn.in_transaction:
                 self._conn.execute(
                     """
                     INSERT INTO am_temporal_observation (
@@ -164,6 +164,20 @@ class SQLiteTemporalObservationStore:
                     """,
                     _row_values(observation),
                 )
+            else:
+                with self._conn:
+                    self._conn.execute(
+                        """
+                        INSERT INTO am_temporal_observation (
+                          observation_id, entity_id, field_name, value_json, reference_period,
+                          event_time_utc, scheduled_release_at_utc, official_release_at_utc,
+                          source_timestamp_utc, received_at_utc, available_at_utc, ingested_at_utc,
+                          revised_at_utc, source_timezone, schema_version, raw_response_id,
+                          dataset_manifest_id, supersedes_observation_id, content_hash
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        _row_values(observation),
+                    )
         except sqlite3.IntegrityError as exc:
             raise InvariantViolation(f"invalid point-in-time observation: {exc}") from exc
         return observation
