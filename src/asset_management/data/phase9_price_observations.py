@@ -113,10 +113,6 @@ class Phase9PriceObservationIngestor:
             raise DataQualityError("PRICE_CONTEXT_ROW_COUNT_MISMATCH")
         if any(not isinstance(row, dict) for row in sessions + actions):
             raise DataQualityError("PRICE_CONTEXT_PARENT_ROWS_INVALID")
-        action_instruments = {row.get("instrument_id") for row in actions}
-        price_instruments = {row.get("instrument_id") for row in body if isinstance(row, dict)}
-        if not action_instruments <= price_instruments:
-            raise DataQualityError("ACTION_INSTRUMENT_NOT_IN_PRICE_UNIVERSE")
         seen: set[tuple[str, str]] = set()
         observations = []
         for row in body:
@@ -130,7 +126,23 @@ class Phase9PriceObservationIngestor:
                 raise DataQualityError("PRICE_REFERENCE_PERIOD_INVALID") from exc
             event_time = _instant(row["event_time_utc"], "event_time_utc")
             row_available = _instant(row["available_at"], "available_at")
-            instrument = self.instruments.get(row["instrument_id"], context)
+            # Resolve canonical metadata at the market event instant. Import-time
+            # metadata can describe a later listing, venue, currency, or timezone.
+            instrument = self.instruments.effective("INSTRUMENT", event_time, context).get(
+                row["instrument_id"]
+            )
+            if instrument is None:
+                raise DataQualityError("INSTRUMENT_NOT_LISTED_AT_EVENT")
+            event_context = AsOfContext(
+                run_id=context.run_id, as_of_utc=event_time,
+                information_cutoff_utc=min(event_time, context.information_cutoff_utc),
+                policy_version=context.policy_version, parameter_set_id=context.parameter_set_id,
+                code_revision=context.code_revision,
+            )
+            if any(action["instrument_id"] == row["instrument_id"] and
+                   action["action_type"] == "DELISTING"
+                   for action in self.instruments.active("ACTION", event_context).values()):
+                raise DataQualityError("INSTRUMENT_DELISTED")
             if event_time.astimezone(ZoneInfo(instrument["timezone"])).date() != reference_date:
                 raise DataQualityError("PRICE_EVENT_DATE_MISMATCH")
             if (instrument["mic"], reference_date.isoformat()) not in session_keys:
@@ -233,6 +245,16 @@ class Phase9PriceObservationIngestor:
             if (not isinstance(row, dict) or not cls._matches_schema(row, schema) or
                     row["source"] != manifest.source):
                 raise DataQualityError(f"PRICE_{label}_SILVER_SCHEMA_INVALID")
+            if label == "SESSION":
+                try:
+                    date.fromisoformat(row["exchange_local_date"])
+                    opened = _instant(row["regular_open_at"], "regular_open_at")
+                    closed = _instant(row["regular_close_at"], "regular_close_at")
+                    _instant(row["event_time_utc"], "event_time_utc")
+                except (TypeError, ValueError, DataQualityError) as exc:
+                    raise DataQualityError("PRICE_SESSION_SILVER_SEMANTICS_INVALID") from exc
+                if row["is_open"] and opened >= closed:
+                    raise DataQualityError("PRICE_SESSION_SILVER_SEMANTICS_INVALID")
             if _instant(row["received_at"], "received_at") > received_at or \
                     _instant(row["available_at"], "available_at") > available_at:
                 raise DataQualityError(f"PRICE_{label}_SILVER_TIME_INVALID")

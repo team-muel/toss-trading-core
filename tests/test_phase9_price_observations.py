@@ -30,7 +30,7 @@ def _batch(dataset, rows, *, revision="provider-r1", available=RECEIVED):
     )
 
 
-def _admitted_snapshot(tmp_path, *, session_available=RECEIVED):
+def _admitted_snapshot(tmp_path, *, session_available=RECEIVED, instrument_updates=()):
     datasets = ImmutableDatasetStore(tmp_path, credentials_classified=True)
     collector = Phase9Collector(ProviderDatasetAdapter(datasets))
     conn = sqlite3.connect(":memory:")
@@ -41,6 +41,16 @@ def _admitted_snapshot(tmp_path, *, session_available=RECEIVED):
         effective_from=RECEIVED - timedelta(days=400), available_at=RECEIVED - timedelta(days=400),
         source="reference:fixture",
     )
+    for update in instrument_updates:
+        InstrumentRepository(conn).register(
+            instrument_id=instrument_id, ticker=update.get("ticker", "SPY"),
+            toss_symbol="SPY", vendor_symbol="SPY", cik=None,
+            mic=update.get("mic", "XNYS"), asset_class="ETF",
+            currency=update.get("currency", "USD"), timezone=update.get("timezone", "America/New_York"),
+            effective_from=update.get("effective_from", EVENT + timedelta(days=1)),
+            available_at=update.get("available_at", RECEIVED),
+            effective_to=update.get("effective_to"), source="reference:fixture-update",
+        )
     stamp = EVENT.isoformat()
     session = {
         "provider_entity_id": "XNYS", "exchange_local_date": "2026-09-04", "is_open": True,
@@ -117,6 +127,57 @@ def test_price_availability_cannot_precede_late_context_gold(tmp_path):
         Phase9PriceObservationIngestor(datasets, conn).ingest_total_return_silver(
             manifest_id=price_manifest, context_manifest_id=context_manifest,
             ingested_at=RECEIVED + timedelta(minutes=10),
+        )
+
+
+def test_import_uses_instrument_version_effective_at_price_event(tmp_path):
+    datasets, conn, price_manifest, context_manifest, _ = _admitted_snapshot(
+        tmp_path, instrument_updates=({"mic": "XPAR", "currency": "EUR",
+                                      "timezone": "Europe/Paris"},),
+    )
+    ids = Phase9PriceObservationIngestor(datasets, conn).ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=context_manifest,
+        ingested_at=RECEIVED + timedelta(minutes=1),
+    )
+    assert len(ids) == 1
+    assert AsOfRepository(conn).get_by_id(ids[0]).source_timezone == "America/New_York"
+
+
+@pytest.mark.parametrize("field,value", [
+    ("regular_open_at", "not-a-time"),
+    ("regular_close_at", "not-a-time"),
+    ("event_time_utc", "not-a-time"),
+])
+def test_import_rejects_malformed_session_semantics(tmp_path, field, value):
+    datasets, conn, price_manifest, context_manifest_id, _ = _admitted_snapshot(tmp_path)
+    _context_manifest, context_body = datasets.read(context_manifest_id)
+    session_manifest_id = context_body["session_manifest_id"]
+    session_manifest, session_rows = datasets.read(session_manifest_id)
+    session_rows[0][field] = value
+    invalid_sessions = datasets.write(
+        session_rows, layer="silver", source="tiingo-eod", dataset="sessions",
+        schema_version="sessions-test", retrieved_at=RECEIVED, available_at=RECEIVED,
+        provider_timestamp=RECEIVED - timedelta(seconds=2), license_tag=LICENSE,
+        code_revision="git:abcdef0", request_hash="e" * 64,
+        parent_manifest_ids=session_manifest.parent_manifest_ids,
+    )
+    action_manifest, actions = datasets.read(context_body["action_manifest_id"])
+    forged_context = datasets.write(
+        {"status": "VALID", "price_manifest_id": price_manifest,
+         "session_manifest_id": invalid_sessions.manifest_id,
+         "action_manifest_id": action_manifest.manifest_id,
+         "price_row_count": len(datasets.read(price_manifest)[1]),
+         "action_row_count": len(actions)},
+        layer="gold", source="tiingo-eod", dataset="daily-prices-with-context",
+        schema_version="phase9-price-context-v1", retrieved_at=RECEIVED,
+        available_at=RECEIVED, provider_timestamp=RECEIVED - timedelta(seconds=2),
+        license_tag=LICENSE, code_revision="git:abcdef0", request_hash="f" * 64,
+        parent_manifest_ids=(price_manifest, invalid_sessions.manifest_id, action_manifest.manifest_id),
+    )
+    with pytest.raises(DataQualityError, match="PRICE_SESSION_SILVER_SEMANTICS_INVALID"):
+        Phase9PriceObservationIngestor(datasets, conn).ingest_total_return_silver(
+            manifest_id=price_manifest, context_manifest_id=forged_context.manifest_id,
+            ingested_at=RECEIVED + timedelta(minutes=1),
         )
 
 
