@@ -89,6 +89,16 @@ identity, backup/restore result, logging/monitoring configuration, scheduler
 inventory, observation timestamps and the actor/approval. It must distinguish
 current-project observations from unobservable historical environments.
 
+The evidence schema pins the observed project ID and number to the approved
+repository identity and requires the runtime VM, persistent disk, and attached
+service account to be represented by same-project resource observations. It
+requires hashed scheduler and ingress inventory artifacts with explicit
+absence assertions. SQLite recovery evidence must identify its persistent disk
+and same-project snapshot, state a retention policy, and carry a hashed restore
+test reference. The project and bucket constants in the evidence contract must
+be updated alongside their repository registries; the empty approved-bucket
+registry still blocks this plan.
+
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as
 an automatic rollback. No retirement command or physical deletion is part of

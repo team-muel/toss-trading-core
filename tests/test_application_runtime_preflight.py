@@ -26,6 +26,118 @@ def test_plan_manifest_and_future_evidence_schema_are_valid_contracts():
     assert errors() == []
     assert MANIFEST["preflight"]["status"] == "BLOCKED"
     assert MANIFEST["authority"]["deployment_executed"] is False
+    assert EVIDENCE_SCHEMA["$defs"]["observedProject"]["properties"]["project_id"]["const"] == IDENTITY["approved_project_id"]
+    assert EVIDENCE_SCHEMA["$defs"]["observedProject"]["properties"]["project_number"]["const"] == IDENTITY["approved_project_number"]
+    assert EVIDENCE_SCHEMA["$defs"]["observedResource"]["properties"]["project_id"]["const"] == IDENTITY["approved_project_id"]
+
+
+def valid_deployment_evidence():
+    observed_at = "2026-09-24T00:00:00Z"
+    project_id = IDENTITY["approved_project_id"]
+
+    def resource(resource_type, resource_id):
+        return {
+            "resource_type": resource_type,
+            "resource_id": resource_id,
+            "project_id": project_id,
+            "observed_at": observed_at,
+            "source_reference": "https://evidence.example/observations/resource.json",
+        }
+
+    return {
+        "schema_version": "canonical-application-runtime-deployment-evidence@1",
+        "source_sha": "a" * 40,
+        "image_digest": "sha256:" + "b" * 64,
+        "manifest_hash": "sha256:" + "c" * 64,
+        "project": {
+            "resource_type": "google_project",
+            "resource_id": project_id,
+            "project_id": project_id,
+            "project_number": IDENTITY["approved_project_number"],
+            "observed_at": observed_at,
+            "source_reference": "https://evidence.example/observations/project.json",
+        },
+        "resources": [
+            resource("google_compute_instance", "runtime-vm"),
+            resource("google_compute_disk", "runtime-disk"),
+            resource("google_iam_service_account", "runtime-service-account"),
+        ],
+        "iam_policy_export_hash": "sha256:" + "d" * 64,
+        "api_state_hash": "sha256:" + "e" * 64,
+        "runtime_mode": "READ_ONLY",
+        "live_trading_enabled": False,
+        "migration_versions": [1],
+        "evidence_store_identity": resource(
+            "google_compute_disk",
+            f"projects/{project_id}/zones/asia-northeast3-a/disks/runtime-disk",
+        ),
+        "backup_restore": {
+            "source_disk": resource(
+                "google_compute_disk",
+                f"projects/{project_id}/zones/asia-northeast3-a/disks/runtime-disk",
+            ),
+            "backup_snapshot": resource(
+                "google_compute_snapshot",
+                f"projects/{project_id}/global/snapshots/runtime-snapshot",
+            ),
+            "snapshot_id": f"projects/{project_id}/global/snapshots/runtime-snapshot",
+            "retention_policy": {
+                "policy_reference": "https://evidence.example/retention/runtime-policy.json",
+                "minimum_retention_days": 30,
+                "immutable_until": "2026-10-24T00:00:00Z",
+            },
+            "restore_test_evidence_hash": "sha256:" + "f" * 64,
+            "restore_test_reference": "https://evidence.example/restore-tests/runtime.json",
+            "verified_at": observed_at,
+        },
+        "observability_config_hash": "sha256:" + "1" * 64,
+        "scheduler_inventory": {
+            "artifact_sha256": "sha256:" + "2" * 64,
+            "source_reference": "https://evidence.example/inventory/scheduler.json",
+            "observed_at": observed_at,
+            "absence_verified": True,
+        },
+        "ingress_inventory": {
+            "artifact_sha256": "sha256:" + "3" * 64,
+            "source_reference": "https://evidence.example/inventory/ingress.json",
+            "observed_at": observed_at,
+            "absence_verified": True,
+        },
+        "observed_at": observed_at,
+        "actor": "operator@example.com",
+        "approval_reference": "https://evidence.example/approvals/deployment.json",
+    }
+
+
+def test_future_deployment_evidence_is_bound_to_approved_project_and_topology():
+    validator = Draft202012Validator(EVIDENCE_SCHEMA, format_checker=FormatChecker())
+    evidence = valid_deployment_evidence()
+    validator.validate(evidence)
+
+    evidence["project"]["project_number"] = "1"
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    evidence["resources"][0]["project_id"] = "unapproved-project"
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    evidence["resources"] = [evidence["resources"][0]]
+    assert list(validator.iter_errors(evidence))
+
+
+def test_future_deployment_evidence_requires_absence_and_durable_restore_proof():
+    validator = Draft202012Validator(EVIDENCE_SCHEMA, format_checker=FormatChecker())
+    evidence = valid_deployment_evidence()
+    evidence["scheduler_inventory"]["absence_verified"] = False
+    evidence["ingress_inventory"]["absence_verified"] = False
+    evidence["backup_restore"]["source_disk"]["resource_type"] = "local_file"
+    evidence["backup_restore"].pop("retention_policy")
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    evidence["backup_restore"]["backup_snapshot"]["project_id"] = "unapproved-project"
+    assert list(validator.iter_errors(evidence))
 
 
 @pytest.mark.parametrize("mutation", [

@@ -4,14 +4,22 @@
   "title": "Future separately approved ApplicationRuntime deployment evidence",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "source_sha", "image_digest", "manifest_hash", "project", "resources", "iam_policy_export_hash", "api_state_hash", "runtime_mode", "live_trading_enabled", "migration_versions", "evidence_store_identity", "backup_restore", "observability_config_hash", "scheduler_inventory_hash", "observed_at", "actor", "approval_reference"],
+  "required": ["schema_version", "source_sha", "image_digest", "manifest_hash", "project", "resources", "iam_policy_export_hash", "api_state_hash", "runtime_mode", "live_trading_enabled", "migration_versions", "evidence_store_identity", "backup_restore", "observability_config_hash", "scheduler_inventory", "ingress_inventory", "observed_at", "actor", "approval_reference"],
   "properties": {
     "schema_version": {"const": "canonical-application-runtime-deployment-evidence@1"},
     "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "manifest_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "project": {"$ref": "#/$defs/observedResource"},
-    "resources": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/observedResource"}},
+    "project": {"$ref": "#/$defs/observedProject"},
+    "resources": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": {"$ref": "#/$defs/observedResource"},
+      "allOf": [
+        {"contains": {"type": "object", "properties": {"resource_type": {"const": "google_compute_instance"}}, "required": ["resource_type"]}},
+        {"contains": {"type": "object", "properties": {"resource_type": {"const": "google_compute_disk"}}, "required": ["resource_type"]}},
+        {"contains": {"type": "object", "properties": {"resource_type": {"const": "google_iam_service_account"}}, "required": ["resource_type"]}}
+      ]
+    },
     "iam_policy_export_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "api_state_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "runtime_mode": {"const": "READ_ONLY"},
@@ -20,23 +28,71 @@
     "evidence_store_identity": {"$ref": "#/$defs/observedResource"},
     "backup_restore": {
       "type": "object", "additionalProperties": false,
-      "required": ["backup_resource", "snapshot_id", "restore_test_reference", "verified_at"],
-      "properties": {"backup_resource": {"$ref": "#/$defs/observedResource"}, "snapshot_id": {"type": "string", "minLength": 1}, "restore_test_reference": {"type": "string", "minLength": 1}, "verified_at": {"type": "string", "format": "date-time"}}
+      "required": ["source_disk", "backup_snapshot", "snapshot_id", "retention_policy", "restore_test_evidence_hash", "restore_test_reference", "verified_at"],
+      "properties": {
+        "source_disk": {"$ref": "#/$defs/observedPersistentDisk"},
+        "backup_snapshot": {"$ref": "#/$defs/observedSnapshot"},
+        "snapshot_id": {"type": "string", "pattern": "^projects/toss-trading-core-lab-508411/global/snapshots/[a-z][a-z0-9-]{0,61}[a-z0-9]$"},
+        "retention_policy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["policy_reference", "minimum_retention_days", "immutable_until"],
+          "properties": {
+            "policy_reference": {"type": "string", "pattern": "^https://[^\\s]+$"},
+            "minimum_retention_days": {"type": "integer", "minimum": 1},
+            "immutable_until": {"type": "string", "format": "date-time"}
+          }
+        },
+        "restore_test_evidence_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "restore_test_reference": {"type": "string", "pattern": "^https://[^\\s]+$"},
+        "verified_at": {"type": "string", "format": "date-time"}
+      }
     },
     "observability_config_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "scheduler_inventory_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "scheduler_inventory": {"$ref": "#/$defs/absenceInventory"},
+    "ingress_inventory": {"$ref": "#/$defs/absenceInventory"},
     "observed_at": {"type": "string", "format": "date-time"},
     "actor": {"type": "string", "minLength": 1},
     "approval_reference": {"type": "string", "minLength": 1}
   },
   "$defs": {
+    "observedProject": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resource_type", "resource_id", "project_id", "project_number", "observed_at", "source_reference"],
+      "properties": {
+        "resource_type": {"const": "google_project"}, "resource_id": {"const": "toss-trading-core-lab-508411"},
+        "project_id": {"const": "toss-trading-core-lab-508411"}, "project_number": {"const": "347216292745"},
+        "observed_at": {"type": "string", "format": "date-time"}, "source_reference": {"type": "string", "minLength": 1}
+      }
+    },
     "observedResource": {
       "type": "object", "additionalProperties": false,
       "required": ["resource_type", "resource_id", "project_id", "observed_at", "source_reference"],
       "properties": {
         "resource_type": {"type": "string", "minLength": 1}, "resource_id": {"type": "string", "minLength": 1},
-        "project_id": {"type": "string", "minLength": 1}, "observed_at": {"type": "string", "format": "date-time"},
+        "project_id": {"const": "toss-trading-core-lab-508411"}, "observed_at": {"type": "string", "format": "date-time"},
         "source_reference": {"type": "string", "minLength": 1}
+      }
+    },
+    "observedPersistentDisk": {
+      "allOf": [
+        {"$ref": "#/$defs/observedResource"},
+        {"properties": {"resource_type": {"const": "google_compute_disk"}, "resource_id": {"pattern": "^projects/toss-trading-core-lab-508411/zones/[a-z0-9-]+/disks/[a-z][a-z0-9-]{0,61}[a-z0-9]$"}}}
+      ]
+    },
+    "observedSnapshot": {
+      "allOf": [
+        {"$ref": "#/$defs/observedResource"},
+        {"properties": {"resource_type": {"const": "google_compute_snapshot"}, "resource_id": {"pattern": "^projects/toss-trading-core-lab-508411/global/snapshots/[a-z][a-z0-9-]{0,61}[a-z0-9]$"}}}
+      ]
+    },
+    "absenceInventory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_sha256", "source_reference", "observed_at", "absence_verified"],
+      "properties": {
+        "artifact_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "source_reference": {"type": "string", "pattern": "^https://[^\\s]+$"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "absence_verified": {"const": true}
       }
     }
   }
