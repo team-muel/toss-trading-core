@@ -7,7 +7,7 @@ from asset_management.config.migrations import Migrator, load_migration_catalog
 from asset_management.data.immutable import ImmutableDatasetStore, ProviderDatasetAdapter
 from asset_management.data.phase9 import Phase9Collector, ProviderBatch
 from asset_management.data.phase9_price_observations import Phase9PriceObservationIngestor
-from asset_management.domain.errors import DataQualityError, TemporalViolation
+from asset_management.domain.errors import ConfigurationError, DataQualityError, TemporalViolation
 from asset_management.reference.instruments import InstrumentRepository
 from asset_management.time.asof import AsOfContext
 from asset_management.time.clock import FrozenClock
@@ -90,6 +90,11 @@ def test_phase9_silver_is_admitted_only_through_context_gold_and_is_pit_linked(t
     assert conn.execute(
         "SELECT COUNT(*) FROM am_manifest_parent WHERE child_manifest_id=?", (context_manifest,),
     ).fetchone()[0] == 3
+    assert ingestor.ingest_total_return_silver(
+        manifest_id=price_manifest, context_manifest_id=context_manifest,
+        ingested_at=imported_at + timedelta(days=1),
+    ) == observation_ids
+    assert AsOfRepository(conn).get_by_id(observation_ids[0]).ingested_at == imported_at
 
 
 def test_phase9_import_rejects_uncontextualized_silver(tmp_path):
@@ -113,6 +118,55 @@ def test_price_availability_cannot_precede_late_context_gold(tmp_path):
             manifest_id=price_manifest, context_manifest_id=context_manifest,
             ingested_at=RECEIVED + timedelta(minutes=10),
         )
+
+
+def test_context_gold_cannot_substitute_unrelated_session_dataset(tmp_path):
+    datasets, conn, price_manifest, context_manifest_id, _instrument_id = _admitted_snapshot(tmp_path)
+    _context, context_body = datasets.read(context_manifest_id)
+    session_id = str(context_body["session_manifest_id"])
+    session_manifest, sessions = datasets.read(session_id)
+    action_id = str(context_body["action_manifest_id"])
+    action_manifest, actions = datasets.read(action_id)
+    unrelated_sessions = datasets.write(
+        sessions, layer="silver", source="tiingo-eod", dataset="macro",
+        schema_version="macro-v1", retrieved_at=RECEIVED, available_at=RECEIVED,
+        provider_timestamp=RECEIVED - timedelta(seconds=2), license_tag=LICENSE,
+        code_revision="git:abcdef0", request_hash="c" * 64,
+        parent_manifest_ids=session_manifest.parent_manifest_ids,
+    )
+    forged_context = datasets.write(
+        {
+            "status": "VALID", "price_manifest_id": price_manifest,
+            "session_manifest_id": unrelated_sessions.manifest_id,
+            "action_manifest_id": action_id, "price_row_count": len(datasets.read(price_manifest)[1]),
+            "action_row_count": len(actions),
+        },
+        layer="gold", source="tiingo-eod", dataset="daily-prices-with-context",
+        schema_version="phase9-price-context-v1", retrieved_at=RECEIVED,
+        available_at=RECEIVED, provider_timestamp=RECEIVED - timedelta(seconds=2),
+        license_tag=LICENSE, code_revision="git:abcdef0", request_hash="d" * 64,
+        parent_manifest_ids=(price_manifest, unrelated_sessions.manifest_id, action_manifest.manifest_id),
+    )
+    with pytest.raises(DataQualityError, match="PRICE_CONTEXT_PARENT_INVALID"):
+        Phase9PriceObservationIngestor(datasets, conn).ingest_total_return_silver(
+            manifest_id=price_manifest, context_manifest_id=forged_context.manifest_id,
+            ingested_at=RECEIVED + timedelta(minutes=1),
+        )
+
+
+def test_price_import_refuses_a_caller_owned_transaction(tmp_path):
+    datasets, conn, price_manifest, context_manifest, _instrument_id = _admitted_snapshot(tmp_path)
+    conn.execute("BEGIN")
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("caller-run", RECEIVED.isoformat(), RECEIVED.isoformat(), "git:abcdef0", RECEIVED.isoformat()))
+    with pytest.raises(DataQualityError, match="PRICE_IMPORT_TRANSACTION_ALREADY_ACTIVE"):
+        Phase9PriceObservationIngestor(datasets, conn).ingest_total_return_silver(
+            manifest_id=price_manifest, context_manifest_id=context_manifest,
+            ingested_at=RECEIVED + timedelta(minutes=1),
+        )
+    assert conn.in_transaction
+    assert conn.execute("SELECT 1 FROM am_runtime_run WHERE runtime_run_id='caller-run'").fetchone()
+    conn.rollback()
 
 
 def test_phase9_import_rejects_non_total_return_prices(tmp_path):
@@ -174,3 +228,31 @@ def test_manifest_registry_preserves_distinct_ids_for_identical_content():
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute("UPDATE am_dataset_manifest SET uri='changed' WHERE dataset_manifest_id='manifest-a'")
+
+
+def test_manifest_identity_migration_rolls_back_when_legacy_fk_check_fails():
+    conn = sqlite3.connect(":memory:")
+    migrations = load_migration_catalog(ROOT / "schemas")
+    migrator = Migrator(conn, FrozenClock(RECEIVED))
+    migrator.migrate(item for item in migrations if item.version <= 20)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("runtime", RECEIVED.isoformat(), RECEIVED.isoformat(), "git:abcdef0", RECEIVED.isoformat()))
+    conn.execute("INSERT INTO am_ingestion_run VALUES (?, ?, ?, ?, ?)",
+                 ("ingestion", "runtime", "tiingo-eod", RECEIVED.isoformat(), RECEIVED.isoformat()))
+    first = ("ingestion", "silver", "daily-prices", "immutable://content", "same-content",
+             RECEIVED.isoformat(), RECEIVED.isoformat(), "schema-v1", 1)
+    conn.execute("INSERT INTO am_dataset_manifest VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 ("manifest-a", *first))
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.execute("INSERT INTO am_manifest_parent VALUES (?, ?)", ("manifest-a", "orphan-parent"))
+    conn.execute("PRAGMA foreign_keys=ON")
+
+    with pytest.raises(ConfigurationError, match="invalid foreign keys"):
+        migrator.migrate(migrations)
+    assert conn.execute("SELECT 1 FROM schema_migration WHERE version=21").fetchone() is None
+    assert conn.execute("SELECT 1 FROM sqlite_master WHERE name='am_dataset_manifest_legacy'").fetchone() is None
+    assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE constraint failed"):
+        conn.execute("INSERT INTO am_dataset_manifest VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     ("manifest-b", *first))

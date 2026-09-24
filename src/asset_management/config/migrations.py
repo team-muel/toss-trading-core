@@ -82,7 +82,8 @@ class Migrator:
                 + migration.sql
                 + "\nINSERT INTO schema_migration(version, name, content_hash, applied_at_utc) VALUES ("
                 + f"{migration.version}, {sql_literal(migration.name)}, {sql_literal(migration.content_hash)}, "
-                + f"{sql_literal(self._clock.now_utc().isoformat())});\nCOMMIT;"
+                + f"{sql_literal(self._clock.now_utc().isoformat())});"
+                + ("" if migration.requires_foreign_keys_disabled else "\nCOMMIT;")
             )
             if migration.requires_foreign_keys_disabled:
                 if self._conn.in_transaction:
@@ -91,7 +92,13 @@ class Migrator:
                 self._conn.execute("PRAGMA legacy_alter_table=ON")
             try:
                 self._conn.executescript(script)
-            except sqlite3.DatabaseError:
+                if migration.requires_foreign_keys_disabled:
+                    if self._conn.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                        raise ConfigurationError(
+                            "table rebuild migration left invalid foreign keys"
+                        )
+                    self._conn.commit()
+            except Exception:
                 if self._conn.in_transaction:
                     self._conn.rollback()
                 raise
@@ -99,10 +106,6 @@ class Migrator:
                 if migration.requires_foreign_keys_disabled:
                     self._conn.execute("PRAGMA legacy_alter_table=OFF")
                     self._conn.execute("PRAGMA foreign_keys=ON")
-            if migration.requires_foreign_keys_disabled and self._conn.execute(
-                "PRAGMA foreign_key_check"
-            ).fetchone() is not None:
-                raise ConfigurationError("table rebuild migration left invalid foreign keys")
             completed.append(migration.version)
         return tuple(completed)
 

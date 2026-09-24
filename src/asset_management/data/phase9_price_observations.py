@@ -8,7 +8,8 @@ import sqlite3
 from zoneinfo import ZoneInfo
 
 from asset_management.data.immutable import ImmutableDatasetStore, StoredDatasetManifest
-from asset_management.data.phase9 import PRICE_FIELDS
+from asset_management.data.phase9 import ACTION_FIELDS, PRICE_FIELDS, SESSION_FIELDS
+from asset_management.data.asof_query import AsOfRepository
 from asset_management.data.prices import PriceBasis, PriceObservationStore
 from asset_management.domain.errors import DataQualityError
 from asset_management.reference.instruments import InstrumentRepository
@@ -45,6 +46,8 @@ class Phase9PriceObservationIngestor:
         self, *, manifest_id: str, context_manifest_id: str, ingested_at: datetime,
     ) -> tuple[str, ...]:
         """Admit Tiingo prices only when their Phase 9 session/action gate is pinned."""
+        if self.conn.in_transaction:
+            raise DataQualityError("PRICE_IMPORT_TRANSACTION_ALREADY_ACTIVE")
         imported = utc(ingested_at)
         manifest, body = self.datasets.read(manifest_id)
         context_manifest, context_body = self.datasets.read(context_manifest_id)
@@ -65,11 +68,18 @@ class Phase9PriceObservationIngestor:
             raise DataQualityError("PRICE_CONTEXT_LINEAGE_MISMATCH")
         session_manifest, sessions = self.datasets.read(str(context_body["session_manifest_id"]))
         action_manifest, actions = self.datasets.read(str(context_body["action_manifest_id"]))
-        if any(item.layer != "silver" or item.quality_status != "VALID"
-               for item in (manifest, session_manifest, action_manifest)):
+        if (session_manifest.dataset, session_manifest.layer, session_manifest.quality_status) != (
+            "sessions", "silver", "VALID",
+        ) or (action_manifest.dataset, action_manifest.layer, action_manifest.quality_status) != (
+            "actions", "silver", "VALID",
+        ):
             raise DataQualityError("PRICE_CONTEXT_PARENT_INVALID")
         if not isinstance(sessions, list) or not isinstance(actions, list):
             raise DataQualityError("PRICE_CONTEXT_PARENT_ROWS_INVALID")
+        self._validate_context_rows(sessions, {**SESSION_FIELDS, "entity_id": "string"},
+                                    session_manifest, "SESSION")
+        self._validate_context_rows(actions, {**ACTION_FIELDS, "instrument_id": "string"},
+                                    action_manifest, "ACTION")
         if imported < _instant(manifest.retrieved_at, "retrieved_at"):
             raise DataQualityError("PRICE_IMPORT_PRECEDES_RECEIPT")
         if not isinstance(body, list) or not body:
@@ -79,10 +89,7 @@ class Phase9PriceObservationIngestor:
         for row in body:
             if not isinstance(row, dict):
                 raise DataQualityError("PRICE_SILVER_ROW_INVALID")
-            # The Silver adapter adds exactly one canonical field to PRICE_FIELDS.
-            schema = {**PRICE_FIELDS, "instrument_id": "string"}
-            if (set(row) != set(schema) or
-                    any(type(row.get(key)) is not str or not row[key].strip() for key in schema)):
+            if not self._matches_schema(row, {**PRICE_FIELDS, "instrument_id": "string"}):
                 raise DataQualityError("PRICE_SILVER_SCHEMA_INVALID")
 
         lineage_key = hashlib.sha256(
@@ -141,6 +148,36 @@ class Phase9PriceObservationIngestor:
                 imported,
             )
             context.require_known_at(available, label="price observation")
+            observation_id = hashlib.sha256(
+                f"{manifest.manifest_id}:{row['instrument_id']}:{reference_date.isoformat()}".encode()
+            ).hexdigest()
+            existing = self.conn.execute(
+                "SELECT observation_id FROM am_temporal_observation WHERE observation_id=?",
+                (observation_id,),
+            ).fetchone()
+            if existing is not None:
+                recorded = AsOfRepository(self.conn).get_by_id(observation_id)
+                expected = (
+                    row["instrument_id"], "price:total_return", row["close"],
+                    reference_date.isoformat(), event_time,
+                    _instant(manifest.provider_timestamp, "provider_timestamp"),
+                    _instant(manifest.retrieved_at, "retrieved_at"),
+                    ZoneInfo(instrument["timezone"]).key, manifest.schema_version,
+                    manifest.manifest_id,
+                )
+                actual = (
+                    recorded.entity_id, recorded.field, recorded.value,
+                    recorded.reference_period, recorded.event_time,
+                    recorded.source_timestamp, recorded.received_at,
+                    recorded.source_timezone, recorded.schema_version,
+                    recorded.dataset_manifest_id,
+                )
+                if actual != expected:
+                    raise DataQualityError("PRICE_OBSERVATION_REPLAY_CONFLICT")
+                context.require_known_at(recorded.available_at, label="price observation replay")
+                observations.append((row, reference_date, event_time, recorded.available_at,
+                                     observation_id, None, True))
+                continue
             prior = self.conn.execute(
                 """SELECT observation_id, available_at_utc, content_hash, dataset_manifest_id
                    FROM am_temporal_observation
@@ -150,18 +187,18 @@ class Phase9PriceObservationIngestor:
             ).fetchall()
             if len(prior) > 1 and prior[0][1] == prior[1][1] and prior[0][2] != prior[1][2]:
                 raise DataQualityError("PRICE_VINTAGE_CONFLICT")
-            observation_id = hashlib.sha256(
-                f"{manifest.manifest_id}:{row['instrument_id']}:{reference_date.isoformat()}".encode()
-            ).hexdigest()
             supersedes = str(prior[0][0]) if prior and prior[0][3] != manifest.manifest_id else None
-            observations.append((row, reference_date, event_time, available, observation_id, supersedes))
+            observations.append((row, reference_date, event_time, available, observation_id, supersedes, False))
 
         # Validate and write the entire import in one transaction. The underlying
         # observation repository preserves an enclosing transaction.
         with self.conn:
             self._register_lineage(context_manifest, imported)
             inserted = []
-            for row, period, event_time, available, observation_id, supersedes in observations:
+            for row, period, event_time, available, observation_id, supersedes, reused in observations:
+                if reused:
+                    inserted.append(observation_id)
+                    continue
                 observation = self.prices.append(
                     instrument_id=row["instrument_id"], basis=PriceBasis.TOTAL_RETURN,
                     price=row["close"], context=context,
@@ -178,6 +215,37 @@ class Phase9PriceObservationIngestor:
                 )
                 inserted.append(observation.observation_id)
         return tuple(inserted)
+
+    @staticmethod
+    def _matches_schema(row: dict, schema: dict[str, str]) -> bool:
+        if set(row) != set(schema):
+            return False
+        scalar_types = {"string": str, "integer": int, "boolean": bool, "object": dict}
+        return all(type(row.get(key)) is scalar_types[kind] for key, kind in schema.items())
+
+    @classmethod
+    def _validate_context_rows(
+        cls, rows: list, schema: dict[str, str], manifest: StoredDatasetManifest, label: str,
+    ) -> None:
+        received_at = _instant(manifest.retrieved_at, f"{label.lower()}_received_at")
+        available_at = _instant(manifest.available_at, f"{label.lower()}_available_at")
+        for row in rows:
+            if (not isinstance(row, dict) or not cls._matches_schema(row, schema) or
+                    row["source"] != manifest.source):
+                raise DataQualityError(f"PRICE_{label}_SILVER_SCHEMA_INVALID")
+            if _instant(row["received_at"], "received_at") > received_at or \
+                    _instant(row["available_at"], "available_at") > available_at:
+                raise DataQualityError(f"PRICE_{label}_SILVER_TIME_INVALID")
+            if label == "ACTION":
+                if row["action_type"] not in {
+                    "DIVIDEND", "SPLIT", "REVERSE_SPLIT", "MERGER", "SPINOFF",
+                    "DELISTING", "TICKER_CHANGE",
+                } or not row["terms"]:
+                    raise DataQualityError("PRICE_ACTION_SILVER_SEMANTICS_INVALID")
+                try:
+                    date.fromisoformat(row["effective_date"])
+                except ValueError as exc:
+                    raise DataQualityError("PRICE_ACTION_EFFECTIVE_DATE_INVALID") from exc
 
     def _instrument_timezone(self, instrument_id: str, context: AsOfContext):
         return self.instruments.get(instrument_id, context)["timezone"]
