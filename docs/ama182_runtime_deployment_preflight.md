@@ -87,17 +87,31 @@ bind source SHA, image digest, manifest hash, exact project and resource IDs,
 IAM policy export, API state, runtime mode, migration versions, evidence-store
 identity, backup/restore result, logging/monitoring configuration, scheduler
 inventory, observation timestamps and the actor/approval. It must distinguish
-current-project observations from unobservable historical environments.
+current-project observations from unobservable historical environments. It
+also requires runtime run/as-of/information-cutoff/code-revision lineage and a
+replay-only canonical D2 evidence bundle with its persisted component IDs and
+hashes. The evidence contract records no D2 PASS or gate status and does not
+create or replay D2 evidence as part of this preflight.
 
 The evidence schema pins the observed project ID and number to the approved
-repository identity and requires the runtime VM, persistent disk, and attached
-service account to be represented by same-project resource observations. It
-requires hashed scheduler and ingress inventory artifacts with explicit
-absence assertions. SQLite recovery evidence must identify its persistent disk
-and same-project snapshot, state a retention policy, and carry a hashed restore
-test reference. The project and bucket constants in the evidence contract must
-be updated alongside their repository registries; the empty approved-bucket
-registry still blocks this plan.
+repository identity and represents one VM with its attached service account
+and evidence disk nested under the VM observation. The disk contains the
+snapshot and restore evidence, so the recovery proof belongs to the same
+attached SQLite storage object. Scheduler and ingress inventories each bind a
+hash and source reference to the approved project, enumerate the inspected
+surfaces, and require zero active jobs, timers, inbound rules, external IPs,
+and listening sockets. Restore evidence requires a successful restore and an
+`ok` database integrity result. The project and bucket constants in the
+evidence contract must be updated alongside their repository registries; the
+empty approved-bucket registry still blocks this plan.
+
+Validate a future evidence file with
+`python scripts/check_application_runtime_deployment_evidence.py <evidence.json>`.
+This local checker also enforces snapshot-to-disk and restore-to-snapshot ID
+equality, runtime lineage/replay identity, source revision equality, and
+point-in-time cutoff ordering. It checks schema constants against the
+repository project registry and always reports `deployment_authorized: false`.
+It does not fetch the referenced evidence, query GCP, or approve a deployment.
 
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as

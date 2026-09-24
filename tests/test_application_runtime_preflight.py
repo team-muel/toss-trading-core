@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
+from scripts.check_application_runtime_deployment_evidence import validate_evidence
 from scripts.check_application_runtime_preflight import validate_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,21 +29,15 @@ def test_plan_manifest_and_future_evidence_schema_are_valid_contracts():
     assert MANIFEST["authority"]["deployment_executed"] is False
     assert EVIDENCE_SCHEMA["$defs"]["observedProject"]["properties"]["project_id"]["const"] == IDENTITY["approved_project_id"]
     assert EVIDENCE_SCHEMA["$defs"]["observedProject"]["properties"]["project_number"]["const"] == IDENTITY["approved_project_number"]
-    assert EVIDENCE_SCHEMA["$defs"]["observedResource"]["properties"]["project_id"]["const"] == IDENTITY["approved_project_id"]
+    assert EVIDENCE_SCHEMA["$defs"]["resourceObservation"]["properties"]["project_id"]["const"] == IDENTITY["approved_project_id"]
 
 
 def valid_deployment_evidence():
     observed_at = "2026-09-24T00:00:00Z"
     project_id = IDENTITY["approved_project_id"]
-
-    def resource(resource_type, resource_id):
-        return {
-            "resource_type": resource_type,
-            "resource_id": resource_id,
-            "project_id": project_id,
-            "observed_at": observed_at,
-            "source_reference": "https://evidence.example/observations/resource.json",
-        }
+    zone = "asia-northeast3-a"
+    disk_id = f"projects/{project_id}/zones/{zone}/disks/runtime-evidence-01"
+    snapshot_id = f"projects/{project_id}/global/snapshots/runtime-evidence-20260924"
 
     return {
         "schema_version": "canonical-application-runtime-deployment-evidence@1",
@@ -57,51 +52,96 @@ def valid_deployment_evidence():
             "observed_at": observed_at,
             "source_reference": "https://evidence.example/observations/project.json",
         },
-        "resources": [
-            resource("google_compute_instance", "runtime-vm"),
-            resource("google_compute_disk", "runtime-disk"),
-            resource("google_iam_service_account", "runtime-service-account"),
-        ],
+        "runtime_topology": {
+            "instance": {
+                "resource_type": "google_compute_instance",
+                "resource_id": f"projects/{project_id}/zones/{zone}/instances/asset-runtime-01",
+                "project_id": project_id,
+                "observed_at": observed_at,
+                "source_reference": "https://evidence.example/observations/instance.json",
+                "attached_evidence_disk": {
+                    "resource_type": "google_compute_disk",
+                    "resource_id": disk_id,
+                    "project_id": project_id,
+                    "observed_at": observed_at,
+                    "source_reference": "https://evidence.example/observations/disk.json",
+                    "mount_path": "/var/lib/asset-management/runtime",
+                    "backup_snapshot": {
+                        "resource_type": "google_compute_snapshot",
+                        "resource_id": snapshot_id,
+                        "project_id": project_id,
+                        "source_disk_resource_id": disk_id,
+                        "observed_at": observed_at,
+                        "source_reference": "https://evidence.example/observations/snapshot.json",
+                        "retention_policy": {
+                            "policy_reference": "https://evidence.example/retention/runtime-policy.json",
+                            "minimum_retention_days": 30,
+                            "immutable_until": "2026-10-24T00:00:00Z",
+                        },
+                        "restore_test": {
+                            "evidence_sha256": "sha256:" + "f" * 64,
+                            "evidence_reference": "https://evidence.example/restore-tests/runtime.json",
+                            "verified_at": observed_at,
+                            "restored_snapshot_resource_id": snapshot_id,
+                            "restore_succeeded": True,
+                            "database_integrity_check": "ok",
+                        },
+                    },
+                },
+                "attached_service_account": {
+                    "resource_type": "google_iam_service_account",
+                    "resource_id": f"projects/{project_id}/serviceAccounts/asset-runtime@{project_id}.iam.gserviceaccount.com",
+                    "project_id": project_id,
+                    "observed_at": observed_at,
+                    "source_reference": "https://evidence.example/observations/service-account.json",
+                },
+            }
+        },
+        "runtime_lineage": {
+            "runtime_run_id": "runtime-run-20260924-001",
+            "as_of_utc": "2026-09-24T00:00:00Z",
+            "information_cutoff_utc": "2026-09-23T23:59:00Z",
+            "code_revision": "a" * 40,
+            "evidence_reference": "https://evidence.example/runtime/lineage.json",
+        },
+        "d2_replay": {
+            "status": "EVIDENCE_REPLAYED",
+            "replay_only": True,
+            "runtime_run_id": "runtime-run-20260924-001",
+            "canonical_evidence_hash": "1" * 64,
+            "model_registry_snapshot_id": "model-registry-snapshot-001",
+            "model_registry_binding_hash": "2" * 64,
+            "factor_risk_calculation_id": "3" * 64,
+            "risk_free_manifest_id": "4" * 64,
+            "risk_free_curve_hash": "5" * 64,
+            "accounting_snapshot_id": "accounting-snapshot-001",
+            "observed_at": observed_at,
+            "evidence_reference": "https://evidence.example/d2/replay.json",
+        },
         "iam_policy_export_hash": "sha256:" + "d" * 64,
         "api_state_hash": "sha256:" + "e" * 64,
         "runtime_mode": "READ_ONLY",
         "live_trading_enabled": False,
         "migration_versions": [1],
-        "evidence_store_identity": resource(
-            "google_compute_disk",
-            f"projects/{project_id}/zones/asia-northeast3-a/disks/runtime-disk",
-        ),
-        "backup_restore": {
-            "source_disk": resource(
-                "google_compute_disk",
-                f"projects/{project_id}/zones/asia-northeast3-a/disks/runtime-disk",
-            ),
-            "backup_snapshot": resource(
-                "google_compute_snapshot",
-                f"projects/{project_id}/global/snapshots/runtime-snapshot",
-            ),
-            "snapshot_id": f"projects/{project_id}/global/snapshots/runtime-snapshot",
-            "retention_policy": {
-                "policy_reference": "https://evidence.example/retention/runtime-policy.json",
-                "minimum_retention_days": 30,
-                "immutable_until": "2026-10-24T00:00:00Z",
-            },
-            "restore_test_evidence_hash": "sha256:" + "f" * 64,
-            "restore_test_reference": "https://evidence.example/restore-tests/runtime.json",
-            "verified_at": observed_at,
-        },
         "observability_config_hash": "sha256:" + "1" * 64,
         "scheduler_inventory": {
             "artifact_sha256": "sha256:" + "2" * 64,
             "source_reference": "https://evidence.example/inventory/scheduler.json",
+            "project_id": project_id,
             "observed_at": observed_at,
-            "absence_verified": True,
+            "inspected_surfaces": ["cloud_scheduler_jobs", "vm_systemd_timers"],
+            "active_scheduled_job_count": 0,
+            "active_vm_timer_count": 0,
         },
         "ingress_inventory": {
             "artifact_sha256": "sha256:" + "3" * 64,
             "source_reference": "https://evidence.example/inventory/ingress.json",
+            "project_id": project_id,
             "observed_at": observed_at,
-            "absence_verified": True,
+            "inspected_surfaces": ["project_firewall_rules", "vm_network_interfaces", "vm_listening_sockets"],
+            "inbound_firewall_rule_count": 0,
+            "external_ip_count": 0,
+            "listening_socket_count": 0,
         },
         "observed_at": observed_at,
         "actor": "operator@example.com",
@@ -113,31 +153,59 @@ def test_future_deployment_evidence_is_bound_to_approved_project_and_topology():
     validator = Draft202012Validator(EVIDENCE_SCHEMA, format_checker=FormatChecker())
     evidence = valid_deployment_evidence()
     validator.validate(evidence)
+    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY) == []
 
     evidence["project"]["project_number"] = "1"
     assert list(validator.iter_errors(evidence))
 
     evidence = valid_deployment_evidence()
-    evidence["resources"][0]["project_id"] = "unapproved-project"
+    evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["project_id"] = "unapproved-project"
     assert list(validator.iter_errors(evidence))
 
     evidence = valid_deployment_evidence()
-    evidence["resources"] = [evidence["resources"][0]]
+    evidence["runtime_topology"]["instance"]["resource_id"] = "runtime-vm"
     assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_topology"]["instance"]["attached_service_account"]["resource_id"] = "runtime-service-account"
+    assert list(validator.iter_errors(evidence))
+
+    assert validate_evidence([], EVIDENCE_SCHEMA, IDENTITY)
 
 
 def test_future_deployment_evidence_requires_absence_and_durable_restore_proof():
     validator = Draft202012Validator(EVIDENCE_SCHEMA, format_checker=FormatChecker())
     evidence = valid_deployment_evidence()
-    evidence["scheduler_inventory"]["absence_verified"] = False
-    evidence["ingress_inventory"]["absence_verified"] = False
-    evidence["backup_restore"]["source_disk"]["resource_type"] = "local_file"
-    evidence["backup_restore"].pop("retention_policy")
+    evidence["scheduler_inventory"]["active_scheduled_job_count"] = 1
+    evidence["ingress_inventory"]["listening_socket_count"] = 1
+    evidence["scheduler_inventory"]["project_id"] = "unapproved-project"
+    evidence["ingress_inventory"]["inspected_surfaces"].remove("vm_network_interfaces")
     assert list(validator.iter_errors(evidence))
 
     evidence = valid_deployment_evidence()
-    evidence["backup_restore"]["backup_snapshot"]["project_id"] = "unapproved-project"
+    restore = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]["restore_test"]
+    restore["restore_succeeded"] = False
     assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    snapshot = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]
+    snapshot["project_id"] = "unapproved-project"
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    snapshot = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]
+    snapshot["source_disk_resource_id"] = f"projects/{IDENTITY['approved_project_id']}/zones/asia-northeast3-a/disks/unrelated-disk"
+    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]["restore_test"]["restored_snapshot_resource_id"] = "projects/toss-trading-core-lab-508411/global/snapshots/unrelated-snapshot"
+    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_lineage"]["information_cutoff_utc"] = "2026-09-24T00:01:00Z"
+    evidence["d2_replay"]["runtime_run_id"] = "different-runtime-run"
+    evidence["runtime_lineage"]["code_revision"] = "b" * 40
+    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
 
 
 @pytest.mark.parametrize("mutation", [
