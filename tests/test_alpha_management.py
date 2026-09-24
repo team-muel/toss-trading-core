@@ -133,6 +133,96 @@ def test_point_in_time_source_binds_manifest_cutoff_and_universe():
     assert ("series", "i-1", "manifest-at-cutoff") in calls
 
 
+def test_canonical_total_return_input_reads_governed_price_basis():
+    ctx = asof()
+    calls = []
+
+    class Manifest:
+        manifest_id = "manifest-at-cutoff"
+        source = "TOSS"
+        dataset = "daily-prices"
+        layer = "silver"
+        quality_status = "VALID"
+        schema_version = "daily-prices-v1"
+        available_at = ctx.information_cutoff_utc.isoformat()
+
+    class Store:
+        def read(self, manifest_id):
+            assert manifest_id == Manifest.manifest_id
+            return Manifest(), {}
+
+    class Universes:
+        def versions(self, kind, context):
+            assert kind == "INSTRUMENT"
+            return {"i-1": object()}
+
+    class Observations:
+        def series(self, **kwargs):
+            calls.append(kwargs)
+            return (type("Observation", (), {
+                "field": "price:total_return",
+                "schema_version": "daily-prices-v1",
+                "dataset_manifest_id": "manifest-at-cutoff",
+                "available_at": ctx.information_cutoff_utc,
+                "event_time": ctx.as_of_utc,
+                "reference_period": "2026-09-05",
+                "value": "101.25",
+                "observation_id": "price-observation",
+                "content_hash": "price-hash",
+            })(),)
+
+    source = PointInTimeDataSource(
+        observations=Observations(), datasets=Store(), universes=Universes(),
+        source="TOSS", dataset="daily-prices",
+    )
+    result = source.observation_evidence(
+        "total_return_index", instrument_id="i-1", context=ctx,
+        dataset_manifest_id="manifest-at-cutoff",
+    )
+    assert result[0].field == "price:total_return"
+    assert calls[0]["field"] == "price:total_return"
+
+
+def test_canonical_total_return_input_rejects_wrong_observation_field():
+    ctx = asof()
+
+    class Manifest:
+        manifest_id = "manifest-at-cutoff"
+        source = "TOSS"
+        dataset = "daily-prices"
+        layer = "silver"
+        quality_status = "VALID"
+        schema_version = "daily-prices-v1"
+        available_at = ctx.information_cutoff_utc.isoformat()
+
+    class Store:
+        def read(self, manifest_id):
+            return Manifest(), {}
+
+    class Universes:
+        def versions(self, kind, context):
+            return {"i-1": object()}
+
+    class Observations:
+        def series(self, **kwargs):
+            return (type("Observation", (), {
+                "field": "price:raw", "schema_version": "daily-prices-v1",
+                "dataset_manifest_id": "manifest-at-cutoff",
+                "available_at": ctx.information_cutoff_utc,
+                "event_time": ctx.as_of_utc,
+            })(),)
+
+    source = PointInTimeDataSource(
+        observations=Observations(), datasets=Store(), universes=Universes(),
+        source="TOSS", dataset="daily-prices",
+    )
+    with pytest.raises(DataQualityError, match="ALPHA_OBSERVATION_FIELD_MISMATCH"):
+        source.observation_evidence(
+            "total_return_index", instrument_id="i-1", context=ctx,
+            dataset_manifest_id="manifest-at-cutoff",
+        )
+
+
 def test_point_in_time_source_validates_manifest_pin_and_instrument_history():
     class Manifest:
         manifest_id = "manifest-pin"

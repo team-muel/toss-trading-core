@@ -161,7 +161,7 @@ def test_receipt_replays_values_after_valid_backdated_repository_append(tmp_path
     original = run_expression_research(research_spec, sessions)
     context = sessions[-1].context
     manifest_id = sessions[-1].dataset_manifest_ids[0]
-    old = source.observations.series(entity_id=IDS[0], field='total_return_index',
+    old = source.observations.series(entity_id=IDS[0], field='price:total_return',
                                     context=context, dataset_manifest_id=manifest_id)[-1]
     # This canonical append is accepted, despite occurring after the old run.
     # Its declared timestamps fall inside that run's historical cutoff.

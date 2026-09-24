@@ -94,7 +94,7 @@ def repository_sessions(tmp_path, research_spec, *, values=None):
             prior = previous.get(key)
             observation = writer.append(
                 observation_id=f"obs-{day}-{row['entity']}-{row['period']}",
-                entity_id=row["entity"], field="total_return_index", value=row["total_return_index"],
+                entity_id=row["entity"], field="price:total_return", value=row["total_return_index"],
                 reference_period=row["period"],
                 event_time=datetime.fromisoformat(row["period"]).replace(hour=20, tzinfo=timezone.utc),
                 scheduled_release_at=None, official_release_at=None,

@@ -27,9 +27,13 @@ it is not a replacement for the simulator's information/effective-time delay.
 All six quant compilers accept only the canonical logical field
 `total_return_index`; passing `close`, `adjusted_close` or another price field is
 rejected before a spec is created. This prevents an accidental raw-price DSL
-path. The name and `input_contract_key` remain declarations: AMA-162's pinned
-manifest/observation lineage and the upstream data owner's economic contract
-must still establish the actual adjustment, currency and calendar semantics.
+path. `PointInTimeDataSource` resolves that logical field only through the
+existing AMA-162 observation field `price:total_return`, preserving its pinned
+manifest, PIT cutoff and observation evidence. It does not fall back to `close`,
+a raw or split-adjusted price, or the legacy research Parquet reader. The
+observation field and `input_contract_key` still do not prove provider-level
+currency, calendar or corporate-action correctness; those remain
+responsibilities of the upstream data owner and its admitted manifest contract.
 
 | Family | Raw primitive before canonical rank |
 | --- | --- |
