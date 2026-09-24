@@ -1,0 +1,114 @@
+{
+  "schema_version": "canonical-application-runtime-preflight@1",
+  "manifest_status": "PLAN_ONLY_NOT_READY",
+  "authority": {
+    "deployment_approved": false,
+    "deployment_executed": false,
+    "api_enablement_performed": false,
+    "resource_mutation_performed": false,
+    "secrets_read_or_changed": false,
+    "source": "Linear AMA-182 plan; repository identity and bucket registries"
+  },
+  "target": {
+    "project_id": "toss-trading-core-lab-508411",
+    "project_number": "347216292745",
+    "project_identity_file": "config/research_operations_identity.json",
+    "prior_display_name_project_id": "toss-trading-core-lab",
+    "deployment_model": "single_gce_vm_single_application_runtime",
+    "zone": null,
+    "instance_id": null,
+    "observation_state": "NOT_CURRENTLY_OBSERVED"
+  },
+  "runtime": {
+    "entrypoint": "ApplicationRuntime.boot -> PipelineEvidenceRepository -> DecisionKernel",
+    "runtime_mode": "READ_ONLY",
+    "live_trading_enabled": false,
+    "inbound_network_listener": false,
+    "invocation": "operator_manual_only",
+    "scheduler_enabled": false,
+    "cohosted_legacy_units": [],
+    "service_name": "asset-management-application-runtime.service",
+    "service_account": {
+      "proposed_email": "asset-runtime@toss-trading-core-lab-508411.iam.gserviceaccount.com",
+      "observation_state": "NOT_OBSERVED",
+      "grants_applied": false,
+      "planned_access": [
+        "read only explicitly approved Secret Manager versions",
+        "write only approved runtime logs and metrics",
+        "read only the approved immutable runtime image"
+      ]
+    },
+    "deployer_service_account": {
+      "proposed_email": "asset-deployer@toss-trading-core-lab-508411.iam.gserviceaccount.com",
+      "observation_state": "NOT_OBSERVED",
+      "grants_applied": false,
+      "planned_access": [
+        "deploy an explicitly reviewed immutable image to the named workload",
+        "attach the dedicated runtime service account"
+      ]
+    }
+  },
+  "apis": [
+    {"name": "compute.googleapis.com", "purpose": "single VM and persistent data disk", "state": "NOT_ENABLED_BY_THIS_CHANGE"},
+    {"name": "artifactregistry.googleapis.com", "purpose": "pull one reviewed immutable runtime image", "state": "NOT_ENABLED_BY_THIS_CHANGE"},
+    {"name": "secretmanager.googleapis.com", "purpose": "access approved secret versions only", "state": "NOT_ENABLED_BY_THIS_CHANGE"},
+    {"name": "logging.googleapis.com", "purpose": "canonical workload logs", "state": "NOT_ENABLED_BY_THIS_CHANGE"},
+    {"name": "monitoring.googleapis.com", "purpose": "canonical workload metrics and health", "state": "NOT_ENABLED_BY_THIS_CHANGE"},
+    {"name": "iam.googleapis.com", "purpose": "owner-managed least-privilege identity setup", "state": "NOT_ENABLED_BY_THIS_CHANGE"},
+    {"name": "serviceusage.googleapis.com", "purpose": "owner-managed API allowlist preflight", "state": "NOT_ENABLED_BY_THIS_CHANGE"}
+  ],
+  "artifact": {
+    "registry_resource": null,
+    "image_digest": null,
+    "approval_state": "NOT_APPROVED"
+  },
+  "storage": {
+    "engine": "sqlite",
+    "database_path": "/var/lib/asset-management/runtime/evidence.sqlite3",
+    "device": "dedicated_zonal_persistent_disk",
+    "disk_resource_id": null,
+    "approved_data_buckets": [],
+    "backup_bucket": null,
+    "backup_retention_policy": null,
+    "restore_test_evidence": null
+  },
+  "secrets": {
+    "values_accessed": false,
+    "approved_version_references": [],
+    "secret_names_and_versions_observed": false
+  },
+  "observability": {
+    "logs": "stdout_and_stderr_to_canonical_cloud_logging_after_approval",
+    "metrics": "minimum_runtime_health_metrics_after_approval",
+    "legacy_dashboard_or_metrics_reused": false,
+    "resource_ids_observed": false
+  },
+  "rollback": {
+    "previous_image_digest": null,
+    "prechange_data_snapshot": null,
+    "restore_test_evidence": null,
+    "reviewed_owner": null
+  },
+  "post_deployment_evidence": {
+    "schema": "schemas/application_runtime_deployment_evidence.schema.json",
+    "required": [
+      "source_sha", "image_digest", "manifest_hash", "project_and_resource_ids",
+      "iam_policy_export", "api_state", "runtime_mode", "migration_versions",
+      "evidence_store_identity", "backup_restore_result", "observability_config",
+      "scheduler_inventory", "observation_timestamps", "actor_and_approval"
+    ]
+  },
+  "preflight": {
+    "status": "BLOCKED",
+    "blockers": [
+      "TARGET_RESOURCES_NOT_CURRENTLY_OBSERVED",
+      "SERVICE_ACCOUNTS_NOT_OBSERVED_OR_APPROVED",
+      "ARTIFACT_REGISTRY_NOT_APPROVED",
+      "IMMUTABLE_IMAGE_DIGEST_NOT_PINNED",
+      "NO_APPROVED_DATA_OR_BACKUP_BUCKET",
+      "BACKUP_RETENTION_AND_RESTORE_TEST_MISSING",
+      "SECRET_VERSION_REFERENCES_NOT_APPROVED",
+      "ROLLBACK_IMAGE_AND_DATA_SNAPSHOT_MISSING"
+    ]
+  }
+}

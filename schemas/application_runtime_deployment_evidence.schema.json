@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://toss-trading.invalid/schemas/application_runtime_deployment_evidence.schema.json",
+  "title": "Future separately approved ApplicationRuntime deployment evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_sha", "image_digest", "manifest_hash", "project", "runtime_topology", "runtime_lineage", "d2_replay", "iam_policy_export_hash", "api_state_hash", "runtime_mode", "live_trading_enabled", "migration_versions", "observability_config_hash", "scheduler_inventory", "ingress_inventory", "observed_at", "actor", "approval_reference"],
+  "properties": {
+    "schema_version": {"const": "canonical-application-runtime-deployment-evidence@1"},
+    "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "manifest_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "project": {"$ref": "#/$defs/observedProject"},
+    "runtime_topology": {
+      "type": "object", "additionalProperties": false,
+      "required": ["instance"],
+      "properties": {"instance": {"$ref": "#/$defs/runtimeInstance"}}
+    },
+    "runtime_lineage": {"$ref": "#/$defs/runtimeLineage"},
+    "d2_replay": {"$ref": "#/$defs/d2Replay"},
+    "iam_policy_export_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "api_state_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "runtime_mode": {"const": "READ_ONLY"},
+    "live_trading_enabled": {"const": false},
+    "migration_versions": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+    "observability_config_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "scheduler_inventory": {"$ref": "#/$defs/schedulerInventory"},
+    "ingress_inventory": {"$ref": "#/$defs/ingressInventory"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "actor": {"type": "string", "minLength": 1},
+    "approval_reference": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "observedProject": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resource_type", "resource_id", "project_id", "project_number", "observed_at", "source_reference"],
+      "properties": {
+        "resource_type": {"const": "google_project"},
+        "resource_id": {"const": "toss-trading-core-lab-508411"},
+        "project_id": {"const": "toss-trading-core-lab-508411"},
+        "project_number": {"const": "347216292745"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "source_reference": {"type": "string", "minLength": 1}
+      }
+    },
+    "resourceObservation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resource_type", "resource_id", "project_id", "observed_at", "source_reference"],
+      "properties": {
+        "resource_type": {"type": "string", "minLength": 1},
+        "resource_id": {"type": "string", "minLength": 1},
+        "project_id": {"const": "toss-trading-core-lab-508411"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "source_reference": {"type": "string", "minLength": 1}
+      }
+    },
+    "runtimeInstance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resource_type", "resource_id", "project_id", "observed_at", "source_reference", "attached_evidence_disk", "attached_service_account"],
+      "properties": {
+        "resource_type": {"const": "google_compute_instance"},
+        "resource_id": {"type": "string", "pattern": "^projects/toss-trading-core-lab-508411/zones/[a-z0-9-]+/instances/[a-z][a-z0-9-]{0,61}[a-z0-9]$"},
+        "project_id": {"const": "toss-trading-core-lab-508411"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "source_reference": {"type": "string", "minLength": 1},
+        "attached_evidence_disk": {"$ref": "#/$defs/evidenceDisk"},
+        "attached_service_account": {"$ref": "#/$defs/runtimeServiceAccount"}
+      }
+    },
+    "evidenceDisk": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resource_type", "resource_id", "project_id", "observed_at", "source_reference", "mount_path", "backup_snapshot"],
+      "properties": {
+        "resource_type": {"const": "google_compute_disk"},
+        "resource_id": {"type": "string", "pattern": "^projects/toss-trading-core-lab-508411/zones/[a-z0-9-]+/disks/[a-z][a-z0-9-]{0,61}[a-z0-9]$"},
+        "project_id": {"const": "toss-trading-core-lab-508411"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "source_reference": {"type": "string", "minLength": 1},
+        "mount_path": {"const": "/var/lib/asset-management/runtime"},
+        "backup_snapshot": {"$ref": "#/$defs/diskSnapshotEvidence"}
+      }
+    },
+    "runtimeServiceAccount": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resource_type", "resource_id", "project_id", "observed_at", "source_reference"],
+      "properties": {
+        "resource_type": {"const": "google_iam_service_account"},
+        "resource_id": {"type": "string", "pattern": "^projects/toss-trading-core-lab-508411/serviceAccounts/[a-z][a-z0-9-]{0,61}[a-z0-9]@toss-trading-core-lab-508411\\.iam\\.gserviceaccount\\.com$"},
+        "project_id": {"const": "toss-trading-core-lab-508411"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "source_reference": {"type": "string", "minLength": 1}
+      }
+    },
+    "runtimeLineage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["runtime_run_id", "as_of_utc", "information_cutoff_utc", "code_revision", "evidence_reference"],
+      "properties": {
+        "runtime_run_id": {"type": "string", "minLength": 1},
+        "as_of_utc": {"type": "string", "format": "date-time"},
+        "information_cutoff_utc": {"type": "string", "format": "date-time"},
+        "code_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "evidence_reference": {"type": "string", "pattern": "^https://[^\\s]+$"}
+      }
+    },
+    "d2Replay": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cli_result", "evidence_reference"],
+      "properties": {
+        "cli_result": {"$ref": "#/$defs/d2CliResult"},
+        "evidence_reference": {"type": "string", "pattern": "^https://[^\\s]+$"}
+      }
+    },
+    "d2CliResult": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "operation_mode", "operation_receipt_sha256", "runtime_run_id", "canonical_evidence_hash", "model_registry_snapshot_id", "model_registry_binding_hash", "factor_risk_calculation_id", "risk_free_manifest_id", "risk_free_curve_hash", "accounting_snapshot_id", "runtime_lineage", "observed_at"],
+      "properties": {
+        "status": {"const": "EVIDENCE_REPLAYED"},
+        "operation_mode": {"const": "REPLAY_ONLY"},
+        "operation_receipt_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "runtime_run_id": {"type": "string", "minLength": 1},
+        "canonical_evidence_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "model_registry_snapshot_id": {"type": "string", "minLength": 1},
+        "model_registry_binding_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "factor_risk_calculation_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "risk_free_manifest_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "risk_free_curve_hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "accounting_snapshot_id": {"type": "string", "minLength": 1},
+        "runtime_lineage": {
+          "type": "object", "additionalProperties": false,
+          "required": ["runtime_run_id", "as_of_utc", "information_cutoff_utc", "code_revision"],
+          "properties": {
+            "runtime_run_id": {"type": "string", "minLength": 1},
+            "as_of_utc": {"type": "string", "format": "date-time"},
+            "information_cutoff_utc": {"type": "string", "format": "date-time"},
+            "code_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+          }
+        },
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "diskSnapshotEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["resource_type", "resource_id", "project_id", "source_disk_resource_id", "observed_at", "source_reference", "retention_policy", "restore_test"],
+      "properties": {
+        "resource_type": {"const": "google_compute_snapshot"},
+        "resource_id": {"type": "string", "pattern": "^projects/toss-trading-core-lab-508411/global/snapshots/[a-z][a-z0-9-]{0,61}[a-z0-9]$"},
+        "project_id": {"const": "toss-trading-core-lab-508411"},
+        "source_disk_resource_id": {"type": "string", "pattern": "^projects/toss-trading-core-lab-508411/zones/[a-z0-9-]+/disks/[a-z][a-z0-9-]{0,61}[a-z0-9]$"},
+        "observed_at": {"type": "string", "format": "date-time"},
+        "source_reference": {"type": "string", "minLength": 1},
+        "retention_policy": {"$ref": "#/$defs/retentionPolicy"},
+        "restore_test": {"$ref": "#/$defs/restoreTest"}
+      }
+    },
+    "retentionPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy_reference", "minimum_retention_days", "immutable_until"],
+      "properties": {
+        "policy_reference": {"type": "string", "pattern": "^https://[^\\s]+$"},
+        "minimum_retention_days": {"type": "integer", "minimum": 1},
+        "immutable_until": {"type": "string", "format": "date-time"}
+      }
+    },
+    "restoreTest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["evidence_sha256", "evidence_reference", "verified_at", "restored_snapshot_resource_id", "restore_succeeded", "database_integrity_check"],
+      "properties": {
+        "evidence_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "evidence_reference": {"type": "string", "pattern": "^https://[^\\s]+$"},
+        "verified_at": {"type": "string", "format": "date-time"},
+        "restored_snapshot_resource_id": {"type": "string", "pattern": "^projects/toss-trading-core-lab-508411/global/snapshots/[a-z][a-z0-9-]{0,61}[a-z0-9]$"},
+        "restore_succeeded": {"const": true},
+        "database_integrity_check": {"const": "ok"}
+      }
+    },
+    "absenceInventoryBase": {
+      "type": "object",
+      "required": ["artifact_sha256", "source_reference", "project_id", "observed_at", "inspected_surfaces"],
+      "properties": {
+        "artifact_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "source_reference": {"type": "string", "pattern": "^https://[^\\s]+$"},
+        "project_id": {"const": "toss-trading-core-lab-508411"},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "schedulerInventory": {
+      "unevaluatedProperties": false,
+      "allOf": [
+        {"$ref": "#/$defs/absenceInventoryBase"},
+        {
+          "type": "object", "required": ["inspected_surfaces", "active_scheduled_job_count", "active_vm_timer_count"],
+          "properties": {
+            "inspected_surfaces": {"type": "array", "uniqueItems": true, "allOf": [{"contains": {"const": "cloud_scheduler_jobs"}}, {"contains": {"const": "vm_systemd_timers"}}]},
+            "active_scheduled_job_count": {"const": 0},
+            "active_vm_timer_count": {"const": 0}
+          }
+        }
+      ]
+    },
+    "ingressInventory": {
+      "unevaluatedProperties": false,
+      "allOf": [
+        {"$ref": "#/$defs/absenceInventoryBase"},
+        {
+          "type": "object", "required": ["inspected_surfaces", "inbound_firewall_rule_count", "external_ip_count", "listening_socket_count"],
+          "properties": {
+            "inspected_surfaces": {"type": "array", "uniqueItems": true, "allOf": [{"contains": {"const": "project_firewall_rules"}}, {"contains": {"const": "vm_network_interfaces"}}, {"contains": {"const": "vm_listening_sockets"}}]},
+            "inbound_firewall_rule_count": {"const": 0},
+            "external_ip_count": {"const": 0},
+            "listening_socket_count": {"const": 0}
+          }
+        }
+      ]
+    }
+  }
+}
