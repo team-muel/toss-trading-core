@@ -6,3 +6,7 @@ FEDFUNDS,true,approved,monetary_policy_regime,https://fred.stlouisfed.org/series
 CPIAUCSL,true,approved,inflation_regime,https://fred.stlouisfed.org/series/CPIAUCSL,Consumer price index; public domain citation requested reviewed 2026-07-30
 UNRATE,true,approved,employment_regime,https://fred.stlouisfed.org/series/UNRATE,Civilian unemployment rate; public domain citation requested reviewed 2026-07-30
 VIXCLS,false,pending_cboe_copyright_permission,risk_regime,https://fred.stlouisfed.org/series/VIXCLS,CBOE volatility index
+DGS1MO,true,approved,usd_risk_free_1m_input,https://fred.stlouisfed.org/series/DGS1MO,H.15 investment basis percent; public domain citation requested reviewed 2026-10-11; observation input only
+DGS3MO,true,approved,usd_risk_free_3m_input,https://fred.stlouisfed.org/series/DGS3MO,H.15 investment basis percent; public domain citation requested reviewed 2026-10-11; observation input only
+DGS6MO,true,approved,usd_risk_free_6m_input,https://fred.stlouisfed.org/series/DGS6MO,H.15 investment basis percent; public domain citation requested reviewed 2026-10-11; observation input only
+DGS1,true,approved,usd_risk_free_12m_input,https://fred.stlouisfed.org/series/DGS1,H.15 investment basis percent; public domain citation requested reviewed 2026-10-11; observation input only

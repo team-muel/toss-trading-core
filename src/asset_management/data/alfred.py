@@ -18,6 +18,9 @@ SOURCE = "fred-alfred"
 DATASET = "series-observation-revisions"
 SCHEMA_VERSION = "alfred-vintages-v1"
 SERIES = frozenset({"DGS2", "DGS10", "CPIAUCSL", "UNRATE", "FEDFUNDS"})
+# Macro-state requirements retain SERIES; ingestion also accepts these raw tenors.
+TREASURY_SERIES = frozenset({"DGS1MO", "DGS3MO", "DGS6MO", "DGS1"})
+INGESTION_SERIES = SERIES | TREASURY_SERIES
 RAW_SCHEMA = {"observations": "array"}
 ROW_SCHEMA = {
     "provider_entity_id": "string", "observation_date": "string", "value": "string",
@@ -39,7 +42,7 @@ def _day(value: object) -> date:
 
 
 def normalize_vintages(body: object, *, series_id: str, output_type: int) -> list[dict]:
-    if series_id not in SERIES or type(output_type) is not int or output_type not in (1, 3):
+    if series_id not in INGESTION_SERIES or type(output_type) is not int or output_type not in (1, 3):
         raise DataQualityError("ALFRED_REQUEST_CONTRACT_INVALID")
     if not isinstance(body, dict) or not isinstance(body.get("observations"), list):
         raise DataQualityError("ALFRED_OBSERVATIONS_MISSING")
@@ -108,7 +111,7 @@ def ingest_alfred(batch: ProviderBatch, store: ImmutableDatasetStore) -> Ingesti
         raise DataQualityError("ALFRED_REQUEST_CONTRACT_INVALID")
     series_id = request.get("series_id")
     output_type = request.get("output_type", 1)
-    if series_id not in SERIES or type(output_type) is not int or output_type not in (1, 3):
+    if series_id not in INGESTION_SERIES or type(output_type) is not int or output_type not in (1, 3):
         raise DataQualityError("ALFRED_REQUEST_CONTRACT_INVALID")
 
     def normalize(raw):
