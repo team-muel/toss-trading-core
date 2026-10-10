@@ -13,7 +13,6 @@ def audit_receipts(root: Path) -> dict:
     store = ImmutableDatasetStore(root)
     catalog = root / "catalog" / "manifests"
     findings = []
-    counts = Counter()
     manifests = {}
     invalid = set()
     paths = sorted(catalog.glob("*.json"))
@@ -27,7 +26,6 @@ def audit_receipts(root: Path) -> dict:
             invalid.add(path.stem)
             continue
         manifests[path.stem] = manifest
-        counts[manifest.layer] += 1
         # Gold may bind a composite identity. Source request contracts belong
         # to Bronze and are checked there, rather than guessed for derived data.
         if manifest.layer != "bronze":
@@ -38,8 +36,16 @@ def audit_receipts(root: Path) -> dict:
             findings.append({"manifest_id": path.stem, "reason": "REQUEST_RECEIPT_MISSING_OR_CORRUPT"})
             invalid.add(path.stem)
             continue
-        if not isinstance(receipt, dict) or (
-                receipt.get("source"), receipt.get("dataset")) != (
+        if not isinstance(receipt, dict) or not (
+                isinstance(receipt.get("endpoint"), str)
+                and receipt["endpoint"].startswith("/")
+                and isinstance(receipt.get("http_method"), str)
+                and receipt["http_method"] in {"GET", "POST"}
+                and isinstance(receipt.get("request"), dict)):
+            findings.append({"manifest_id": path.stem, "reason": "REQUEST_RECEIPT_CONTRACT_INCOMPLETE"})
+            invalid.add(path.stem)
+            continue
+        if (receipt.get("source"), receipt.get("dataset")) != (
                 manifest.source, manifest.dataset):
             findings.append({"manifest_id": path.stem, "reason": "REQUEST_RECEIPT_SOURCE_MISMATCH"})
             invalid.add(path.stem)
@@ -58,7 +64,8 @@ def audit_receipts(root: Path) -> dict:
         findings.append({"manifest_id": key, "reason": "ANCESTOR_RECEIPT_OR_LINEAGE_INVALID"})
     return {"schema_version": "immutable-receipt-audit-v1",
             "scope": "LOCAL_STORAGE_INTEGRITY_ONLY", "acceptance_evaluated": False,
-            "manifests_scanned": len(paths), "verified_manifests_by_layer": dict(sorted(counts.items())),
+            "manifests_scanned": len(paths), "verified_manifests_by_layer": dict(sorted(Counter(
+                manifest.layer for key, manifest in manifests.items() if key not in blocked).items())),
             "blocked_manifests_by_layer": dict(sorted(Counter(
                 manifests[key].layer for key in blocked if key in manifests).items())),
             "findings": findings}

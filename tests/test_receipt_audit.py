@@ -8,7 +8,8 @@ from asset_management.data.receipt_audit import audit_receipts
 
 def bronze(root):
     store = ImmutableDatasetStore(root, credentials_classified=True)
-    receipt = store.catalog("requests", {"source": "provider", "dataset": "prices"})
+    receipt = store.catalog("requests", {"source": "provider", "dataset": "prices",
+        "endpoint": "/prices", "http_method": "GET", "request": {"symbol": "A"}})
     now = datetime(2026, 10, 10, tzinfo=timezone.utc)
     manifest = store.write([{"value": 1}], layer="bronze", source="provider", dataset="prices",
         schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
@@ -56,4 +57,36 @@ def test_missing_bronze_receipt_blocks_silver_and_gold(tmp_path):
     store.layout.resolve("catalog", f"requests/{parent.request_hash}.json").unlink()
     report = audit_receipts(tmp_path)
     assert report["blocked_manifests_by_layer"] == {"bronze": 1, "gold": 1, "silver": 1}
+    assert report["verified_manifests_by_layer"] == {}
     assert sum(x["reason"] == "ANCESTOR_RECEIPT_OR_LINEAGE_INVALID" for x in report["findings"]) == 2
+
+
+@pytest.mark.parametrize("field,value", [("endpoint", None), ("endpoint", "https://provider"),
+    ("http_method", "DELETE"), ("http_method", []), ("http_method", True), ("request", None), ("request", "symbol=A")])
+def test_incomplete_request_contract_is_blocked(tmp_path, field, value):
+    store, original = bronze(tmp_path)
+    receipt = store.read_catalog("requests", original.request_hash)
+    receipt[field] = value
+    request_hash = store.catalog("requests", receipt)
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    store.write([{"value": 2}], layer="bronze", source="provider", dataset="prices",
+        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag=original.license_tag, code_revision="git:abcdef0",
+        request_hash=request_hash, quality_status="RAW")
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["blocked_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_CONTRACT_INCOMPLETE"
+
+
+def test_source_dataset_only_receipt_is_not_verified(tmp_path):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    request_hash = store.catalog("requests", {"source": "provider", "dataset": "prices"})
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    store.write([{"value": 1}], layer="bronze", source="provider", dataset="prices",
+        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag="purpose=synthetic;redistribution=forbidden;retention=perpetual",
+        code_revision="git:abcdef0", request_hash=request_hash, quality_status="RAW")
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {}
+    assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_CONTRACT_INCOMPLETE"
