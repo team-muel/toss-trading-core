@@ -266,6 +266,8 @@ class ImmutableDatasetStore:
         manifest = StoredDatasetManifest(manifest_id=identifier, **fields)
         if not isinstance(manifest.layer, str) or manifest.layer not in {"bronze", "silver", "gold"}:
             raise ValueError("INVALID_LAYER")
+        if (manifest.layer == "bronze") != (not manifest.parent_manifest_ids):
+            raise ValueError("MISSING_OR_INVALID_LINEAGE")
         return manifest
 
     def read(self, identifier: str) -> tuple[StoredDatasetManifest, object]:
@@ -274,7 +276,10 @@ class ImmutableDatasetStore:
         if digest(content) != manifest.content_sha256:
             raise ValueError("CONTENT_HASH_MISMATCH")
         for parent in manifest.parent_manifest_ids:
-            self.read(parent)
+            parent_manifest, _ = self.read(parent)
+            levels = {"bronze": 0, "silver": 1, "gold": 2}
+            if levels[parent_manifest.layer] >= levels[manifest.layer]:
+                raise ValueError("INVALID_LINEAGE_LAYER")
         return manifest, json.loads(content)
 
 
