@@ -18,6 +18,20 @@ def admit_captured_tiingo_response(store: ImmutableDatasetStore, response_id: st
         raise ValueError("CREDENTIALS_NOT_CLASSIFIED")
     if not isinstance(code_revision, str) or not re.fullmatch(r"git:[0-9a-f]{7,40}", code_revision):
         raise ValueError("INVALID_CODE_REVISION")
+    receipt, rows, received, provider = _read_capture(store, response_id)
+    endpoint, request = receipt["endpoint"], receipt["request"]
+    request_hash = store.catalog("requests", {"source": "tiingo-eod", "dataset": "daily-prices",
+        "endpoint": endpoint, "http_method": "GET", "request": request})
+    # The source response identity binds the captured bytes and metadata. This is
+    # a raw collection schema, not a normalized market-price contract.
+    return store.write({"result": rows, "source_response_receipt": response_id},
+        layer="bronze", source="tiingo-eod", dataset="daily-prices",
+        schema_version="tiingo-captured-response-v1", retrieved_at=received,
+        available_at=received, provider_timestamp=provider, license_tag=license_tag,
+        code_revision=code_revision, request_hash=request_hash, quality_status="RAW")
+
+
+def _read_capture(store: ImmutableDatasetStore, response_id: str):
     receipt = store.read_catalog("unadmitted-http-responses", response_id)
     if not isinstance(receipt, dict) or (
         receipt.get("source"), receipt.get("dataset"), receipt.get("http_method"), receipt.get("mode")
@@ -29,6 +43,13 @@ def admit_captured_tiingo_response(store: ImmutableDatasetStore, response_id: st
     request = receipt.get("request")
     if not isinstance(request, dict):
         raise ValueError("TIINGO_REQUEST_INVALID")
+    endpoint_symbol = endpoint.split("/")[3]
+    for identity in (request, request.get("params", {})):
+        if not isinstance(identity, dict):
+            raise ValueError("TIINGO_REQUEST_INVALID")
+        for field in ("symbol", "ticker"):
+            if field in identity and identity[field] != endpoint_symbol:
+                raise ValueError("TIINGO_REQUEST_SYMBOL_CONFLICT")
     if type(receipt.get("status_code")) is not int or receipt["status_code"] != 200:
         raise ValueError("TIINGO_HTTP_ERROR")
     for field in ("body_base64", "body_sha256", "received_at", "http_date"):
@@ -55,12 +76,23 @@ def admit_captured_tiingo_response(store: ImmutableDatasetStore, response_id: st
     provider = provider.astimezone(timezone.utc)
     if provider > received:
         raise ValueError("TIINGO_TIMESTAMP_ORDER_INVALID")
-    request_hash = store.catalog("requests", {"source": "tiingo-eod", "dataset": "daily-prices",
-        "endpoint": endpoint, "http_method": "GET", "request": request})
-    # The source response identity binds the captured bytes and metadata. This is
-    # a raw collection schema, not a normalized market-price contract.
-    return store.write({"result": rows, "source_response_receipt": response_id},
-        layer="bronze", source="tiingo-eod", dataset="daily-prices",
-        schema_version="tiingo-captured-response-v1", retrieved_at=received,
-        available_at=received, provider_timestamp=provider, license_tag=license_tag,
-        code_revision=code_revision, request_hash=request_hash, quality_status="RAW")
+    return receipt, rows, received, provider
+
+
+def validate_captured_tiingo_lineage(store: ImmutableDatasetStore,
+                                    manifest: StoredDatasetManifest, body: object) -> None:
+    """Revalidate the external content-addressed dependency on every read."""
+    if not isinstance(body, dict) or set(body) != {"result", "source_response_receipt"}:
+        raise ValueError("TIINGO_RESPONSE_LINEAGE_INVALID")
+    receipt, rows, received, provider = _read_capture(store, body["source_response_receipt"])
+    request = store.read_catalog("requests", manifest.request_hash)
+    expected_request = {"source":"tiingo-eod", "dataset":"daily-prices",
+        "endpoint":receipt["endpoint"], "http_method":"GET", "request":receipt["request"]}
+    if (request != expected_request or body["result"] != rows
+            or manifest.schema_version != "tiingo-captured-response-v1"
+            or manifest.layer != "bronze" or manifest.source != "tiingo-eod"
+            or manifest.dataset != "daily-prices"
+            or manifest.retrieved_at != received.isoformat()
+            or manifest.available_at != received.isoformat()
+            or manifest.provider_timestamp != provider.isoformat()):
+        raise ValueError("TIINGO_RESPONSE_LINEAGE_CONFLICT")

@@ -68,3 +68,29 @@ def test_decoded_body_echoed_secret_rejected(tmp_path):
     with pytest.raises(ValueError):
         admit(store, identifier)
     assert not list((tmp_path/"bronze").glob("*.json"))
+
+
+@pytest.mark.parametrize("captured_request", [{"symbol":"AAPL"}, {"params":{"ticker":"AAPL"}},
+                                      {"params":{"symbol":None}}, {"params":[]}])
+def test_conflicting_request_symbol_rejected(tmp_path, captured_request):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    with pytest.raises(ValueError):
+        admit(store, capture(store, request=captured_request))
+    assert not list((tmp_path/"bronze").glob("*.json"))
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_later_source_receipt_loss_blocks_read_and_audit(tmp_path, damage):
+    from asset_management.data.receipt_audit import audit_receipts
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    identifier = capture(store); manifest = admit(store, identifier)
+    path = store.layout.resolve("catalog", f"unadmitted-http-responses/{identifier}.json")
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_text("{}")
+    with pytest.raises((ValueError, OSError)):
+        store.read(manifest.manifest_id)
+    report = audit_receipts(tmp_path, secrets=())
+    assert report["verified_manifests_by_layer"] == {}
+    assert report["findings"][0]["reason"] == "MANIFEST_OR_LINEAGE_INVALID"

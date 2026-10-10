@@ -339,6 +339,10 @@ class ImmutableDatasetStore:
         _assert_no_secret(body, self.secrets)
         if dataset_row_count(body) != manifest.row_count:
             raise ValueError("ROW_COUNT_MISMATCH")
+        if (manifest.schema_version == "tiingo-captured-response-v1"
+                or (isinstance(body, dict) and "source_response_receipt" in body)):
+            from .tiingo_ingress import validate_captured_tiingo_lineage
+            validate_captured_tiingo_lineage(self, manifest, body)
         return manifest, body
 
 
