@@ -155,7 +155,6 @@ adjustment semantics, historical availability, session coverage, action PIT,
 reference authority, Silver/Gold acceptance or OOS maturity. HTTP Date is transport
 metadata only. Price publication still requires Phase9 normalization and context.
 
-
 ## Official calendar publication Bronze ingress (AMA-30)
 
 `calendar_ingress.admit_calendar_publication` admits a captured HTTPS response
