@@ -273,6 +273,12 @@ class ImmutableDatasetStore:
         if any(value.tzinfo is None or value.utcoffset() is None
                for value in (received, available, provider)):
             raise ValueError("UNKNOWN_TIMESTAMP")
+        if any(text != value.astimezone(timezone.utc).isoformat()
+               for text, value in zip(values, (received, available, provider))):
+            raise ValueError("NONCANONICAL_UTC_TIMESTAMP")
+        if not isinstance(manifest.license_tag, str):
+            raise ValueError("INVALID_LICENSE_TAG")
+        validate_license_tag(manifest.license_tag)
         if available < received or provider > received:
             raise ValueError("INVALID_TIMESTAMP_ORDER")
         if (manifest.layer == "bronze") != (not manifest.parent_manifest_ids):
@@ -291,6 +297,13 @@ class ImmutableDatasetStore:
                 raise ValueError("INVALID_LINEAGE_LAYER")
             if datetime.fromisoformat(parent_manifest.available_at) > datetime.fromisoformat(manifest.available_at):
                 raise ValueError("PARENT_NOT_AVAILABLE")
+            if manifest.layer != "gold" and (
+                    parent_manifest.source != manifest.source
+                    or parent_manifest.license_tag != manifest.license_tag):
+                raise ValueError("CONFLICTING_SOURCE_OR_LICENSE")
+            if ("redistribution=permitted" in manifest.license_tag
+                    and "redistribution=forbidden" in parent_manifest.license_tag):
+                raise ValueError("COMBINED_LICENSE_WEAKENS_PARENT")
         return manifest, json.loads(content)
 
 

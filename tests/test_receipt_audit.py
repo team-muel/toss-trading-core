@@ -244,3 +244,42 @@ def test_invalid_manifest_timestamp_contract_is_blocked(tmp_path, field, value):
     report = audit_receipts(tmp_path)
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"] == [{"manifest_id": identifier, "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
+
+
+@pytest.mark.parametrize("timestamp", ["2026-10-10T09:00:00+09:00", "2026-10-10T00:00:00Z",
+    "2026-10-10T00:00:00.000000+00:00"])
+def test_noncanonical_utc_manifest_is_blocked(tmp_path, timestamp):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id")
+    for field in ("retrieved_at", "available_at", "provider_timestamp"):
+        fields[field] = timestamp
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"][0]["reason"] == "MANIFEST_OR_LINEAGE_INVALID"
+
+
+@pytest.mark.parametrize("layer,changes,reason", [
+    ("silver", {"source": "other"}, "CONFLICTING_SOURCE_OR_LICENSE"),
+    ("silver", {"license_tag": "purpose=synthetic;redistribution=permitted;retention=perpetual"}, "CONFLICTING_SOURCE_OR_LICENSE"),
+    ("gold", {"license_tag": "purpose=synthetic;redistribution=permitted;retention=perpetual"}, "COMBINED_LICENSE_WEAKENS_PARENT")])
+def test_read_preserves_parent_source_and_license(tmp_path, layer, changes, reason):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, first = bronze(tmp_path)
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    child = store.write([{"value": 1}], layer=layer, source="provider", dataset="prices",
+        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag=first.license_tag, code_revision="git:abcdef0", request_hash=first.request_hash,
+        parent_manifest_ids=(first.manifest_id,))
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{child.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id"); fields.update(changes)
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    with pytest.raises(ValueError, match=reason): store.read(identifier)
+    report = audit_receipts(tmp_path)
+    assert report["blocked_manifests_by_layer"] == {layer: 1}
