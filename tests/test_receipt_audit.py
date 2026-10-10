@@ -477,3 +477,39 @@ def test_cli_missing_secret_env_fails_closed(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("sys.argv", ["audit", "--root", str(tmp_path), "--secret-env", "AUDIT_TEST_CREDENTIAL"])
     assert main() == 1
     assert "CREDENTIAL_CLASSIFICATION_REQUIRED" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("change", [
+    {"license_tag": "purpose=client-secret;redistribution=forbidden;retention=x"},
+    {"retrieved_at": "0001-01-01T00:00:00+23:59"},
+    {"available_at": "9999-12-31T23:59:59-23:59"},
+])
+def test_imported_secret_license_and_overflow_are_contained(tmp_path, change):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id"); fields.update(change)
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    report = audit_receipts(tmp_path, secrets=("client-secret",))
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"] == [{"manifest_id": identifier, "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
+    assert "client-secret" not in str(report)
+
+
+def test_deep_receipt_recursion_is_contained(tmp_path):
+    import sys
+    from asset_management.data.immutable import digest
+    store, first = bronze(tmp_path)
+    raw = b'[' * (sys.getrecursionlimit() + 100) + b'0' + b']' * (sys.getrecursionlimit() + 100)
+    identifier = digest(raw)
+    store._publish(store.layout.resolve("catalog", f"requests/{identifier}.json"), raw)
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    store.write([{"value": 2}], layer="bronze", source="provider", dataset="prices",
+        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag=first.license_tag, code_revision="git:abcdef0", request_hash=identifier,
+        quality_status="RAW")
+    report = audit_receipts(tmp_path, secrets=())
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_MISSING_OR_CORRUPT"

@@ -33,7 +33,7 @@ def audit_receipts(root: Path, *, secrets: tuple[str, ...] | None = None) -> dic
                 invalid.add(path.stem)
                 continue
             store.read(path.stem)
-        except (OSError, ValueError, TypeError, KeyError, RecursionError):
+        except (OSError, ValueError, TypeError, KeyError, RecursionError, OverflowError):
             findings.append({"manifest_id": path.stem, "reason": "MANIFEST_OR_LINEAGE_INVALID"})
             invalid.add(path.stem)
             continue
@@ -43,7 +43,7 @@ def audit_receipts(root: Path, *, secrets: tuple[str, ...] | None = None) -> dic
             continue
         try:
             receipt = store.read_catalog("requests", manifest.request_hash)
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, RecursionError, OverflowError):
             findings.append({"manifest_id": path.stem, "reason": "REQUEST_RECEIPT_MISSING_OR_CORRUPT"})
             invalid.add(path.stem)
             continue

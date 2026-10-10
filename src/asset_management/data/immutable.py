@@ -299,7 +299,8 @@ class ImmutableDatasetStore:
         if any(text != value.astimezone(timezone.utc).isoformat()
                for text, value in zip(values, (received, available, provider))):
             raise ValueError("NONCANONICAL_UTC_TIMESTAMP")
-        if not isinstance(manifest.license_tag, str):
+        if (not isinstance(manifest.license_tag, str)
+                or sanitize(manifest.license_tag, self.secrets) != manifest.license_tag):
             raise ValueError("INVALID_LICENSE_TAG")
         validate_license_tag(manifest.license_tag)
         if available < received or provider > received:
