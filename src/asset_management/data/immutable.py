@@ -310,9 +310,9 @@ class ProviderDatasetAdapter:
             metadata = dict(source=source, dataset=dataset, retrieved_at=retrieved_at,
                             available_at=available_at, provider_timestamp=provider_timestamp,
                             license_tag=license_tag, code_revision=code_revision,
-                            request_hash=digest(canonical(sanitize(
+                            request_hash=self.store.catalog("requests",
                                 dict(source=source, dataset=dataset, endpoint=endpoint,
-                                     http_method=method, request=request), self.store.secrets))))
+                                     http_method=method, request=request)))
             bronze = self.store.write(body, layer="bronze",
                                       schema_version=f"{schema_version}:raw:{raw_schema_hash}",
                                       quality_status="RAW", **metadata)
