@@ -127,3 +127,21 @@ def test_nonobject_manifest_is_reported_without_aborting(tmp_path, invalid_json)
                                   "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
     assert report["verified_manifests_by_layer"] == {}
     assert {str(p): p.read_bytes() for p in tmp_path.rglob("*.json")} == before
+
+
+
+def test_corrupt_bronze_blob_counts_blocked_descendant_layers(tmp_path):
+    store, parent = bronze(tmp_path)
+    first = parent
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    for layer in ("silver", "gold"):
+        parent = store.write([{"value": 1}], layer=layer, source="provider", dataset="prices",
+            schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+            license_tag=parent.license_tag, code_revision="git:abcdef0", request_hash=parent.request_hash,
+            parent_manifest_ids=(parent.manifest_id,))
+    store.layout.resolve("bronze", f"{first.content_sha256}.json").write_text("[]")
+    report = audit_receipts(tmp_path)
+    assert report["blocked_manifests_by_layer"] == {"bronze": 1, "silver": 1, "gold": 1}
+    assert report["verified_manifests_by_layer"] == {}
+    assert report["blocked_manifests_with_unverified_layer"] == 0
+    assert len(report["findings"]) == 3

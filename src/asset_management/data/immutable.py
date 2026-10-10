@@ -248,7 +248,8 @@ class ImmutableDatasetStore:
         self._publish(self.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(asdict(manifest)))
         return manifest
 
-    def read(self, identifier: str) -> tuple[StoredDatasetManifest, object]:
+    def read_manifest(self, identifier: str) -> StoredDatasetManifest:
+        """Verify manifest metadata independently of blobs and parent readability."""
         if not re.fullmatch(r"[0-9a-f]{64}", identifier):
             raise ValueError("INVALID_MANIFEST_ID")
         fields = json.loads(self.layout.resolve("catalog", f"manifests/{identifier}.json").read_bytes())
@@ -258,6 +259,12 @@ class ImmutableDatasetStore:
             raise ValueError("MANIFEST_HASH_MISMATCH")
         fields["parent_manifest_ids"] = tuple(fields["parent_manifest_ids"])
         manifest = StoredDatasetManifest(manifest_id=identifier, **fields)
+        if not isinstance(manifest.layer, str) or manifest.layer not in {"bronze", "silver", "gold"}:
+            raise ValueError("INVALID_LAYER")
+        return manifest
+
+    def read(self, identifier: str) -> tuple[StoredDatasetManifest, object]:
+        manifest = self.read_manifest(identifier)
         content = self.layout.resolve(manifest.layer, f"{manifest.content_sha256}.json").read_bytes()
         if digest(content) != manifest.content_sha256:
             raise ValueError("CONTENT_HASH_MISMATCH")

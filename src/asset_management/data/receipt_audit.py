@@ -20,12 +20,13 @@ def audit_receipts(root: Path) -> dict:
         findings.append({"reason": "MANIFEST_CATALOG_MISSING_OR_EMPTY"})
     for path in paths:
         try:
-            manifest, _ = store.read(path.stem)
+            manifest = store.read_manifest(path.stem)
+            manifests[path.stem] = manifest
+            store.read(path.stem)
         except (OSError, ValueError, TypeError, KeyError, RecursionError):
             findings.append({"manifest_id": path.stem, "reason": "MANIFEST_OR_LINEAGE_INVALID"})
             invalid.add(path.stem)
             continue
-        manifests[path.stem] = manifest
         # Gold may bind a composite identity. Source request contracts belong
         # to Bronze and are checked there, rather than guessed for derived data.
         if manifest.layer != "bronze":
@@ -68,6 +69,7 @@ def audit_receipts(root: Path) -> dict:
                 manifest.layer for key, manifest in manifests.items() if key not in blocked).items())),
             "blocked_manifests_by_layer": dict(sorted(Counter(
                 manifests[key].layer for key in blocked if key in manifests).items())),
+            "blocked_manifests_with_unverified_layer": len(blocked - set(manifests)),
             "findings": findings}
 
 
