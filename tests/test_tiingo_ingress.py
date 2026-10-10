@@ -94,3 +94,28 @@ def test_later_source_receipt_loss_blocks_read_and_audit(tmp_path, damage):
     report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {}
     assert report["findings"][0]["reason"] == "MANIFEST_OR_LINEAGE_INVALID"
+
+
+@pytest.mark.parametrize("field", ["token", "api_key", "Authorization"])
+def test_sensitive_key_echo_never_publishes_unreplayable_bronze(tmp_path, field):
+    import json
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    body = json.dumps([{field:"short-secret"}]).encode()
+    identifier = capture(store, body_base64=base64.b64encode(body).decode(), body_sha256=digest(body))
+    with pytest.raises(ValueError, match="TIINGO_UNREDACTED_RESPONSE"):
+        admit(store, identifier)
+    assert not list((tmp_path/"bronze").glob("*.json"))
+
+
+def test_unrelated_provider_payload_key_remains_readable(tmp_path):
+    from datetime import datetime, timezone
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    now = datetime(2026,10,11,tzinfo=timezone.utc)
+    request = store.catalog("requests", {"source":"other", "dataset":"custom",
+        "endpoint":"/custom", "http_method":"GET", "request":{}})
+    body = {"source_response_receipt":"arbitrary provider field", "value":1}
+    manifest = store.write(body, layer="bronze", source="other", dataset="custom",
+        schema_version="custom-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag="purpose=synthetic;redistribution=forbidden;retention=perpetual",
+        code_revision="git:abcdef0", request_hash=request, quality_status="RAW")
+    assert store.read(manifest.manifest_id)[1] == body

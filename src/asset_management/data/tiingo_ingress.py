@@ -8,7 +8,7 @@ from email.utils import parsedate_to_datetime
 import json
 import re
 
-from .immutable import ImmutableDatasetStore, StoredDatasetManifest, digest, _assert_no_secret
+from .immutable import ImmutableDatasetStore, StoredDatasetManifest, digest, _assert_no_secret, sanitize
 
 
 def admit_captured_tiingo_response(store: ImmutableDatasetStore, response_id: str, *,
@@ -64,6 +64,8 @@ def _read_capture(store: ImmutableDatasetStore, response_id: str):
     rows = json.loads(body)
     if not isinstance(rows, list) or not rows or not all(isinstance(row, dict) for row in rows):
         raise ValueError("TIINGO_BODY_ARRAY_REQUIRED")
+    if sanitize(rows, store.secrets) != rows:
+        raise ValueError("TIINGO_UNREDACTED_RESPONSE")
     _assert_no_secret(rows, store.secrets)
     try:
         received = datetime.fromisoformat(receipt["received_at"])
