@@ -404,3 +404,27 @@ def test_hash_addressed_noncanonical_blob_is_not_verified(tmp_path):
     report = audit_receipts(tmp_path)
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["blocked_manifests_by_layer"] == {"bronze": 1}
+
+
+@pytest.mark.parametrize("layer", ["bronze", "silver", "gold"])
+@pytest.mark.parametrize("unsafe_body", [{"note": "Bearer dummy-private"},
+    {"api_key": "dummy-private"}, {"note": "api-abcdefghijklmnop1234"}])
+def test_imported_unredacted_blob_is_blocked(tmp_path, layer, unsafe_body):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    raw = canonical(unsafe_body); content_hash = digest(raw)
+    store._publish(store.layout.resolve(layer, f"{content_hash}.json"), raw)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id")
+    fields.update(layer=layer, content_sha256=content_hash,
+                  quality_status="RAW" if layer == "bronze" else "VALID",
+                  parent_manifest_ids=[] if layer == "bronze" else [original.manifest_id])
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    with pytest.raises(ValueError, match="UNREDACTED_BLOB_CONTENT|UNCLASSIFIED_SECRET"):
+        store.read(identifier)
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["blocked_manifests_by_layer"] == {layer: 1}
+    assert "dummy-private" not in str(report)

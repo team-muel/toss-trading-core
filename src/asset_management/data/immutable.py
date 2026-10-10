@@ -330,6 +330,9 @@ class ImmutableDatasetStore:
         body = json.loads(content)
         if canonical(body) != content:
             raise ValueError("NONCANONICAL_BLOB_CONTENT")
+        if sanitize(body, self.secrets) != body:
+            raise ValueError("UNREDACTED_BLOB_CONTENT")
+        _assert_no_secret(body, self.secrets)
         if dataset_row_count(body) != manifest.row_count:
             raise ValueError("ROW_COUNT_MISMATCH")
         return manifest, body
