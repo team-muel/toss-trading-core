@@ -283,3 +283,23 @@ def test_read_preserves_parent_source_and_license(tmp_path, layer, changes, reas
     with pytest.raises(ValueError, match=reason): store.read(identifier)
     report = audit_receipts(tmp_path)
     assert report["blocked_manifests_by_layer"] == {layer: 1}
+
+
+@pytest.mark.parametrize("raw_receipt", [
+    b'{"source":"other","source":"provider","dataset":"prices","endpoint":"/prices","http_method":"GET","request":{}}',
+    b'{"dataset":"prices","endpoint":"/prices","http_method":"GET","request":{"symbol":"B","symbol":"A"},"source":"provider"}',
+    b'{ "dataset": "prices", "endpoint": "/prices", "http_method": "GET", "request": {}, "source": "provider" }'])
+def test_noncanonical_receipt_bytes_are_blocked(tmp_path, raw_receipt):
+    from asset_management.data.immutable import digest
+    store, first = bronze(tmp_path)
+    identifier = digest(raw_receipt)
+    store._publish(store.layout.resolve("catalog", f"requests/{identifier}.json"), raw_receipt)
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    store.write([{"value": 2}], layer="bronze", source="provider", dataset="prices",
+        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag=first.license_tag, code_revision="git:abcdef0", request_hash=identifier,
+        quality_status="RAW")
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["blocked_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_MISSING_OR_CORRUPT"

@@ -187,7 +187,10 @@ class ImmutableDatasetStore:
         content = self.layout.resolve("catalog", f"{kind}/{identifier}.json").read_bytes()
         if digest(content) != identifier:
             raise ValueError("CATALOG_HASH_MISMATCH")
-        return json.loads(content)
+        value = json.loads(content)
+        if canonical(value) != content:
+            raise ValueError("NONCANONICAL_CATALOG_CONTENT")
+        return value
 
     def write(self, body: object, *, layer: str, source: str, dataset: str,
               schema_version: str, retrieved_at: datetime, available_at: datetime,
