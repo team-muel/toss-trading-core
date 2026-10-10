@@ -344,6 +344,11 @@ class ImmutableDatasetStore:
                 and manifest.layer == "bronze"):
             from .tiingo_ingress import validate_captured_tiingo_lineage
             validate_captured_tiingo_lineage(self, manifest, body)
+        if (manifest.schema_version == "official-calendar-publication-v1"
+                and manifest.source == "official-exchange-calendar"
+                and manifest.dataset == "calendar-publication" and manifest.layer == "bronze"):
+            from .calendar_ingress import validate_calendar_publication_lineage
+            validate_calendar_publication_lineage(self, manifest, body)
         return manifest, body
 
 

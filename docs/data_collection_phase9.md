@@ -154,3 +154,20 @@ deduplicate. This helper does not fetch data or assert permissions, market close
 adjustment semantics, historical availability, session coverage, action PIT,
 reference authority, Silver/Gold acceptance or OOS maturity. HTTP Date is transport
 metadata only. Price publication still requires Phase9 normalization and context.
+
+## Official calendar publication Bronze ingress (AMA-30)
+
+`calendar_ingress.admit_calendar_publication` admits a captured HTTPS response
+from an explicit NYSE/Nasdaq/ICE host to `calendar-publication` Bronze only.
+Credential classification is mandatory, including for public binary documents.
+Request URL, final URL, HTTP200, decoded body hash, PDF/HTML envelope and aware
+transport timestamps are checked. The caller must supply the applicable
+structured license and Git revision; this helper grants no source rights.
+Known credential byte echoes and recognizable token patterns are rejected.
+It is not a PDF content sanitizer or a review of embedded document rights.
+
+Later reads and receipt audits follow the captured response dependency and
+revalidate request/body/timestamp equality. Source loss fails closed. Availability
+remains actual receipt time. HTTP Date is transport metadata, not publication
+time. The helper derives no sessions, weekday lists, exceptional-closure coverage,
+market close, historical availability, Silver/Gold acceptance or OOS maturity.
