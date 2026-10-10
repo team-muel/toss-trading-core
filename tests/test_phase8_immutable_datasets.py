@@ -280,3 +280,13 @@ def test_request_receipt_publication_failure_blocks_ingestion(tmp_path, monkeypa
     assert result.reason_code == "RAW_STORAGE_FAILED"
     assert result.bronze_manifest_id is None and result.silver_manifest_id is None
     assert "private-provider-detail" not in "".join(p.read_text() for p in tmp_path.rglob("*.json"))
+
+
+@pytest.mark.parametrize("request", [None, [], "symbol=A", 123, True])
+def test_invalid_request_shape_cannot_publish_unverifiable_data(tmp_path, request):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    result = ProviderDatasetAdapter(store).ingest(**(kwargs() | {"request": request}))
+    assert result.status == "NO_TRADE"
+    assert result.reason_code == "INVALID_REQUEST_IDENTITY"
+    assert result.bronze_manifest_id is None and result.silver_manifest_id is None
+    assert not list((tmp_path / "catalog" / "requests").glob("*.json"))

@@ -303,7 +303,8 @@ class ProviderDatasetAdapter:
                 raise ValueError("CREDENTIALS_NOT_CLASSIFIED")
             reason = "INVALID_REQUEST_IDENTITY"
             method = http_method.upper()
-            if method not in {"GET", "POST"} or not endpoint.startswith("/"):
+            if (method not in {"GET", "POST"} or not isinstance(endpoint, str)
+                    or not endpoint.startswith("/") or not isinstance(request, dict)):
                 raise ValueError("INVALID_REQUEST_IDENTITY")
             reason = "INVALID_CODE_REVISION"
             if not re.fullmatch(r"git:[0-9a-f]{7,40}", code_revision):
