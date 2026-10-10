@@ -1,8 +1,8 @@
 {
   "schema_version": "toss-openapi-contract-review-v2",
-  "approved_at": "2026-09-14",
-  "approved_version": "1.2.17",
-  "approved_sha256": "791082da4cb379117ed9fdc29a45bd42746f7a1aec368da1e9f4e1f3bfbff5b4",
+  "approved_at": "2026-10-10",
+  "approved_version": "1.2.24",
+  "approved_sha256": "7e753c21dc4b938d8f9610ce3efd6542783018977cb030e39db5a006f5b59d40",
   "source": "https://openapi.tossinvest.com/openapi-docs/latest/openapi.json",
   "required_operations": {
     "/oauth2/token": ["post"],
@@ -48,7 +48,7 @@
     "/api/v1/orders/{orderId}/modify": ["post"]
   },
   "review_notes": [
-    "2026-10-10: sector GET operations are documented but disabled. Version 1.2.24 schema review is pending; approved 1.2.17 hash remains pinned.",
+    "2026-10-10: current 1.2.24 read-only contract baseline reviewed; 41 operations classified, 101 schema hashes recorded. Sector GETs and all standard/conditional writes remain disabled. See docs/evidence/toss_contract_review_2026-10-10.md. Historical full 1.2.17 document was unavailable; no exhaustive old-to-new compatibility claim.",
     "The 2026-09-14 canonical REST document reports version 1.2.17 and SHA-256 791082da4cb379117ed9fdc29a45bd42746f7a1aec368da1e9f4e1f3bfbff5b4.",
     "The 2026-09-14 fresh fetch leaves all 36 reviewed operations fully classified with no missing, obsolete, duplicated, or unreviewed REST operation reported.",
     "Required operations remain connected read-only endpoints plus OAuth token issuance.",
