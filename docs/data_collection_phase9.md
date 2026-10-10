@@ -171,3 +171,24 @@ revalidate request/body/timestamp equality. Source loss fails closed. Availabili
 remains actual receipt time. HTTP Date is transport metadata, not publication
 time. The helper derives no sessions, weekday lists, exceptional-closure coverage,
 market close, historical availability, Silver/Gold acceptance or OOS maturity.
+
+## AMA-30: ALFRED USD Treasury observation inputs (2026-10-11)
+
+The approved FRED series registry and canonical ALFRED observation ingress now
+include DGS1MO, DGS3MO, DGS6MO and DGS1. Their official series pages identify
+Federal Reserve H.15 investment-basis yields in percent, daily frequency and
+public-domain attribution requirements:
+[DGS1MO](https://fred.stlouisfed.org/series/DGS1MO),
+[DGS3MO](https://fred.stlouisfed.org/series/DGS3MO),
+[DGS6MO](https://fred.stlouisfed.org/series/DGS6MO),
+[DGS1](https://fred.stlouisfed.org/series/DGS1).
+
+These are observation inputs for the existing four-tenor USD curve contract.
+The registry expansion also adds them to the research FRED collector's default
+approved-series acquisition; it does not change credential or service-term gates.
+Canonical ingress keeps provider percent strings, missing-value tombstones,
+date-only vintage bounds, raw lineage and actual retrieval availability.
+The macro-state model still requires its original five series. DTB3 remains a
+separate discount-basis cash-hurdle source; it is not a substitute for DGS3MO.
+No complete curve, intraday publication time, return conversion, runtime evidence
+or OOS acceptance is produced by this observation-ingress change.
