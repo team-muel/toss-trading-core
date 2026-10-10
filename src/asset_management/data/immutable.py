@@ -272,6 +272,8 @@ class ImmutableDatasetStore:
                 not isinstance(parent, str) or not re.fullmatch(r"[0-9a-f]{64}", parent)
                 for parent in parents):
             raise ValueError("INVALID_PARENT_MANIFEST_IDS")
+        if parents != sorted(set(parents)):
+            raise ValueError("NONCANONICAL_PARENT_MANIFEST_IDS")
         fields["parent_manifest_ids"] = tuple(parents)
         manifest = StoredDatasetManifest(manifest_id=identifier, **fields)
         if not isinstance(manifest.layer, str) or manifest.layer not in {"bronze", "silver", "gold"}:

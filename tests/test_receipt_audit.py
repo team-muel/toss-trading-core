@@ -26,6 +26,24 @@ def test_valid_local_storage_is_not_acceptance(tmp_path):
     assert report["manifests_scanned"] == 1
 
 
+@pytest.mark.parametrize("layer", ["silver", "gold"])
+@pytest.mark.parametrize("ordering", ["duplicate", "reversed"])
+def test_imported_noncanonical_parent_ids_are_blocked(tmp_path, layer, ordering):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, parent = bronze(tmp_path)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{parent.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id")
+    parents = ([parent.manifest_id, parent.manifest_id] if ordering == "duplicate"
+               else ["f" * 64, "0" * 64])
+    fields.update(layer=layer, quality_status="VALID", parent_manifest_ids=parents)
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    with pytest.raises(ValueError, match="NONCANONICAL_PARENT_MANIFEST_IDS"):
+        store.read(identifier)
+    assert audit_receipts(tmp_path)["verified_manifests_by_layer"] == {"bronze": 1}
+
+
 @pytest.mark.parametrize("unsafe_request", [{"Authorization": "Bearer synthetic-private-value"},
     {"api_key": "dummy-private"}, {"note": "api-abcdefghijklmnop1234"}])
 def test_imported_credential_receipt_is_blocked(tmp_path, unsafe_request):
