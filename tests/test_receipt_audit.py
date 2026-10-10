@@ -26,6 +26,43 @@ def test_valid_local_storage_is_not_acceptance(tmp_path):
     assert report["manifests_scanned"] == 1
 
 
+@pytest.mark.parametrize("unsafe_request", [{"Authorization": "Bearer synthetic-private-value"},
+    {"api_key": "dummy-private"}, {"note": "api-abcdefghijklmnop1234"}])
+def test_imported_credential_receipt_is_blocked(tmp_path, unsafe_request):
+    from asset_management.data.immutable import canonical, digest
+    store, first = bronze(tmp_path)
+    receipt = {"source": "provider", "dataset": "prices", "endpoint": "/prices",
+               "http_method": "GET", "request": unsafe_request}
+    raw = canonical(receipt); identifier = digest(raw)
+    store._publish(store.layout.resolve("catalog", f"requests/{identifier}.json"), raw)
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    store.write([{"value": 2}], layer="bronze", source="provider", dataset="prices",
+        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag=first.license_tag, code_revision="git:abcdef0", request_hash=identifier,
+        quality_status="RAW")
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_MISSING_OR_CORRUPT"
+    assert "synthetic-private-value" not in str(report)
+
+
+@pytest.mark.parametrize("layer", ["silver", "gold"])
+@pytest.mark.parametrize("invalid_hash", [None, [], "", "a" * 63])
+def test_derived_request_hash_contract_is_revalidated(tmp_path, layer, invalid_hash):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id")
+    fields.update(layer=layer, quality_status="VALID", parent_manifest_ids=[original.manifest_id],
+                  request_hash=invalid_hash)
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    with pytest.raises(ValueError, match="INVALID_REQUEST_HASH"):
+        store.read_manifest(identifier)
+    assert audit_receipts(tmp_path)["verified_manifests_by_layer"] == {"bronze": 1}
+
+
 @pytest.mark.parametrize("damage", ["missing", "corrupt", "blob"])
 def test_audit_reports_damage_without_mutating_store(tmp_path, damage):
     store, manifest = bronze(tmp_path)
@@ -105,15 +142,15 @@ def test_typed_invalid_manifest_request_hash_blocks_descendants(tmp_path, reques
     fields["manifest_id"] = identifier
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
     now = datetime(2026, 10, 10, tzinfo=timezone.utc)
-    store.write([{"value": 2}], layer="silver", source="provider", dataset="prices",
-        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
-        license_tag=original.license_tag, code_revision="git:abcdef0",
-        request_hash=original.request_hash, parent_manifest_ids=(identifier,))
+    with pytest.raises(ValueError, match="INVALID_REQUEST_HASH"):
+        store.write([{"value": 2}], layer="silver", source="provider", dataset="prices",
+            schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+            license_tag=original.license_tag, code_revision="git:abcdef0",
+            request_hash=original.request_hash, parent_manifest_ids=(identifier,))
     report = audit_receipts(tmp_path)
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
-    assert report["blocked_manifests_by_layer"] == {"bronze": 1, "silver": 1}
-    assert {x["reason"] for x in report["findings"]} == {
-        "REQUEST_RECEIPT_MISSING_OR_CORRUPT", "ANCESTOR_RECEIPT_OR_LINEAGE_INVALID"}
+    assert report["blocked_manifests_with_unverified_layer"] == 1
+    assert len(report["findings"]) == 1
 
 
 @pytest.mark.parametrize("invalid_json", ["null", '"invalid"', "123", "true", "[]"])

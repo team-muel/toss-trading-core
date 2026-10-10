@@ -190,6 +190,9 @@ class ImmutableDatasetStore:
         value = json.loads(content)
         if canonical(value) != content:
             raise ValueError("NONCANONICAL_CATALOG_CONTENT")
+        if sanitize(value, self.secrets) != value:
+            raise ValueError("UNREDACTED_CATALOG_CONTENT")
+        _assert_no_secret(value, self.secrets)
         return value
 
     def write(self, body: object, *, layer: str, source: str, dataset: str,
@@ -273,6 +276,9 @@ class ImmutableDatasetStore:
         manifest = StoredDatasetManifest(manifest_id=identifier, **fields)
         if not isinstance(manifest.layer, str) or manifest.layer not in {"bronze", "silver", "gold"}:
             raise ValueError("INVALID_LAYER")
+        if (not isinstance(manifest.request_hash, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest.request_hash)):
+            raise ValueError("INVALID_REQUEST_HASH")
         for value in (manifest.source, manifest.dataset, manifest.schema_version, manifest.code_revision):
             if not isinstance(value, str) or not value.strip() or sanitize(value, self.secrets) != value:
                 raise ValueError("INVALID_METADATA")
