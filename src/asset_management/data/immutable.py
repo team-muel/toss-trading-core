@@ -179,6 +179,15 @@ class ImmutableDatasetStore:
             self._publish_unlocked(path, content)
         return identifier
 
+    def read_catalog(self, kind: str, identifier: str) -> object:
+        """Read a catalog object only when its bytes match its content address."""
+        if not kind or "/" in kind or "\\" in kind or not re.fullmatch(r"[0-9a-f]{64}", identifier):
+            raise ValueError("INVALID_CATALOG_ID")
+        content = self.layout.resolve("catalog", f"{kind}/{identifier}.json").read_bytes()
+        if digest(content) != identifier:
+            raise ValueError("CATALOG_HASH_MISMATCH")
+        return json.loads(content)
+
     def write(self, body: object, *, layer: str, source: str, dataset: str,
               schema_version: str, retrieved_at: datetime, available_at: datetime,
               provider_timestamp: datetime, license_tag: str, code_revision: str,
