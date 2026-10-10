@@ -250,14 +250,19 @@ class ImmutableDatasetStore:
 
     def read_manifest(self, identifier: str) -> StoredDatasetManifest:
         """Verify manifest metadata independently of blobs and parent readability."""
-        if not re.fullmatch(r"[0-9a-f]{64}", identifier):
+        if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{64}", identifier):
             raise ValueError("INVALID_MANIFEST_ID")
         fields = json.loads(self.layout.resolve("catalog", f"manifests/{identifier}.json").read_bytes())
         if not isinstance(fields, dict):
             raise ValueError("MANIFEST_OBJECT_REQUIRED")
         if fields.pop("manifest_id") != identifier or digest(canonical(fields)) != identifier:
             raise ValueError("MANIFEST_HASH_MISMATCH")
-        fields["parent_manifest_ids"] = tuple(fields["parent_manifest_ids"])
+        parents = fields["parent_manifest_ids"]
+        if not isinstance(parents, list) or any(
+                not isinstance(parent, str) or not re.fullmatch(r"[0-9a-f]{64}", parent)
+                for parent in parents):
+            raise ValueError("INVALID_PARENT_MANIFEST_IDS")
+        fields["parent_manifest_ids"] = tuple(parents)
         manifest = StoredDatasetManifest(manifest_id=identifier, **fields)
         if not isinstance(manifest.layer, str) or manifest.layer not in {"bronze", "silver", "gold"}:
             raise ValueError("INVALID_LAYER")

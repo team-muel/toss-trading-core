@@ -145,3 +145,21 @@ def test_corrupt_bronze_blob_counts_blocked_descendant_layers(tmp_path):
     assert report["verified_manifests_by_layer"] == {}
     assert report["blocked_manifests_with_unverified_layer"] == 0
     assert len(report["findings"]) == 3
+
+
+@pytest.mark.parametrize("parents", [[[]], [{}], [None], [123], ["invalid"], None, "invalid"])
+def test_malformed_parent_ids_are_reported_without_propagation_crash(tmp_path, parents):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    path = store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json")
+    fields = json.loads(path.read_bytes())
+    fields.pop("manifest_id")
+    fields["parent_manifest_ids"] = parents
+    identifier = digest(canonical(fields))
+    fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["blocked_manifests_with_unverified_layer"] == 1
+    assert report["findings"] == [{"manifest_id": identifier, "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
