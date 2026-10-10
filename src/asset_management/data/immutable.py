@@ -208,6 +208,7 @@ class ImmutableDatasetStore:
         for value in (source, dataset, schema_version, license_tag, code_revision):
             if not value.strip() or sanitize(value, self.secrets) != value:
                 raise ValueError("INVALID_METADATA")
+        _assert_no_secret((source, dataset, schema_version, license_tag, code_revision), self.secrets)
         validate_license_tag(license_tag)
         if not re.fullmatch(r"[0-9a-f]{64}", request_hash):
             raise ValueError("INVALID_REQUEST_HASH")
@@ -302,6 +303,8 @@ class ImmutableDatasetStore:
         if (not isinstance(manifest.license_tag, str)
                 or sanitize(manifest.license_tag, self.secrets) != manifest.license_tag):
             raise ValueError("INVALID_LICENSE_TAG")
+        _assert_no_secret((manifest.source, manifest.dataset, manifest.schema_version,
+                           manifest.license_tag, manifest.code_revision), self.secrets)
         validate_license_tag(manifest.license_tag)
         if available < received or provider > received:
             raise ValueError("INVALID_TIMESTAMP_ORDER")

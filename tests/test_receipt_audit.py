@@ -513,3 +513,21 @@ def test_deep_receipt_recursion_is_contained(tmp_path):
     report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_MISSING_OR_CORRUPT"
+
+
+@pytest.mark.parametrize("field", ["source", "dataset", "schema_version", "license_tag", "code_revision"])
+def test_builtin_secret_patterns_in_metadata_are_blocked(tmp_path, field):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id")
+    token = "api-abcdefghijklmnop1234"
+    fields[field] = (f"purpose={token};redistribution=forbidden;retention=y"
+                     if field == "license_tag" else token)
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    report = audit_receipts(tmp_path, secrets=())
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"] == [{"manifest_id": identifier, "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
+    assert token not in str(report)
