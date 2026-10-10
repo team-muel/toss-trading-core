@@ -35,6 +35,11 @@
     "/api/v1/trades": ["get"]
   },
   "documented_but_disabled_operations": {
+    "/api/v1/sectors": ["get"],
+    "/api/v1/sectors/rankings": ["get"],
+    "/api/v1/sectors/{sectorId}": ["get"],
+    "/api/v1/sectors/{sectorId}/etfs": ["get"],
+    "/api/v1/sectors/{sectorId}/stocks": ["get"],
     "/api/v1/conditional-orders": ["get", "post"],
     "/api/v1/conditional-orders/{conditionalOrderId}": ["delete", "get"],
     "/api/v1/conditional-orders/{conditionalOrderId}/modify": ["post"],
@@ -43,6 +48,7 @@
     "/api/v1/orders/{orderId}/modify": ["post"]
   },
   "review_notes": [
+    "2026-10-10: sector GET operations are documented but disabled. Version 1.2.24 schema review is pending; approved 1.2.17 hash remains pinned.",
     "The 2026-09-14 canonical REST document reports version 1.2.17 and SHA-256 791082da4cb379117ed9fdc29a45bd42746f7a1aec368da1e9f4e1f3bfbff5b4.",
     "The 2026-09-14 fresh fetch leaves all 36 reviewed operations fully classified with no missing, obsolete, duplicated, or unreviewed REST operation reported.",
     "Required operations remain connected read-only endpoints plus OAuth token issuance.",
