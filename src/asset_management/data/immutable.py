@@ -266,6 +266,15 @@ class ImmutableDatasetStore:
         manifest = StoredDatasetManifest(manifest_id=identifier, **fields)
         if not isinstance(manifest.layer, str) or manifest.layer not in {"bronze", "silver", "gold"}:
             raise ValueError("INVALID_LAYER")
+        values = (manifest.retrieved_at, manifest.available_at, manifest.provider_timestamp)
+        if any(not isinstance(value, str) for value in values):
+            raise ValueError("INVALID_TIMESTAMP_METADATA")
+        received, available, provider = map(datetime.fromisoformat, values)
+        if any(value.tzinfo is None or value.utcoffset() is None
+               for value in (received, available, provider)):
+            raise ValueError("UNKNOWN_TIMESTAMP")
+        if available < received or provider > received:
+            raise ValueError("INVALID_TIMESTAMP_ORDER")
         if (manifest.layer == "bronze") != (not manifest.parent_manifest_ids):
             raise ValueError("MISSING_OR_INVALID_LINEAGE")
         return manifest
@@ -280,6 +289,8 @@ class ImmutableDatasetStore:
             levels = {"bronze": 0, "silver": 1, "gold": 2}
             if levels[parent_manifest.layer] >= levels[manifest.layer]:
                 raise ValueError("INVALID_LINEAGE_LAYER")
+            if datetime.fromisoformat(parent_manifest.available_at) > datetime.fromisoformat(manifest.available_at):
+                raise ValueError("PARENT_NOT_AVAILABLE")
         return manifest, json.loads(content)
 
 

@@ -202,3 +202,45 @@ def test_read_rejects_same_layer_parent(tmp_path):
     report = audit_receipts(tmp_path)
     assert report["verified_manifests_by_layer"] == {"bronze": 1, "silver": 1}
     assert report["blocked_manifests_by_layer"] == {"silver": 1}
+
+
+
+def test_read_rejects_child_available_before_parent(tmp_path):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, first = bronze(tmp_path)
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    child = store.write([{"value": 1}], layer="silver", source="provider", dataset="prices",
+        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag=first.license_tag, code_revision="git:abcdef0", request_hash=first.request_hash,
+        parent_manifest_ids=(first.manifest_id,))
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{child.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id")
+    for key in ("retrieved_at", "available_at", "provider_timestamp"):
+        fields[key] = "2026-10-09T00:00:00+00:00"
+    identifier = digest(canonical(fields))
+    fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    with pytest.raises(ValueError, match="PARENT_NOT_AVAILABLE"):
+        store.read(identifier)
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1, "silver": 1}
+    assert report["blocked_manifests_by_layer"] == {"silver": 1}
+
+
+@pytest.mark.parametrize("field,value", [("available_at", "2026-10-09T00:00:00+00:00"),
+    ("provider_timestamp", "2026-10-11T00:00:00+00:00"),
+    ("retrieved_at", "2026-10-10T00:00:00"), ("available_at", None), ("available_at", "invalid")])
+def test_invalid_manifest_timestamp_contract_is_blocked(tmp_path, field, value):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id")
+    fields[field] = value
+    identifier = digest(canonical(fields))
+    fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"] == [{"manifest_id": identifier, "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
