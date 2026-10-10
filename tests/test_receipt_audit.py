@@ -114,3 +114,16 @@ def test_typed_invalid_manifest_request_hash_blocks_descendants(tmp_path, reques
     assert report["blocked_manifests_by_layer"] == {"bronze": 1, "silver": 1}
     assert {x["reason"] for x in report["findings"]} == {
         "REQUEST_RECEIPT_MISSING_OR_CORRUPT", "ANCESTOR_RECEIPT_OR_LINEAGE_INVALID"}
+
+
+@pytest.mark.parametrize("invalid_json", ["null", '"invalid"', "123", "true", "[]"])
+def test_nonobject_manifest_is_reported_without_aborting(tmp_path, invalid_json):
+    store, manifest = bronze(tmp_path)
+    path = store.layout.resolve("catalog", f"manifests/{manifest.manifest_id}.json")
+    path.write_text(invalid_json)
+    before = {str(p): p.read_bytes() for p in tmp_path.rglob("*.json")}
+    report = audit_receipts(tmp_path)
+    assert report["findings"] == [{"manifest_id": manifest.manifest_id,
+                                  "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
+    assert report["verified_manifests_by_layer"] == {}
+    assert {str(p): p.read_bytes() for p in tmp_path.rglob("*.json")} == before

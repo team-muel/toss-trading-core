@@ -252,6 +252,8 @@ class ImmutableDatasetStore:
         if not re.fullmatch(r"[0-9a-f]{64}", identifier):
             raise ValueError("INVALID_MANIFEST_ID")
         fields = json.loads(self.layout.resolve("catalog", f"manifests/{identifier}.json").read_bytes())
+        if not isinstance(fields, dict):
+            raise ValueError("MANIFEST_OBJECT_REQUIRED")
         if fields.pop("manifest_id") != identifier or digest(canonical(fields)) != identifier:
             raise ValueError("MANIFEST_HASH_MISMATCH")
         fields["parent_manifest_ids"] = tuple(fields["parent_manifest_ids"])
