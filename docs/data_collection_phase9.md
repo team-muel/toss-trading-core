@@ -135,3 +135,22 @@ UNKNOWN 입력은 `ESTIMATE_HISTORY_UNKNOWN`으로 차단한다.
 테스트는 `tests/test_phase9_data_collection.py`에 있으며 각 데이터군의 happy path와
 누락, 시간 역행, unknown history, schema/source conflict, API 오류, 잘못된 수집 순서,
 계좌 DB 의존 금지와 가격 context 계보를 포함한다.
+
+
+## Captured Tiingo response Bronze ingress (AMA-30)
+
+`asset_management.data.tiingo_ingress.admit_captured_tiingo_response` consumes an
+existing content-addressed `unadmitted-http-responses` record in the same store.
+It requires classified credentials, a Tiingo daily-price GET request, RESEARCH
+mode, HTTP 200, a nonempty JSON object array, matching decoded body SHA-256,
+aware receipt time and actual HTTP Date no later than receipt. The caller supplies
+the applicable structured license and exact Git revision. Missing or conflicting
+evidence fails before Bronze publication; time is never clamped or backdated.
+Credentials echoed inside encoded JSON are rejected before publishing.
+
+The request catalog preserves the captured request after credential redaction.
+Bronze retains decoded rows and the source response catalog ID. Identical inputs
+deduplicate. This helper does not fetch data or assert permissions, market close,
+adjustment semantics, historical availability, session coverage, action PIT,
+reference authority, Silver/Gold acceptance or OOS maturity. HTTP Date is transport
+metadata only. Price publication still requires Phase9 normalization and context.
