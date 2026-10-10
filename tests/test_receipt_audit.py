@@ -90,3 +90,27 @@ def test_source_dataset_only_receipt_is_not_verified(tmp_path):
     report = audit_receipts(tmp_path)
     assert report["verified_manifests_by_layer"] == {}
     assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_CONTRACT_INCOMPLETE"
+
+
+@pytest.mark.parametrize("request_hash", [None, [], 123])
+def test_typed_invalid_manifest_request_hash_blocks_descendants(tmp_path, request_hash):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    path = store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json")
+    fields = json.loads(path.read_bytes())
+    fields.pop("manifest_id")
+    fields["request_hash"] = request_hash
+    identifier = digest(canonical(fields))
+    fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    now = datetime(2026, 10, 10, tzinfo=timezone.utc)
+    store.write([{"value": 2}], layer="silver", source="provider", dataset="prices",
+        schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
+        license_tag=original.license_tag, code_revision="git:abcdef0",
+        request_hash=original.request_hash, parent_manifest_ids=(identifier,))
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["blocked_manifests_by_layer"] == {"bronze": 1, "silver": 1}
+    assert {x["reason"] for x in report["findings"]} == {
+        "REQUEST_RECEIPT_MISSING_OR_CORRUPT", "ANCESTOR_RECEIPT_OR_LINEAGE_INVALID"}

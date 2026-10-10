@@ -32,7 +32,7 @@ def audit_receipts(root: Path) -> dict:
             continue
         try:
             receipt = store.read_catalog("requests", manifest.request_hash)
-        except (OSError, ValueError):
+        except (OSError, ValueError, TypeError):
             findings.append({"manifest_id": path.stem, "reason": "REQUEST_RECEIPT_MISSING_OR_CORRUPT"})
             invalid.add(path.stem)
             continue
