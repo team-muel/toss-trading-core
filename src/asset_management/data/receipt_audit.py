@@ -4,15 +4,22 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 import json
+import os
 from pathlib import Path
 
 from .immutable import ImmutableDatasetStore
 
 
-def audit_receipts(root: Path) -> dict:
-    store = ImmutableDatasetStore(root)
+def audit_receipts(root: Path, *, secrets: tuple[str, ...] | None = None) -> dict:
+    """None means unclassified; an explicit empty tuple asserts no credentials."""
+    classified = (isinstance(secrets, tuple)
+                  and all(isinstance(secret, str) and secret.strip() for secret in secrets))
+    store = ImmutableDatasetStore(root, secrets=secrets if classified else (),
+                                  credentials_classified=classified)
     catalog = root / "catalog" / "manifests"
     findings = []
+    if not classified:
+        findings.append({"reason": "CREDENTIAL_CLASSIFICATION_REQUIRED"})
     manifests = {}
     invalid = set()
     paths = sorted(catalog.glob("*.json"))
@@ -22,6 +29,9 @@ def audit_receipts(root: Path) -> dict:
         try:
             manifest = store.read_manifest(path.stem)
             manifests[path.stem] = manifest
+            if not classified:
+                invalid.add(path.stem)
+                continue
             store.read(path.stem)
         except (OSError, ValueError, TypeError, KeyError, RecursionError):
             findings.append({"manifest_id": path.stem, "reason": "MANIFEST_OR_LINEAGE_INVALID"})
@@ -78,8 +88,20 @@ def audit_receipts(root: Path) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
+    classification = parser.add_mutually_exclusive_group()
+    classification.add_argument("--secret-env", action="append", metavar="NAME",
+                                help="Environment variable for each classified credential; repeat as needed")
+    classification.add_argument("--no-credentials", action="store_true",
+                                help="Assert the audited sources use no credentials")
     args = parser.parse_args()
-    report = audit_receipts(args.root)
+    secrets = None
+    if args.no_credentials:
+        secrets = ()
+    elif args.secret_env:
+        values = tuple(os.environ.get(name, "") for name in args.secret_env)
+        if all(value.strip() for value in values):
+            secrets = values
+    report = audit_receipts(args.root, secrets=secrets)
     print(json.dumps(report, sort_keys=True))
     return 1 if report["findings"] else 0
 

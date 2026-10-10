@@ -20,7 +20,7 @@ def bronze(root):
 
 def test_valid_local_storage_is_not_acceptance(tmp_path):
     bronze(tmp_path)
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["findings"] == []
     assert report["acceptance_evaluated"] is False
     assert report["manifests_scanned"] == 1
@@ -41,7 +41,7 @@ def test_imported_noncanonical_parent_ids_are_blocked(tmp_path, layer, ordering)
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
     with pytest.raises(ValueError, match="NONCANONICAL_PARENT_MANIFEST_IDS"):
         store.read(identifier)
-    assert audit_receipts(tmp_path)["verified_manifests_by_layer"] == {"bronze": 1}
+    assert audit_receipts(tmp_path, secrets=())["verified_manifests_by_layer"] == {"bronze": 1}
 
 
 @pytest.mark.parametrize("unsafe_request", [{"Authorization": "Bearer synthetic-private-value"},
@@ -58,7 +58,7 @@ def test_imported_credential_receipt_is_blocked(tmp_path, unsafe_request):
         schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
         license_tag=first.license_tag, code_revision="git:abcdef0", request_hash=identifier,
         quality_status="RAW")
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_MISSING_OR_CORRUPT"
     assert "synthetic-private-value" not in str(report)
@@ -78,7 +78,7 @@ def test_derived_request_hash_contract_is_revalidated(tmp_path, layer, invalid_h
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
     with pytest.raises(ValueError, match="INVALID_REQUEST_HASH"):
         store.read_manifest(identifier)
-    assert audit_receipts(tmp_path)["verified_manifests_by_layer"] == {"bronze": 1}
+    assert audit_receipts(tmp_path, secrets=())["verified_manifests_by_layer"] == {"bronze": 1}
 
 
 @pytest.mark.parametrize("damage", ["missing", "corrupt", "blob"])
@@ -92,13 +92,13 @@ def test_audit_reports_damage_without_mutating_store(tmp_path, damage):
     else:
         store.layout.resolve("bronze", f"{manifest.content_sha256}.json").write_text("[]")
     before = {str(p): p.read_bytes() for p in tmp_path.rglob("*.json")}
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert len(report["findings"]) == 1
     assert {str(p): p.read_bytes() for p in tmp_path.rglob("*.json")} == before
 
 
 def test_missing_store_is_not_a_clean_audit(tmp_path):
-    assert audit_receipts(tmp_path)["findings"][0]["reason"] == "MANIFEST_CATALOG_MISSING_OR_EMPTY"
+    assert audit_receipts(tmp_path, secrets=())["findings"][0]["reason"] == "MANIFEST_CATALOG_MISSING_OR_EMPTY"
 
 
 def test_missing_bronze_receipt_blocks_silver_and_gold(tmp_path):
@@ -110,7 +110,7 @@ def test_missing_bronze_receipt_blocks_silver_and_gold(tmp_path):
             license_tag=parent.license_tag, code_revision="git:abcdef0", request_hash=parent.request_hash,
             parent_manifest_ids=(parent.manifest_id,))
     store.layout.resolve("catalog", f"requests/{parent.request_hash}.json").unlink()
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["blocked_manifests_by_layer"] == {"bronze": 1, "gold": 1, "silver": 1}
     assert report["verified_manifests_by_layer"] == {}
     assert sum(x["reason"] == "ANCESTOR_RECEIPT_OR_LINEAGE_INVALID" for x in report["findings"]) == 2
@@ -128,7 +128,7 @@ def test_incomplete_request_contract_is_blocked(tmp_path, field, value):
         schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
         license_tag=original.license_tag, code_revision="git:abcdef0",
         request_hash=request_hash, quality_status="RAW")
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["blocked_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_CONTRACT_INCOMPLETE"
@@ -142,7 +142,7 @@ def test_source_dataset_only_receipt_is_not_verified(tmp_path):
         schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
         license_tag="purpose=synthetic;redistribution=forbidden;retention=perpetual",
         code_revision="git:abcdef0", request_hash=request_hash, quality_status="RAW")
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {}
     assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_CONTRACT_INCOMPLETE"
 
@@ -165,7 +165,7 @@ def test_typed_invalid_manifest_request_hash_blocks_descendants(tmp_path, reques
             schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
             license_tag=original.license_tag, code_revision="git:abcdef0",
             request_hash=original.request_hash, parent_manifest_ids=(identifier,))
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["blocked_manifests_with_unverified_layer"] == 1
     assert len(report["findings"]) == 1
@@ -177,7 +177,7 @@ def test_nonobject_manifest_is_reported_without_aborting(tmp_path, invalid_json)
     path = store.layout.resolve("catalog", f"manifests/{manifest.manifest_id}.json")
     path.write_text(invalid_json)
     before = {str(p): p.read_bytes() for p in tmp_path.rglob("*.json")}
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["findings"] == [{"manifest_id": manifest.manifest_id,
                                   "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
     assert report["verified_manifests_by_layer"] == {}
@@ -195,7 +195,7 @@ def test_corrupt_bronze_blob_counts_blocked_descendant_layers(tmp_path):
             license_tag=parent.license_tag, code_revision="git:abcdef0", request_hash=parent.request_hash,
             parent_manifest_ids=(parent.manifest_id,))
     store.layout.resolve("bronze", f"{first.content_sha256}.json").write_text("[]")
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["blocked_manifests_by_layer"] == {"bronze": 1, "silver": 1, "gold": 1}
     assert report["verified_manifests_by_layer"] == {}
     assert report["blocked_manifests_with_unverified_layer"] == 0
@@ -214,7 +214,7 @@ def test_malformed_parent_ids_are_reported_without_propagation_crash(tmp_path, p
     identifier = digest(canonical(fields))
     fields["manifest_id"] = identifier
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["blocked_manifests_with_unverified_layer"] == 1
     assert report["findings"] == [{"manifest_id": identifier, "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
@@ -232,7 +232,7 @@ def test_derived_without_parents_is_not_verified(tmp_path, layer):
     fields["manifest_id"] = identifier
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
     store._publish(store.layout.resolve(layer, f"{original.content_sha256}.json"), canonical([{"value": 1}]))
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"] == [{"manifest_id": identifier, "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
 
@@ -254,7 +254,7 @@ def test_read_rejects_same_layer_parent(tmp_path):
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
     with pytest.raises(ValueError, match="INVALID_LINEAGE_LAYER"):
         store.read(identifier)
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1, "silver": 1}
     assert report["blocked_manifests_by_layer"] == {"silver": 1}
 
@@ -278,7 +278,7 @@ def test_read_rejects_child_available_before_parent(tmp_path):
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
     with pytest.raises(ValueError, match="PARENT_NOT_AVAILABLE"):
         store.read(identifier)
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1, "silver": 1}
     assert report["blocked_manifests_by_layer"] == {"silver": 1}
 
@@ -296,7 +296,7 @@ def test_invalid_manifest_timestamp_contract_is_blocked(tmp_path, field, value):
     identifier = digest(canonical(fields))
     fields["manifest_id"] = identifier
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"] == [{"manifest_id": identifier, "reason": "MANIFEST_OR_LINEAGE_INVALID"}]
 
@@ -313,7 +313,7 @@ def test_noncanonical_utc_manifest_is_blocked(tmp_path, timestamp):
         fields[field] = timestamp
     identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"][0]["reason"] == "MANIFEST_OR_LINEAGE_INVALID"
 
@@ -336,7 +336,7 @@ def test_read_preserves_parent_source_and_license(tmp_path, layer, changes, reas
     identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
     with pytest.raises(ValueError, match=reason): store.read(identifier)
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["blocked_manifests_by_layer"] == {layer: 1}
 
 
@@ -354,7 +354,7 @@ def test_noncanonical_receipt_bytes_are_blocked(tmp_path, raw_receipt):
         schema_version="test-v1", retrieved_at=now, available_at=now, provider_timestamp=now,
         license_tag=first.license_tag, code_revision="git:abcdef0", request_hash=identifier,
         quality_status="RAW")
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["blocked_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_MISSING_OR_CORRUPT"
@@ -371,7 +371,7 @@ def test_invalid_manifest_metadata_and_row_count_is_blocked(tmp_path, field, val
     fields.pop("manifest_id"); fields[field] = value
     identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"][0]["reason"] == "MANIFEST_OR_LINEAGE_INVALID"
 
@@ -385,7 +385,7 @@ def test_noncanonical_manifest_bytes_are_blocked(tmp_path, encoding):
     if encoding == "duplicate": content = b'{"source":"other",' + content[1:]
     else: content = json.dumps(json.loads(content), indent=2).encode()
     path.write_bytes(content)
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {}
     assert report["findings"][0]["reason"] == "MANIFEST_OR_LINEAGE_INVALID"
 
@@ -401,7 +401,7 @@ def test_hash_addressed_noncanonical_blob_is_not_verified(tmp_path):
     fields.pop("manifest_id"); fields["content_sha256"] = content_hash
     identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["blocked_manifests_by_layer"] == {"bronze": 1}
 
@@ -424,7 +424,56 @@ def test_imported_unredacted_blob_is_blocked(tmp_path, layer, unsafe_body):
     store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
     with pytest.raises(ValueError, match="UNREDACTED_BLOB_CONTENT|UNCLASSIFIED_SECRET"):
         store.read(identifier)
-    report = audit_receipts(tmp_path)
+    report = audit_receipts(tmp_path, secrets=())
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["blocked_manifests_by_layer"] == {layer: 1}
     assert "dummy-private" not in str(report)
+
+
+def test_unclassified_audit_never_verifies(tmp_path):
+    bronze(tmp_path)
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {}
+    assert report["blocked_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"] == [{"reason": "CREDENTIAL_CLASSIFICATION_REQUIRED"}]
+
+
+@pytest.mark.parametrize("secrets", [("",), ("   ",), ["client-secret"], (123,)])
+def test_invalid_classification_fails_closed(tmp_path, secrets):
+    bronze(tmp_path)
+    assert audit_receipts(tmp_path, secrets=secrets)["verified_manifests_by_layer"] == {}
+
+
+@pytest.mark.parametrize("location", ["blob", "receipt"])
+def test_classified_arbitrary_secret_is_blocked(tmp_path, location):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id")
+    if location == "blob":
+        raw = canonical([{"note": "client-secret"}])
+        identifier = digest(raw)
+        store._publish(store.layout.resolve("bronze", f"{identifier}.json"), raw)
+        fields["content_sha256"] = identifier
+    else:
+        receipt = store.read_catalog("requests", original.request_hash)
+        receipt["request"]["note"] = "client-secret"
+        raw = canonical(receipt); identifier = digest(raw)
+        store._publish(store.layout.resolve("catalog", f"requests/{identifier}.json"), raw)
+        fields["request_hash"] = identifier
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    report = audit_receipts(tmp_path, secrets=("client-secret",))
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert len(report["findings"]) == 1
+    assert "client-secret" not in str(report)
+
+
+def test_cli_missing_secret_env_fails_closed(tmp_path, monkeypatch, capsys):
+    from asset_management.data.receipt_audit import main
+    bronze(tmp_path)
+    monkeypatch.delenv("AUDIT_TEST_CREDENTIAL", raising=False)
+    monkeypatch.setattr("sys.argv", ["audit", "--root", str(tmp_path), "--secret-env", "AUDIT_TEST_CREDENTIAL"])
+    assert main() == 1
+    assert "CREDENTIAL_CLASSIFICATION_REQUIRED" in capsys.readouterr().out
