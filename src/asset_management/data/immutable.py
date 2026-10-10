@@ -255,11 +255,15 @@ class ImmutableDatasetStore:
         """Verify manifest metadata independently of blobs and parent readability."""
         if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{64}", identifier):
             raise ValueError("INVALID_MANIFEST_ID")
-        fields = json.loads(self.layout.resolve("catalog", f"manifests/{identifier}.json").read_bytes())
+        manifest_content = self.layout.resolve("catalog", f"manifests/{identifier}.json").read_bytes()
+        fields = json.loads(manifest_content)
         if not isinstance(fields, dict):
             raise ValueError("MANIFEST_OBJECT_REQUIRED")
+        canonical_manifest = canonical(fields)
         if fields.pop("manifest_id") != identifier or digest(canonical(fields)) != identifier:
             raise ValueError("MANIFEST_HASH_MISMATCH")
+        if canonical_manifest != manifest_content:
+            raise ValueError("NONCANONICAL_MANIFEST_CONTENT")
         parents = fields["parent_manifest_ids"]
         if not isinstance(parents, list) or any(
                 not isinstance(parent, str) or not re.fullmatch(r"[0-9a-f]{64}", parent)
@@ -269,6 +273,14 @@ class ImmutableDatasetStore:
         manifest = StoredDatasetManifest(manifest_id=identifier, **fields)
         if not isinstance(manifest.layer, str) or manifest.layer not in {"bronze", "silver", "gold"}:
             raise ValueError("INVALID_LAYER")
+        for value in (manifest.source, manifest.dataset, manifest.schema_version, manifest.code_revision):
+            if not isinstance(value, str) or not value.strip() or sanitize(value, self.secrets) != value:
+                raise ValueError("INVALID_METADATA")
+        if (not isinstance(manifest.quality_status, str) or manifest.quality_status not in {"RAW", "VALID"}
+                or (manifest.layer != "bronze" and manifest.quality_status != "VALID")):
+            raise ValueError("INVALID_QUALITY")
+        if type(manifest.row_count) is not int or manifest.row_count < 0:
+            raise ValueError("INVALID_ROW_COUNT")
         values = (manifest.retrieved_at, manifest.available_at, manifest.provider_timestamp)
         if any(not isinstance(value, str) for value in values):
             raise ValueError("INVALID_TIMESTAMP_METADATA")
@@ -307,7 +319,12 @@ class ImmutableDatasetStore:
             if ("redistribution=permitted" in manifest.license_tag
                     and "redistribution=forbidden" in parent_manifest.license_tag):
                 raise ValueError("COMBINED_LICENSE_WEAKENS_PARENT")
-        return manifest, json.loads(content)
+        body = json.loads(content)
+        if canonical(body) != content:
+            raise ValueError("NONCANONICAL_BLOB_CONTENT")
+        if dataset_row_count(body) != manifest.row_count:
+            raise ValueError("ROW_COUNT_MISMATCH")
+        return manifest, body
 
 
 @dataclass(frozen=True)

@@ -38,7 +38,9 @@ def audit_receipts(root: Path) -> dict:
             invalid.add(path.stem)
             continue
         if not isinstance(receipt, dict) or not (
-                isinstance(receipt.get("endpoint"), str)
+                all(isinstance(receipt.get(key), str) and receipt[key].strip()
+                    for key in ("source", "dataset"))
+                and isinstance(receipt.get("endpoint"), str)
                 and receipt["endpoint"].startswith("/")
                 and isinstance(receipt.get("http_method"), str)
                 and receipt["http_method"] in {"GET", "POST"}

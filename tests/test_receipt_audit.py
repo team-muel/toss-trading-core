@@ -303,3 +303,49 @@ def test_noncanonical_receipt_bytes_are_blocked(tmp_path, raw_receipt):
     assert report["verified_manifests_by_layer"] == {"bronze": 1}
     assert report["blocked_manifests_by_layer"] == {"bronze": 1}
     assert report["findings"][0]["reason"] == "REQUEST_RECEIPT_MISSING_OR_CORRUPT"
+
+
+@pytest.mark.parametrize("field,value", [("source", None), ("source", ""), ("dataset", []),
+    ("schema_version", ""), ("code_revision", None), ("quality_status", "UNKNOWN"),
+    ("row_count", True), ("row_count", -1), ("row_count", 2)])
+def test_invalid_manifest_metadata_and_row_count_is_blocked(tmp_path, field, value):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id"); fields[field] = value
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["findings"][0]["reason"] == "MANIFEST_OR_LINEAGE_INVALID"
+
+
+@pytest.mark.parametrize("encoding", ["duplicate", "pretty"])
+def test_noncanonical_manifest_bytes_are_blocked(tmp_path, encoding):
+    import json
+    store, original = bronze(tmp_path)
+    path = store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json")
+    content = path.read_bytes()
+    if encoding == "duplicate": content = b'{"source":"other",' + content[1:]
+    else: content = json.dumps(json.loads(content), indent=2).encode()
+    path.write_bytes(content)
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {}
+    assert report["findings"][0]["reason"] == "MANIFEST_OR_LINEAGE_INVALID"
+
+
+def test_hash_addressed_noncanonical_blob_is_not_verified(tmp_path):
+    import json
+    from asset_management.data.immutable import canonical, digest
+    store, original = bronze(tmp_path)
+    raw = b'{"value":1,"value":2}'
+    content_hash = digest(raw)
+    store._publish(store.layout.resolve("bronze", f"{content_hash}.json"), raw)
+    fields = json.loads(store.layout.resolve("catalog", f"manifests/{original.manifest_id}.json").read_bytes())
+    fields.pop("manifest_id"); fields["content_sha256"] = content_hash
+    identifier = digest(canonical(fields)); fields["manifest_id"] = identifier
+    store._publish(store.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(fields))
+    report = audit_receipts(tmp_path)
+    assert report["verified_manifests_by_layer"] == {"bronze": 1}
+    assert report["blocked_manifests_by_layer"] == {"bronze": 1}
