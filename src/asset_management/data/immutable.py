@@ -179,6 +179,22 @@ class ImmutableDatasetStore:
             self._publish_unlocked(path, content)
         return identifier
 
+    def read_catalog(self, kind: str, identifier: str) -> object:
+        """Read a catalog object only when its bytes match its content address."""
+        if (not isinstance(kind, str) or not kind or "/" in kind or "\\" in kind
+                or not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{64}", identifier)):
+            raise ValueError("INVALID_CATALOG_ID")
+        content = self.layout.resolve("catalog", f"{kind}/{identifier}.json").read_bytes()
+        if digest(content) != identifier:
+            raise ValueError("CATALOG_HASH_MISMATCH")
+        value = json.loads(content)
+        if canonical(value) != content:
+            raise ValueError("NONCANONICAL_CATALOG_CONTENT")
+        if sanitize(value, self.secrets) != value:
+            raise ValueError("UNREDACTED_CATALOG_CONTENT")
+        _assert_no_secret(value, self.secrets)
+        return value
+
     def write(self, body: object, *, layer: str, source: str, dataset: str,
               schema_version: str, retrieved_at: datetime, available_at: datetime,
               provider_timestamp: datetime, license_tag: str, code_revision: str,
@@ -192,6 +208,7 @@ class ImmutableDatasetStore:
         for value in (source, dataset, schema_version, license_tag, code_revision):
             if not value.strip() or sanitize(value, self.secrets) != value:
                 raise ValueError("INVALID_METADATA")
+        _assert_no_secret((source, dataset, schema_version, license_tag, code_revision), self.secrets)
         validate_license_tag(license_tag)
         if not re.fullmatch(r"[0-9a-f]{64}", request_hash):
             raise ValueError("INVALID_REQUEST_HASH")
@@ -238,20 +255,91 @@ class ImmutableDatasetStore:
         self._publish(self.layout.resolve("catalog", f"manifests/{identifier}.json"), canonical(asdict(manifest)))
         return manifest
 
-    def read(self, identifier: str) -> tuple[StoredDatasetManifest, object]:
-        if not re.fullmatch(r"[0-9a-f]{64}", identifier):
+    def read_manifest(self, identifier: str) -> StoredDatasetManifest:
+        """Verify manifest metadata independently of blobs and parent readability."""
+        if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{64}", identifier):
             raise ValueError("INVALID_MANIFEST_ID")
-        fields = json.loads(self.layout.resolve("catalog", f"manifests/{identifier}.json").read_bytes())
+        manifest_content = self.layout.resolve("catalog", f"manifests/{identifier}.json").read_bytes()
+        fields = json.loads(manifest_content)
+        if not isinstance(fields, dict):
+            raise ValueError("MANIFEST_OBJECT_REQUIRED")
+        canonical_manifest = canonical(fields)
         if fields.pop("manifest_id") != identifier or digest(canonical(fields)) != identifier:
             raise ValueError("MANIFEST_HASH_MISMATCH")
-        fields["parent_manifest_ids"] = tuple(fields["parent_manifest_ids"])
+        if canonical_manifest != manifest_content:
+            raise ValueError("NONCANONICAL_MANIFEST_CONTENT")
+        parents = fields["parent_manifest_ids"]
+        if not isinstance(parents, list) or any(
+                not isinstance(parent, str) or not re.fullmatch(r"[0-9a-f]{64}", parent)
+                for parent in parents):
+            raise ValueError("INVALID_PARENT_MANIFEST_IDS")
+        if parents != sorted(set(parents)):
+            raise ValueError("NONCANONICAL_PARENT_MANIFEST_IDS")
+        fields["parent_manifest_ids"] = tuple(parents)
         manifest = StoredDatasetManifest(manifest_id=identifier, **fields)
+        if not isinstance(manifest.layer, str) or manifest.layer not in {"bronze", "silver", "gold"}:
+            raise ValueError("INVALID_LAYER")
+        if (not isinstance(manifest.request_hash, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", manifest.request_hash)):
+            raise ValueError("INVALID_REQUEST_HASH")
+        for value in (manifest.source, manifest.dataset, manifest.schema_version, manifest.code_revision):
+            if not isinstance(value, str) or not value.strip() or sanitize(value, self.secrets) != value:
+                raise ValueError("INVALID_METADATA")
+        if (not isinstance(manifest.quality_status, str) or manifest.quality_status not in {"RAW", "VALID"}
+                or (manifest.layer != "bronze" and manifest.quality_status != "VALID")):
+            raise ValueError("INVALID_QUALITY")
+        if type(manifest.row_count) is not int or manifest.row_count < 0:
+            raise ValueError("INVALID_ROW_COUNT")
+        values = (manifest.retrieved_at, manifest.available_at, manifest.provider_timestamp)
+        if any(not isinstance(value, str) for value in values):
+            raise ValueError("INVALID_TIMESTAMP_METADATA")
+        received, available, provider = map(datetime.fromisoformat, values)
+        if any(value.tzinfo is None or value.utcoffset() is None
+               for value in (received, available, provider)):
+            raise ValueError("UNKNOWN_TIMESTAMP")
+        if any(text != value.astimezone(timezone.utc).isoformat()
+               for text, value in zip(values, (received, available, provider))):
+            raise ValueError("NONCANONICAL_UTC_TIMESTAMP")
+        if (not isinstance(manifest.license_tag, str)
+                or sanitize(manifest.license_tag, self.secrets) != manifest.license_tag):
+            raise ValueError("INVALID_LICENSE_TAG")
+        _assert_no_secret((manifest.source, manifest.dataset, manifest.schema_version,
+                           manifest.license_tag, manifest.code_revision), self.secrets)
+        validate_license_tag(manifest.license_tag)
+        if available < received or provider > received:
+            raise ValueError("INVALID_TIMESTAMP_ORDER")
+        if (manifest.layer == "bronze") != (not manifest.parent_manifest_ids):
+            raise ValueError("MISSING_OR_INVALID_LINEAGE")
+        return manifest
+
+    def read(self, identifier: str) -> tuple[StoredDatasetManifest, object]:
+        manifest = self.read_manifest(identifier)
         content = self.layout.resolve(manifest.layer, f"{manifest.content_sha256}.json").read_bytes()
         if digest(content) != manifest.content_sha256:
             raise ValueError("CONTENT_HASH_MISMATCH")
         for parent in manifest.parent_manifest_ids:
-            self.read(parent)
-        return manifest, json.loads(content)
+            parent_manifest, _ = self.read(parent)
+            levels = {"bronze": 0, "silver": 1, "gold": 2}
+            if levels[parent_manifest.layer] >= levels[manifest.layer]:
+                raise ValueError("INVALID_LINEAGE_LAYER")
+            if datetime.fromisoformat(parent_manifest.available_at) > datetime.fromisoformat(manifest.available_at):
+                raise ValueError("PARENT_NOT_AVAILABLE")
+            if manifest.layer != "gold" and (
+                    parent_manifest.source != manifest.source
+                    or parent_manifest.license_tag != manifest.license_tag):
+                raise ValueError("CONFLICTING_SOURCE_OR_LICENSE")
+            if ("redistribution=permitted" in manifest.license_tag
+                    and "redistribution=forbidden" in parent_manifest.license_tag):
+                raise ValueError("COMBINED_LICENSE_WEAKENS_PARENT")
+        body = json.loads(content)
+        if canonical(body) != content:
+            raise ValueError("NONCANONICAL_BLOB_CONTENT")
+        if sanitize(body, self.secrets) != body:
+            raise ValueError("UNREDACTED_BLOB_CONTENT")
+        _assert_no_secret(body, self.secrets)
+        if dataset_row_count(body) != manifest.row_count:
+            raise ValueError("ROW_COUNT_MISMATCH")
+        return manifest, body
 
 
 @dataclass(frozen=True)
@@ -291,7 +379,8 @@ class ProviderDatasetAdapter:
                 raise ValueError("CREDENTIALS_NOT_CLASSIFIED")
             reason = "INVALID_REQUEST_IDENTITY"
             method = http_method.upper()
-            if method not in {"GET", "POST"} or not endpoint.startswith("/"):
+            if (method not in {"GET", "POST"} or not isinstance(endpoint, str)
+                    or not endpoint.startswith("/") or not isinstance(request, dict)):
                 raise ValueError("INVALID_REQUEST_IDENTITY")
             reason = "INVALID_CODE_REVISION"
             if not re.fullmatch(r"git:[0-9a-f]{7,40}", code_revision):
@@ -301,9 +390,9 @@ class ProviderDatasetAdapter:
             metadata = dict(source=source, dataset=dataset, retrieved_at=retrieved_at,
                             available_at=available_at, provider_timestamp=provider_timestamp,
                             license_tag=license_tag, code_revision=code_revision,
-                            request_hash=digest(canonical(sanitize(
+                            request_hash=self.store.catalog("requests",
                                 dict(source=source, dataset=dataset, endpoint=endpoint,
-                                     http_method=method, request=request), self.store.secrets))))
+                                     http_method=method, request=request)))
             bronze = self.store.write(body, layer="bronze",
                                       schema_version=f"{schema_version}:raw:{raw_schema_hash}",
                                       quality_status="RAW", **metadata)
