@@ -11,6 +11,16 @@ from .immutable import ImmutableDatasetStore, StoredDatasetManifest, digest, _as
 
 SCHEMA = "official-calendar-publication-v1"
 HOSTS = frozenset({"www.nyse.com", "www.nasdaq.com", "www.nasdaqtrader.com", "ir.theice.com"})
+PUBLICATIONS = {
+    "nyse-current-calendar": "https://www.nyse.com/trade/hours-calendars",
+    "nasdaq-current-calendar": "https://www.nasdaq.com/market-activity/stock-market-holiday-schedule",
+    "nasdaq-carter-exception": "https://www.nasdaqtrader.com/TraderNews.aspx?id=ETA2024-87",
+    "nyse-2021-release": "https://ir.theice.com/press/news-details/2020/NYSE-Group-Announces-2021-2022-and-2023-Holiday-and-Early-Closings-Calendar/default.aspx",
+    **{f"nyse-{year}-calendar": f"https://www.nyse.com/publicdocs/ICE_NYSE_{year}_Yearly_Trading_Calendar.pdf"
+       for year in range(2022, 2026)},
+    **{f"nasdaq-{year}-calendar": f"https://www.nasdaqtrader.com/content/technicalsupport/{year}tradingcalendar.pdf"
+       for year in range(2021, 2026)},
+}
 
 
 def _url(value: object):
@@ -30,10 +40,14 @@ def _capture(store: ImmutableDatasetStore, identifier: str):
             or type(receipt.get("status_code")) is not int or receipt["status_code"] != 200):
         raise ValueError("CALENDAR_CAPTURE_INVALID")
     endpoint = _url(receipt.get("endpoint"))
+    if PUBLICATIONS.get(receipt["dataset"]) != receipt["endpoint"]:
+        raise ValueError("CALENDAR_PUBLICATION_IDENTITY_INVALID")
     request = receipt.get("request")
     if not isinstance(request, dict) or request.get("url") != receipt["endpoint"]:
         raise ValueError("CALENDAR_REQUEST_CONFLICT")
     _url(receipt.get("final_url"))
+    if receipt["final_url"] != receipt["endpoint"]:
+        raise ValueError("CALENDAR_PUBLICATION_REDIRECT_INVALID")
     if not isinstance(receipt.get("body_base64"), str):
         raise ValueError("CALENDAR_BODY_REQUIRED")
     raw = base64.b64decode(receipt["body_base64"], validate=True)

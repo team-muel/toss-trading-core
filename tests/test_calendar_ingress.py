@@ -8,8 +8,8 @@ from asset_management.data.calendar_ingress import admit_calendar_publication
 
 def capture(store, **changes):
     raw=b"%PDF-1.4 public-calendar"
-    url="https://www.nyse.com/publicdocs/calendar.pdf"
-    value={"source":"official-exchange-calendar", "dataset":"nyse-calendar",
+    url="https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf"
+    value={"source":"official-exchange-calendar", "dataset":"nyse-2025-calendar",
         "mode":"RESEARCH", "http_method":"GET", "status_code":200,
         "endpoint":url, "final_url":url, "request":{"url":url}, "body_base64":base64.b64encode(raw).decode(),
         "body_sha256":digest(raw), "received_at":"2026-10-11T00:00:01+00:00",
@@ -64,3 +64,22 @@ def test_credential_echo_in_document_rejected(tmp_path):
 def test_unclassified_binary_source_rejected(tmp_path):
     store=ImmutableDatasetStore(tmp_path)
     with pytest.raises(ValueError,match="CREDENTIALS_NOT_CLASSIFIED"):admit(store,capture(store))
+
+
+@pytest.mark.parametrize("dataset,url", [
+    ("privacy-policy", "https://www.nyse.com/privacy-policy"),
+    ("nyse-2025-calendar", "https://www.nyse.com/privacy-policy"),
+    ("nasdaq-2025-calendar", "https://www.nyse.com/publicdocs/ICE_NYSE_2025_Yearly_Trading_Calendar.pdf"),
+])
+def test_unrelated_publication_identity_rejected(tmp_path,dataset,url):
+    store=ImmutableDatasetStore(tmp_path,credentials_classified=True)
+    identifier=capture(store,dataset=dataset,endpoint=url,final_url=url,request={"url":url})
+    with pytest.raises(ValueError,match="CALENDAR_PUBLICATION_IDENTITY_INVALID"):admit(store,identifier)
+    assert not list((tmp_path/"bronze").glob("*.json"))
+
+
+def test_redirect_to_unrelated_official_document_rejected(tmp_path):
+    store=ImmutableDatasetStore(tmp_path,credentials_classified=True)
+    identifier=capture(store,final_url="https://www.nyse.com/privacy-policy")
+    with pytest.raises(ValueError,match="CALENDAR_PUBLICATION_REDIRECT_INVALID"):admit(store,identifier)
+    assert not list((tmp_path/"bronze").glob("*.json"))
