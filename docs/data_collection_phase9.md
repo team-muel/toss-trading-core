@@ -224,3 +224,43 @@ preserved through the shared replay helper.
 distinguishes these par yields from effective annual yields and zero-coupon rates.
 This snapshot performs no return conversion, maturity-to-business-day conversion
 or pricing/runtime activation. A separate governed methodology is still required.
+
+## AMA-30: captured ALFRED response lineage
+
+`ingest_captured_alfred_response` consumes a preserved `unadmitted-http-responses`
+catalog identity for the exact official observations API, GET, RESEARCH, HTTP200.
+It verifies decoded-byte SHA256, JSON request/response output type and linear units,
+classified credentials, and aware HTTP Date/actual receipt timestamps. Duplicate
+JSON keys, sensitive response fields, conflicting identity or missing metadata
+are rejected before admission. An incomplete page remains raw and cannot create
+Silver. No request receipt or historical availability is synthesized.
+Request/response realtime and observation ranges, pagination, file type, units,
+output type and sort order must agree, including the documented observation/page
+defaults. Real-time request bounds must be explicit. Optional transformations or
+vintage-date parameters require an identical response echo; absent echoes fail
+closed. Unknown query parameters are unsupported. Query rules follow the
+[official observations API contract](https://fred.stlouisfed.org/docs/api/fred/series_observations.html).
+
+The existing ProviderDatasetAdapter emits version `alfred-captured-vintages-v1`,
+whose Bronze binds the original response receipt and whose Silver preserves the
+existing row semantics and mapping. Every Bronze/Silver read revalidates captured
+bytes, the request and transport times; Silver also recomputes normalized rows.
+Missing or corrupted source receipts block descendants and receipt audits.
+Macro-state and Treasury snapshots consume this version through their existing
+shared replay helper. Their required inputs, date-selection policies, tombstones
+and authority boundaries remain unchanged.
+Captured consumers must supply the selected vintage date. Macro-state uses its
+existing lag policy to select that date; shared replay checks explicit query and
+response coverage and requires the vintage day to have closed before receipt.
+An open final row interval cannot authorize dates beyond the captured envelope.
+Output-type3 vintage columns must lie within that envelope; output-type1 intervals
+must intersect it, and observations must lie within its observation range. Raw
+intervals are preserved, never silently extended or relabeled as new revisions.
+
+The older `alfred-vintages-v1` decoded-batch contract remains readable under its
+original semantics; it does not carry this transport dependency and is not
+retroactively relabeled as captured evidence. New real-response admission uses
+the captured contract. Both versions remain research inputs: HTTP Date is
+transport metadata, not an economic publication instant. There is no pricing,
+runtime, maturity/OOS, source-rights or live promotion. Reverting this ingress and
+read dispatch stops new captured admission; preserve all immutable source data.

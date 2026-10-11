@@ -339,6 +339,14 @@ class ImmutableDatasetStore:
         _assert_no_secret(body, self.secrets)
         if dataset_row_count(body) != manifest.row_count:
             raise ValueError("ROW_COUNT_MISMATCH")
+        if manifest.source == "fred-alfred" and manifest.dataset == "series-observation-revisions":
+            from .alfred import ROW_SCHEMA
+            from .alfred_ingress import SCHEMA_VERSION as capture_version, RAW_SCHEMA as capture_raw_schema
+            captured_schema = (f"{capture_version}:raw:{digest(canonical(capture_raw_schema))}"
+                               if manifest.layer == "bronze" else f"{capture_version}:{digest(canonical(ROW_SCHEMA))}")
+            if manifest.layer in {"bronze", "silver"} and manifest.schema_version == captured_schema:
+                from .alfred_ingress import validate_captured_alfred_lineage
+                validate_captured_alfred_lineage(self, manifest, body)
         if (manifest.schema_version == "tiingo-captured-response-v1"
                 and manifest.source == "tiingo-eod" and manifest.dataset == "daily-prices"
                 and manifest.layer == "bronze"):
