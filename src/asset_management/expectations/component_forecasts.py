@@ -242,7 +242,7 @@ class ComponentForecastAssembler:
                 not isinstance(currency_basis, CurrencyBasis) or horizon != validity.forecast_horizon or
                 context.run_id.strip() == ""):
             raise DataQualityError("COMPONENT_FORECAST_CONTEXT_INVALID")
-        if validity.valid_until <= context.information_cutoff_utc:
+        if validity.valid_until <= context.as_of_utc:
             raise DataQualityError("COMPONENT_FORECAST_SIGNAL_EXPIRED")
         if asset_class is AssetClass.EQUITY:
             raise DataQualityError("COMPONENT_FORECAST_EQUITY_GROWTH_BASIS_UNSUPPORTED")

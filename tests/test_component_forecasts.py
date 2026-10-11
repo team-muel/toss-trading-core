@@ -33,11 +33,11 @@ MANIFEST = "a" * 64
 
 def repository(*, runtime="run@1", semantic_type="ECONOMIC_COMPONENT_INPUT", fresh_until=None,
                conflicting=False, manifest_runtime="run@1", payload_cutoff=None,
-               duplicate_exposure=False, numeric_observation_ids=False):
+               duplicate_exposure=False, numeric_observation_ids=False, run_as_of=None):
     conn = sqlite3.connect(":memory:")
     Migrator(conn, FrozenClock(NOW)).migrate(load_migration_catalog(ROOT / "schemas"))
     conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
-                 ("run@1", NOW.isoformat(), NOW.isoformat(), "git:test", NOW.isoformat()))
+                 ("run@1", (run_as_of or NOW).isoformat(), NOW.isoformat(), "git:test", NOW.isoformat()))
     if manifest_runtime != "run@1":
         conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
                      (manifest_runtime, NOW.isoformat(), NOW.isoformat(), "git:other", NOW.isoformat()))
@@ -119,6 +119,23 @@ def test_producer_rejects_untyped_or_expired_signal_before_persistence(horizon, 
             context=CONTEXT, instrument_id="SPY", asset_class=AssetClass.EQUITY_ETF,
             currency=Currency.USD, currency_basis=CurrencyBasis.BASE, horizon=horizon,
             validity=validity, model_key="economic@1", runtime_authorization=authorization,
+        )
+    assert tuple(inputs.connection.iterdump()) == before
+
+
+@pytest.mark.parametrize("expiry_offset", [30, 60])
+def test_signal_expiring_between_cutoff_and_as_of_is_not_published(expiry_offset):
+    as_of = NOW + timedelta(seconds=60)
+    inputs, evidence, authorization = repository(run_as_of=as_of)
+    context = AsOfContext("run@1", as_of, NOW, "policy@1", "parameters@1", "git:test")
+    inputs.require_exact_runtime_context(context)
+    before = tuple(inputs.connection.iterdump())
+    with pytest.raises(DataQualityError, match="COMPONENT_FORECAST_SIGNAL_EXPIRED"):
+        ComponentForecastAssembler(inputs, evidence).assemble_gross_forecast(
+            context=context, instrument_id="SPY", asset_class=AssetClass.EQUITY_ETF,
+            currency=Currency.USD, currency_basis=CurrencyBasis.BASE, horizon=252,
+            validity=SignalValidity(252, 252, NOW + timedelta(seconds=expiry_offset), DecayProfile.STEP),
+            model_key="economic@1", runtime_authorization=authorization,
         )
     assert tuple(inputs.connection.iterdump()) == before
 
