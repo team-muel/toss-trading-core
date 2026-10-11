@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, localcontext
 from enum import StrEnum
-from typing import Iterable
+from typing import Iterable, cast
 
 from .errors import DataQualityError, InvariantViolation
 
@@ -62,7 +62,7 @@ class SignalValidity:
             return (duration - elapsed) / duration
         with localcontext() as context:
             context.prec = 34
-            half_life = Decimal(self.half_life_seconds)
+            half_life = Decimal(cast(int, self.half_life_seconds))
             return (-(Decimal(2).ln()) * elapsed / half_life).exp()
 
     def payload(self) -> dict[str, object]:
