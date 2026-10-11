@@ -729,3 +729,56 @@ def test_absence_inventory_consumes_signed_contents(monkeypatch, failure):
             verify_absence_inventories(conn, "canonical-run@1", inventories, instance, clock=FrozenClock(now))
     assert conn.total_changes == before
     conn.close()
+
+
+@pytest.mark.parametrize("failure", [None, "unattested", "report_hash", "snapshot", "disk", "retention", "failed_restore"])
+def test_recovery_observation_requires_signed_bound_snapshot_and_restore(monkeypatch, failure):
+    from scripts.check_application_runtime_deployment_evidence import verify_recovery_observation
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    cutoff = now - timedelta(minutes=30)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", cutoff.isoformat(), cutoff.isoformat(), "git:test", (now - timedelta(hours=5)).isoformat()))
+    attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
+    project = "toss-trading-core-lab-508411"
+    disk_id = f"projects/{project}/zones/asia-northeast3-a/disks/evidence-01"
+    snapshot_id = f"projects/{project}/global/snapshots/evidence-01"
+    report = {"verified_at": now.isoformat(), "restored_snapshot_resource_id": snapshot_id,
+              "restore_succeeded": failure != "failed_restore", "database_integrity_check": "ok"}
+    restore = {**report, "evidence_sha256": "sha256:" + digest(canonical(report)),
+               "evidence_reference": "https://evidence.example/restore/report.json"}
+    snapshot = {"resource_id": snapshot_id, "source_disk_resource_id": disk_id,
+                "retention_policy": {"minimum_retention_days": 30, "immutable_until": (now + timedelta(days=30)).isoformat()},
+                "restore_test": restore}
+    instance = {"resource_id": f"projects/{project}/zones/asia-northeast3-a/instances/runtime-01",
+                "attached_evidence_disk": {"resource_id": disk_id, "backup_snapshot": snapshot}}
+    body = {"project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance["resource_id"],
+            "source_disk_resource_id": disk_id, "snapshot": {key: value for key, value in snapshot.items() if key != "restore_test"},
+            "restore_report": report, "restore_reference": restore["evidence_reference"]}
+    raw = SQLiteRawResponseStore(conn)
+    endpoint = f"recovery://{disk_id}"
+    raw_id = raw.append(source="canonical-operations-recovery", endpoint=endpoint, http_method="GET",
+                        request_payload={}, status_code=200, body=body, requested_at=now, received_at=now,
+                        account_id=None, schema_version="canonical-recovery-export@1")
+    if failure != "unattested":
+        _attest(conn, raw_id, attestor, now)
+    observation = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + raw.verified(raw_id).response_hash,
+                   "source_reference": endpoint, "project_id": project, "observed_at": now.isoformat()}
+    if failure == "report_hash":
+        restore["evidence_sha256"] = "sha256:" + "0" * 64
+    elif failure == "snapshot":
+        snapshot["resource_id"] += "-other"
+    elif failure == "disk":
+        instance["attached_evidence_disk"]["resource_id"] += "-other"
+    elif failure == "retention":
+        snapshot["retention_policy"]["minimum_retention_days"] = 1
+    conn.commit()
+    before = conn.total_changes
+    if failure is None:
+        assert verify_recovery_observation(conn, "canonical-run@1", observation, instance, clock=FrozenClock(now)) == {"recovery_observation": observation}
+    else:
+        with pytest.raises((ValueError, DataQualityError, InvariantViolation)):
+            verify_recovery_observation(conn, "canonical-run@1", observation, instance, clock=FrozenClock(now))
+    assert conn.total_changes == before
+    conn.close()

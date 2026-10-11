@@ -170,6 +170,15 @@ stale export blocks. The existing attestor governance boundary authenticates
 the collector's observation; this checker does not itself inspect the cloud
 or VM. No producer or actual absence proof is created by this plan.
 
+Recovery likewise requires an existing signed raw export identified by
+`recovery://<attached-disk-resource-id>`, an internal collector descriptor.
+Its authenticated body binds project/runtime/instance/disk, snapshot identity
+and retention metadata, and the full restore report. The restore report hash
+is recomputed from its verified-at time, restored snapshot ID, success and
+database integrity fields. A caller's snapshot/reference/hash/success assertion
+without this matching persisted signed content blocks. This verifies the
+governed collector's recovery evidence, not a restore performed by this checker.
+
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as
 an automatic rollback. No retirement command or physical deletion is part of

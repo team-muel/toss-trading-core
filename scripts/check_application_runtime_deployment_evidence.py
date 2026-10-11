@@ -13,7 +13,7 @@ import sqlite3
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-from asset_management.data.immutable import ImmutableDatasetStore
+from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.data.raw_store import SQLiteRawResponseStore
 from asset_management.config.migrations import load_migration_catalog
 from asset_management.domain.errors import AssetManagementError
@@ -117,7 +117,45 @@ def verify_absence_inventories(connection, runtime_run_id, inventories, instance
     return verified
 
 
-def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observations=None, inventories=None, instance_id=None):
+def verify_recovery_observation(connection, runtime_run_id, observation, instance, *, clock=None):
+    """Verify a pre-existing signed snapshot/export and restore report."""
+    now = (clock or SystemClock()).now_utc()
+    row = connection.execute("SELECT information_cutoff_utc FROM am_runtime_run WHERE runtime_run_id=?",
+                             (runtime_run_id,)).fetchone()
+    if row is None:
+        raise ValueError("CANONICAL_D2_RUNTIME_MISSING")
+    registry = require_runtime_attestor_registry(conn=connection, runtime_run_id=runtime_run_id,
+                                                cutoff=_instant(row[0]))
+    response = SQLiteRawResponseStore(connection).verified(observation["raw_response_id"])
+    disk = instance["attached_evidence_disk"]
+    snapshot = disk["backup_snapshot"]
+    restore = snapshot["restore_test"]
+    report = {key: value for key, value in restore.items() if key not in ("evidence_sha256", "evidence_reference")}
+    endpoint = f"recovery://{disk['resource_id']}"
+    expected = {"project_id": observation["project_id"], "runtime_run_id": runtime_run_id,
+                "instance_resource_id": instance["resource_id"], "source_disk_resource_id": disk["resource_id"],
+                "snapshot": {key: value for key, value in snapshot.items() if key != "restore_test"},
+                "restore_report": report, "restore_reference": restore["evidence_reference"]}
+    if (response.source != "canonical-operations-recovery" or response.endpoint != endpoint or
+            response.http_method != "GET" or response.status_code != 200 or
+            response.schema_version != "canonical-recovery-export@1" or
+            observation["source_reference"] != endpoint or
+            observation["artifact_sha256"] != "sha256:" + response.response_hash or
+            _instant(observation["observed_at"]) != response.received_at or
+            response.requested_at > response.received_at or response.received_at > now or
+            now - response.requested_at > MAXIMUM_STATE_AGE or response.body != expected or
+            snapshot["source_disk_resource_id"] != disk["resource_id"] or
+            restore["restored_snapshot_resource_id"] != snapshot["resource_id"] or
+            restore["restore_succeeded"] is not True or restore["database_integrity_check"] != "ok" or
+            restore["evidence_sha256"] != "sha256:" + digest(canonical(report))):
+        raise ValueError("RECOVERY_OBSERVATION_UNVERIFIED")
+    require_external_evidence_attestation(conn=connection, raw_response_id=observation["raw_response_id"],
+                                         response=response, cutoff=now, registry=registry)
+    return {"recovery_observation": dict(observation)}
+
+
+def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observations=None, inventories=None,
+                        instance_id=None, recovery_observation=None, instance=None):
     """Replay, without writes, one existing canonical D2 bundle and return its source lineage."""
     database = Path(database)
     if not database.is_file():
@@ -152,6 +190,8 @@ def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observatio
                                if observations is not None else {})
         if inventories is not None:
             verified_operations.update(verify_absence_inventories(connection, runtime_run_id, inventories, instance_id))
+        if recovery_observation is not None:
+            verified_operations.update(verify_recovery_observation(connection, runtime_run_id, recovery_observation, instance))
         return result, lineage, tuple(row[0] for row in applied), verified_operations
     finally:
         connection.close()
@@ -223,7 +263,7 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
                 errors.append(f"runtime lineage {field} does not match the persisted runtime record")
     if persisted_migrations is None or evidence["migration_versions"] != list(persisted_migrations):
         errors.append("migration_versions must match the authoritative applied migration inventory")
-    for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory"):
+    for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory", "recovery_observation"):
         if persisted_operations is None or persisted_operations.get(name) != evidence[name]:
             errors.append(f"{name} must match an externally attested persisted observation")
 
@@ -239,7 +279,7 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
         restore_at = _instant(restore_test["verified_at"])
         d2_at = _instant(replay["observed_at"])
         inventory_times = [_instant(evidence[name]["observed_at"])
-                           for name in ("scheduler_inventory", "ingress_inventory", "iam_policy_observation", "api_state_observation")]
+                           for name in ("scheduler_inventory", "ingress_inventory", "iam_policy_observation", "api_state_observation", "recovery_observation")]
         immutable_until = _instant(snapshot["retention_policy"]["immutable_until"])
         retention_days = snapshot["retention_policy"]["minimum_retention_days"]
         now = _instant((clock or SystemClock()).now_utc())
@@ -308,7 +348,8 @@ def main(argv=None):
                 args.database, args.immutable_store, evidence["d2_replay"]["runtime_run_id"],
                 observations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation")},
                 inventories={name: evidence[name] for name in ("scheduler_inventory", "ingress_inventory")},
-                instance_id=evidence["runtime_topology"]["instance"]["resource_id"])
+                instance_id=evidence["runtime_topology"]["instance"]["resource_id"],
+                recovery_observation=evidence["recovery_observation"], instance=evidence["runtime_topology"]["instance"])
             errors = validate_evidence(
                 evidence, schema, identity,
                 persisted_d2=persisted_d2,

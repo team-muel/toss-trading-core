@@ -132,6 +132,8 @@ def valid_deployment_evidence():
         "api_state_observation": {"raw_response_id": "api@1", "artifact_sha256": "sha256:" + "e" * 64,
                                   "source_reference": "https://serviceusage.googleapis.com/v1/projects/347216292745/services?filter=state%3AENABLED",
                                   "project_id": project_id, "observed_at": observation},
+        "recovery_observation": {"raw_response_id": "recovery@1", "artifact_sha256": "sha256:" + "a" * 64,
+                                 "source_reference": f"recovery://{disk_id}", "project_id": project_id, "observed_at": observation},
         "runtime_mode": "READ_ONLY",
         "live_trading_enabled": False,
         "migration_versions": [item.version for item in load_migration_catalog(ROOT / "schemas")],
@@ -191,7 +193,7 @@ def validate_future_evidence(evidence, *, clock=None):
         persisted_d2=persisted_d2_fixture(),
         persisted_lineage=persisted_lineage_fixture(),
         persisted_migrations=tuple(item.version for item in load_migration_catalog(ROOT / "schemas")),
-        persisted_operations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory")},
+        persisted_operations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory", "recovery_observation")},
         clock=clock or FrozenClock(datetime(2026, 9, 24, 0, 2, tzinfo=timezone.utc)),
     )
 
