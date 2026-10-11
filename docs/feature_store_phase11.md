@@ -6,6 +6,12 @@ current runs; only `FeatureContext.as_of` and `information_cutoff` select eligib
 
 ## Contracts
 
+AMA-32 forecast and holding horizons require exact integer values at the Python
+boundary; numerically equal float/Decimal values are not coerced into eligibility.
+Alignment requires typed `SignalValidity` for every input, including a single
+input, and equal horizons, expiry and decay policy. Missing/untyped inputs and
+conflicting validity block combination rather than silently passing through.
+
 Every `FeatureDefinition` records `feature_id`, namespace, name, version, input fields,
 lookback, horizon, transformation, missing policy, and quality policy. Re-registering a
 feature ID with a different contract is rejected. The safe defaults are

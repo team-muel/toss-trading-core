@@ -33,6 +33,9 @@ def test_supported_horizons_and_payload_are_explicit():
 @pytest.mark.parametrize("changes,reason", [
     ({"forecast_horizon": 30}, "SIGNAL_HORIZON_UNSUPPORTED"),
     ({"holding_horizon": 30}, "SIGNAL_HORIZON_UNSUPPORTED"),
+    ({"forecast_horizon": 21.0}, "SIGNAL_HORIZON_UNSUPPORTED"),
+    ({"holding_horizon": Decimal(21)}, "SIGNAL_HORIZON_UNSUPPORTED"),
+    ({"forecast_horizon": True}, "SIGNAL_HORIZON_UNSUPPORTED"),
     ({"valid_until": datetime(2026, 9, 7)}, "SIGNAL_VALID_UNTIL_NOT_AWARE"),
     ({"decay_profile": "LINEAR"}, "SIGNAL_DECAY_PROFILE_UNKNOWN"),
     ({"decay_profile": DecayProfile.EXPONENTIAL}, "SIGNAL_DECAY_POLICY_INVALID"),
@@ -88,3 +91,18 @@ def test_schema_requires_complete_serialized_contract():
     for name in ("feature_snapshot", "pricing_result", "expected_return"):
         consumer = json.loads((root / f"schemas/{name}.schema.json").read_text())
         assert "validity" in consumer["required"]
+
+
+@pytest.mark.parametrize("values", [(None,), (object(),), (validity(), None)])
+def test_alignment_requires_typed_validity_even_for_one_input(values):
+    with pytest.raises(DataQualityError, match="SIGNAL_VALIDITY_REQUIRED"):
+        require_horizon_alignment(iter(values))
+
+
+@pytest.mark.parametrize("changes", [
+    {"days": 11}, {"profile": DecayProfile.STEP},
+    {"profile": DecayProfile.EXPONENTIAL, "half_life": 3600},
+])
+def test_alignment_rejects_different_expiry_or_decay(changes):
+    with pytest.raises(DataQualityError, match="SIGNAL_VALIDITY_MISMATCH"):
+        require_horizon_alignment((validity(), validity(**changes)))

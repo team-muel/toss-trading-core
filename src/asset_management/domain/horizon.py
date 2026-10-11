@@ -28,7 +28,8 @@ class SignalValidity:
     half_life_seconds: int | None = None
 
     def __post_init__(self) -> None:
-        if (self.forecast_horizon not in DECISION_HORIZONS or
+        if (type(self.forecast_horizon) is not int or type(self.holding_horizon) is not int or
+                self.forecast_horizon not in DECISION_HORIZONS or
                 self.holding_horizon not in DECISION_HORIZONS):
             raise InvariantViolation("SIGNAL_HORIZON_UNSUPPORTED")
         if self.valid_until.tzinfo is None or self.valid_until.utcoffset() is None:
@@ -79,6 +80,8 @@ def require_horizon_alignment(signals: Iterable[SignalValidity]) -> SignalValidi
     values = tuple(signals)
     if not values:
         raise DataQualityError("SIGNAL_SET_EMPTY")
+    if any(not isinstance(item, SignalValidity) for item in values):
+        raise DataQualityError("SIGNAL_VALIDITY_REQUIRED")
     first = values[0]
     for item in values[1:]:
         if (item.forecast_horizon != first.forecast_horizon or
