@@ -784,3 +784,68 @@ def test_recovery_observation_requires_signed_bound_snapshot_and_restore(monkeyp
             verify_recovery_observation(conn, "canonical-run@1", observation, instance, clock=FrozenClock(now))
     assert conn.total_changes == before
     conn.close()
+
+
+@pytest.mark.parametrize("failure", [None, "unattested", "image_claim", "manifest_claim", "image_bytes", "manifest_bytes", "source", "manifest_mode", "typed_live", "duplicate"])
+def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, failure):
+    from scripts.check_application_runtime_deployment_evidence import verify_artifact_observation
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    cutoff = now - timedelta(minutes=30)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", cutoff.isoformat(), cutoff.isoformat(), "a" * 40, (now - timedelta(hours=5)).isoformat()))
+    attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
+    project = "toss-trading-core-lab-508411"
+    instance = {"resource_id": f"projects/{project}/zones/asia-northeast3-a/instances/runtime-01",
+                "attached_evidence_disk": {"resource_id": f"projects/{project}/zones/asia-northeast3-a/disks/evidence-01"},
+                "attached_service_account": {"resource_id": f"projects/{project}/serviceAccounts/runtime@{project}.iam.gserviceaccount.com"}}
+    image_bytes = b'{"schemaVersion":2,"test_only":true}'
+    image_hash = "sha256:" + sha256(image_bytes).hexdigest()
+    manifest = {"schema_version": "canonical-application-runtime-applied-manifest@1", "project_id": project,
+                "project_number": "347216292745", "instance_resource_id": instance["resource_id"],
+                "disk_resource_id": instance["attached_evidence_disk"]["resource_id"],
+                "service_account_resource_id": instance["attached_service_account"]["resource_id"],
+                "source_sha": "a" * 40, "image_digest": image_hash, "runtime_mode": "READ_ONLY", "live_trading_enabled": False}
+    if failure == "manifest_mode":
+        manifest["runtime_mode"] = "LIVE"
+    elif failure == "typed_live":
+        manifest["live_trading_enabled"] = 0
+    manifest_bytes = canonical(manifest)
+    if failure == "duplicate":
+        manifest_bytes = manifest_bytes[:-1] + b',"source_sha":"override"}'
+    manifest_hash = "sha256:" + sha256(manifest_bytes).hexdigest()
+    body = {"project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance["resource_id"],
+            "source_sha": "a" * 40, "deployed_image_digest": image_hash, "applied_manifest_hash": manifest_hash,
+            "image_descriptor_bytes_base64": b64encode(image_bytes).decode(),
+            "applied_manifest_bytes_base64": b64encode(manifest_bytes).decode()}
+    if failure == "image_bytes":
+        body["image_descriptor_bytes_base64"] = b64encode(b"different").decode()
+    elif failure == "manifest_bytes":
+        body["applied_manifest_bytes_base64"] = b64encode(manifest_bytes + b" ").decode()
+    endpoint = f"artifact://{instance['resource_id']}"
+    raw = SQLiteRawResponseStore(conn)
+    raw_id = raw.append(source="canonical-operations-artifact", endpoint=endpoint, http_method="GET",
+                        request_payload={}, status_code=200, body=body, requested_at=now, received_at=now,
+                        account_id=None, schema_version="canonical-deployed-artifact-export@1")
+    if failure != "unattested":
+        _attest(conn, raw_id, attestor, now)
+    observation = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + raw.verified(raw_id).response_hash,
+                   "source_reference": endpoint, "project_id": project, "observed_at": now.isoformat()}
+    evidence = {"runtime_topology": {"instance": instance}, "project": {"project_id": project, "project_number": "347216292745"},
+                "source_sha": "a" * 40, "image_digest": image_hash, "manifest_hash": manifest_hash}
+    if failure == "image_claim":
+        evidence["image_digest"] = "sha256:" + "0" * 64
+    elif failure == "manifest_claim":
+        evidence["manifest_hash"] = "sha256:" + "0" * 64
+    elif failure == "source":
+        evidence["source_sha"] = "b" * 40
+    conn.commit()
+    before = conn.total_changes
+    if failure is None:
+        assert verify_artifact_observation(conn, "canonical-run@1", observation, evidence, clock=FrozenClock(now)) == {"artifact_observation": observation}
+    else:
+        with pytest.raises((ValueError, DataQualityError, InvariantViolation)):
+            verify_artifact_observation(conn, "canonical-run@1", observation, evidence, clock=FrozenClock(now))
+    assert conn.total_changes == before
+    conn.close()

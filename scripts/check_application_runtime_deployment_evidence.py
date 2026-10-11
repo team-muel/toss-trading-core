@@ -6,6 +6,8 @@ deployment.
 """
 
 import argparse
+from base64 import b64decode
+from hashlib import sha256
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
@@ -154,8 +156,67 @@ def verify_recovery_observation(connection, runtime_run_id, observation, instanc
     return {"recovery_observation": dict(observation)}
 
 
+def _unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("ARTIFACT_MANIFEST_DUPLICATE_KEY")
+        result[key] = value
+    return result
+
+
+def verify_artifact_observation(connection, runtime_run_id, observation, evidence, *, clock=None):
+    """Authenticate captured artifact bytes and their observed deployment binding."""
+    now = (clock or SystemClock()).now_utc()
+    row = connection.execute("SELECT information_cutoff_utc FROM am_runtime_run WHERE runtime_run_id=?",
+                             (runtime_run_id,)).fetchone()
+    if row is None:
+        raise ValueError("CANONICAL_D2_RUNTIME_MISSING")
+    registry = require_runtime_attestor_registry(conn=connection, runtime_run_id=runtime_run_id,
+                                                cutoff=_instant(row[0]))
+    response = SQLiteRawResponseStore(connection).verified(observation["raw_response_id"])
+    instance = evidence["runtime_topology"]["instance"]
+    endpoint = f"artifact://{instance['resource_id']}"
+    body = response.body
+    if (response.source != "canonical-operations-artifact" or response.endpoint != endpoint or
+            response.http_method != "GET" or response.status_code != 200 or
+            response.schema_version != "canonical-deployed-artifact-export@1" or
+            observation["source_reference"] != endpoint or
+            observation["artifact_sha256"] != "sha256:" + response.response_hash or
+            _instant(observation["observed_at"]) != response.received_at or
+            response.requested_at > response.received_at or response.received_at > now or
+            now - response.requested_at > MAXIMUM_STATE_AGE or not isinstance(body, dict)):
+        raise ValueError("ARTIFACT_OBSERVATION_UNVERIFIED")
+    require_external_evidence_attestation(conn=connection, raw_response_id=observation["raw_response_id"],
+                                         response=response, cutoff=now, registry=registry)
+    image_bytes = b64decode(body["image_descriptor_bytes_base64"], validate=True)
+    manifest_bytes = b64decode(body["applied_manifest_bytes_base64"], validate=True)
+    if not image_bytes or not manifest_bytes:
+        raise ValueError("ARTIFACT_BYTES_MISSING")
+    image_hash = "sha256:" + sha256(image_bytes).hexdigest()
+    manifest_hash = "sha256:" + sha256(manifest_bytes).hexdigest()
+    bindings = {"project_id": evidence["project"]["project_id"],
+                "runtime_run_id": runtime_run_id, "instance_resource_id": instance["resource_id"],
+                "source_sha": evidence["source_sha"], "deployed_image_digest": image_hash,
+                "applied_manifest_hash": manifest_hash}
+    if (evidence["image_digest"] != image_hash or evidence["manifest_hash"] != manifest_hash or
+            any(canonical(body.get(key)) != canonical(value) for key, value in bindings.items())):
+        raise ValueError("ARTIFACT_DEPLOYMENT_BINDING_CONFLICT")
+    manifest = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_unique_json_object)
+    expected = {"schema_version": "canonical-application-runtime-applied-manifest@1",
+                "project_id": bindings["project_id"], "project_number": evidence["project"]["project_number"],
+                "instance_resource_id": instance["resource_id"],
+                "disk_resource_id": instance["attached_evidence_disk"]["resource_id"],
+                "service_account_resource_id": instance["attached_service_account"]["resource_id"],
+                "source_sha": evidence["source_sha"], "image_digest": image_hash,
+                "runtime_mode": "READ_ONLY", "live_trading_enabled": False}
+    if not isinstance(manifest, dict) or any(canonical(manifest.get(key)) != canonical(value) for key, value in expected.items()):
+        raise ValueError("APPLIED_MANIFEST_BINDING_CONFLICT")
+    return {"artifact_observation": dict(observation)}
+
+
 def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observations=None, inventories=None,
-                        instance_id=None, recovery_observation=None, instance=None):
+                        instance_id=None, recovery_observation=None, instance=None, artifact_evidence=None):
     """Replay, without writes, one existing canonical D2 bundle and return its source lineage."""
     database = Path(database)
     if not database.is_file():
@@ -192,6 +253,9 @@ def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observatio
             verified_operations.update(verify_absence_inventories(connection, runtime_run_id, inventories, instance_id))
         if recovery_observation is not None:
             verified_operations.update(verify_recovery_observation(connection, runtime_run_id, recovery_observation, instance))
+        if artifact_evidence is not None:
+            verified_operations.update(verify_artifact_observation(connection, runtime_run_id,
+                                        artifact_evidence["artifact_observation"], artifact_evidence))
         return result, lineage, tuple(row[0] for row in applied), verified_operations
     finally:
         connection.close()
@@ -263,7 +327,7 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
                 errors.append(f"runtime lineage {field} does not match the persisted runtime record")
     if persisted_migrations is None or evidence["migration_versions"] != list(persisted_migrations):
         errors.append("migration_versions must match the authoritative applied migration inventory")
-    for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory", "recovery_observation"):
+    for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory", "recovery_observation", "artifact_observation"):
         if persisted_operations is None or persisted_operations.get(name) != evidence[name]:
             errors.append(f"{name} must match an externally attested persisted observation")
 
@@ -279,7 +343,7 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
         restore_at = _instant(restore_test["verified_at"])
         d2_at = _instant(replay["observed_at"])
         inventory_times = [_instant(evidence[name]["observed_at"])
-                           for name in ("scheduler_inventory", "ingress_inventory", "iam_policy_observation", "api_state_observation", "recovery_observation")]
+                           for name in ("scheduler_inventory", "ingress_inventory", "iam_policy_observation", "api_state_observation", "recovery_observation", "artifact_observation")]
         immutable_until = _instant(snapshot["retention_policy"]["immutable_until"])
         retention_days = snapshot["retention_policy"]["minimum_retention_days"]
         now = _instant((clock or SystemClock()).now_utc())
@@ -349,7 +413,8 @@ def main(argv=None):
                 observations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation")},
                 inventories={name: evidence[name] for name in ("scheduler_inventory", "ingress_inventory")},
                 instance_id=evidence["runtime_topology"]["instance"]["resource_id"],
-                recovery_observation=evidence["recovery_observation"], instance=evidence["runtime_topology"]["instance"])
+                recovery_observation=evidence["recovery_observation"], instance=evidence["runtime_topology"]["instance"],
+                artifact_evidence=evidence)
             errors = validate_evidence(
                 evidence, schema, identity,
                 persisted_d2=persisted_d2,
