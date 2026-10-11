@@ -731,7 +731,7 @@ def test_absence_inventory_consumes_signed_contents(monkeypatch, failure):
     conn.close()
 
 
-@pytest.mark.parametrize("failure", [None, "unattested", "report_hash", "snapshot", "disk", "retention", "failed_restore"])
+@pytest.mark.parametrize("failure", [None, "unattested", "report_hash", "snapshot", "disk", "retention", "failed_restore", "signed_integer_success"])
 def test_recovery_observation_requires_signed_bound_snapshot_and_restore(monkeypatch, failure):
     from scripts.check_application_runtime_deployment_evidence import verify_recovery_observation
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -755,7 +755,9 @@ def test_recovery_observation_requires_signed_bound_snapshot_and_restore(monkeyp
                 "attached_evidence_disk": {"resource_id": disk_id, "backup_snapshot": snapshot}}
     body = {"project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance["resource_id"],
             "source_disk_resource_id": disk_id, "snapshot": {key: value for key, value in snapshot.items() if key != "restore_test"},
-            "restore_report": report, "restore_reference": restore["evidence_reference"]}
+            "restore_report": dict(report), "restore_reference": restore["evidence_reference"]}
+    if failure == "signed_integer_success":
+        body["restore_report"]["restore_succeeded"] = 1
     raw = SQLiteRawResponseStore(conn)
     endpoint = f"recovery://{disk_id}"
     raw_id = raw.append(source="canonical-operations-recovery", endpoint=endpoint, http_method="GET",

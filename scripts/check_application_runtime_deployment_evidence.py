@@ -143,7 +143,7 @@ def verify_recovery_observation(connection, runtime_run_id, observation, instanc
             observation["artifact_sha256"] != "sha256:" + response.response_hash or
             _instant(observation["observed_at"]) != response.received_at or
             response.requested_at > response.received_at or response.received_at > now or
-            now - response.requested_at > MAXIMUM_STATE_AGE or response.body != expected or
+            now - response.requested_at > MAXIMUM_STATE_AGE or canonical(response.body) != canonical(expected) or
             snapshot["source_disk_resource_id"] != disk["resource_id"] or
             restore["restored_snapshot_resource_id"] != snapshot["resource_id"] or
             restore["restore_succeeded"] is not True or restore["database_integrity_check"] != "ok" or
