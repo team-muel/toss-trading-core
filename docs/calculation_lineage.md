@@ -30,3 +30,9 @@ validity는 immutable final node와 binding hash에 함께 포함된다. binding
 시간 계약이 없는 과거 graph는 일반 lineage로 보존할 수 있지만 모델 authorization
 binding으로 승격할 수 없다. 이 API 보강은 실제 producer 연결, matured OOS 증거,
 paper 또는 live acceptance를 증명하지 않는다.
+
+실제 persisted economic input을 읽는 `ComponentForecastAssembler`도 생성 경계에서
+exact integer horizon과 typed validity를 요구한다. information cutoff에 이미 만료된
+validity는 계산·저장 전에 거부하며 DB 상태를 변경하지 않는다. 이 producer는 자체
+observation/manifest lineage와 runtime model evidence를 소비한다. 별도의 일반 graph
+binding을 호출하지 않는다는 이유만으로 해당 authority를 대체하거나 중복하지 않는다.

@@ -237,10 +237,13 @@ class ComponentForecastAssembler:
                  validity: SignalValidity,
                  model_key: str, runtime_authorization: RuntimeModelAuthorization,
                  commodity_structure: CommodityStructure | None = None) -> ComponentForecastBundle:
-        if (not isinstance(asset_class, AssetClass) or not isinstance(currency, Currency) or
+        if (not isinstance(validity, SignalValidity) or type(horizon) is not int or
+                not isinstance(asset_class, AssetClass) or not isinstance(currency, Currency) or
                 not isinstance(currency_basis, CurrencyBasis) or horizon != validity.forecast_horizon or
                 context.run_id.strip() == ""):
             raise DataQualityError("COMPONENT_FORECAST_CONTEXT_INVALID")
+        if validity.valid_until <= context.information_cutoff_utc:
+            raise DataQualityError("COMPONENT_FORECAST_SIGNAL_EXPIRED")
         if asset_class is AssetClass.EQUITY:
             raise DataQualityError("COMPONENT_FORECAST_EQUITY_GROWTH_BASIS_UNSUPPORTED")
         self._repository.require_exact_runtime_context(context)

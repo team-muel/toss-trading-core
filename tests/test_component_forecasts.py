@@ -102,6 +102,27 @@ def assemble(source):
     )
 
 
+@pytest.mark.parametrize("horizon,validity,reason", [
+    (252.0, VALIDITY, "COMPONENT_FORECAST_CONTEXT_INVALID"),
+    ("252", VALIDITY, "COMPONENT_FORECAST_CONTEXT_INVALID"),
+    (252, None, "COMPONENT_FORECAST_CONTEXT_INVALID"),
+    (252, VALIDITY.payload(), "COMPONENT_FORECAST_CONTEXT_INVALID"),
+    (252, SignalValidity(252, 252, NOW, DecayProfile.STEP), "COMPONENT_FORECAST_SIGNAL_EXPIRED"),
+    (252, SignalValidity(252, 252, NOW - timedelta(seconds=1), DecayProfile.STEP),
+     "COMPONENT_FORECAST_SIGNAL_EXPIRED"),
+])
+def test_producer_rejects_untyped_or_expired_signal_before_persistence(horizon, validity, reason):
+    inputs, evidence, authorization = repository()
+    before = tuple(inputs.connection.iterdump())
+    with pytest.raises(DataQualityError, match=reason):
+        ComponentForecastAssembler(inputs, evidence).assemble_gross_forecast(
+            context=CONTEXT, instrument_id="SPY", asset_class=AssetClass.EQUITY_ETF,
+            currency=Currency.USD, currency_basis=CurrencyBasis.BASE, horizon=horizon,
+            validity=validity, model_key="economic@1", runtime_authorization=authorization,
+        )
+    assert tuple(inputs.connection.iterdump()) == before
+
+
 def test_assembler_reads_persisted_pit_values_replays_and_feeds_typed_consumer():
     source = repository()
     first = assemble(source)
