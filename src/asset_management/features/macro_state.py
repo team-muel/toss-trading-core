@@ -12,7 +12,7 @@ import json
 from typing import Mapping
 from zoneinfo import ZoneInfo
 
-from asset_management.data.alfred import DATASET, RAW_SCHEMA, ROW_SCHEMA, SCHEMA_VERSION, SERIES, SOURCE, normalize_vintages
+from asset_management.data.alfred import SERIES, read_vintage_rows
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.domain.errors import DataQualityError
 from asset_management.time.asof import AsOfContext, require_as_of_context
@@ -56,26 +56,11 @@ class MacroStateResult:
 
 
 def _read_rows(store: ImmutableDatasetStore, manifest_id: str, series_id: str,
-               context: AsOfContext) -> list[dict]:
-    manifest, rows = store.read(manifest_id)
-    expected_schema = f"{SCHEMA_VERSION}:{digest(canonical(ROW_SCHEMA))}"
-    if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status, manifest.schema_version) != (
-            SOURCE, DATASET, "silver", "VALID", expected_schema):
-        raise DataQualityError("MACRO_MANIFEST_CONTRACT_INVALID")
-    context.require_known_at(datetime.fromisoformat(manifest.available_at), label="macro dataset")
-    if not isinstance(rows, list) or not rows or len(manifest.parent_manifest_ids) != 1:
-        raise DataQualityError("MACRO_MANIFEST_CONTENT_INVALID")
-    parent, raw = store.read(manifest.parent_manifest_ids[0])
-    expected_raw_schema = f"{SCHEMA_VERSION}:raw:{digest(canonical(RAW_SCHEMA))}"
-    if (parent.source, parent.dataset, parent.layer, parent.schema_version, parent.quality_status) != (
-            SOURCE, DATASET, "bronze", expected_raw_schema, "RAW"):
-        raise DataQualityError("MACRO_RAW_LINEAGE_INVALID")
-    context.require_known_at(datetime.fromisoformat(parent.available_at), label="macro raw dataset")
-    output_type = rows[0].get("output_type") if isinstance(rows[0], dict) else None
-    expected = [dict(row, series_id=series_id) for row in normalize_vintages(raw, series_id=series_id, output_type=output_type)]
-    if rows != expected:
-        raise DataQualityError("MACRO_NORMALIZATION_MISMATCH")
-    return rows
+               context: AsOfContext, vintage_date: str) -> list[dict]:
+    from asset_management.data.alfred_ingress import SCHEMA_VERSION as capture_version
+    captured = store.read_manifest(manifest_id).schema_version.startswith(f"{capture_version}:")
+    return read_vintage_rows(store, manifest_id, series_id, context, error_prefix="MACRO",
+                             require_vintage_date=vintage_date if captured else None)
 
 
 def _monthly_window(rows: list[dict], count: int) -> list[dict] | None:
@@ -107,7 +92,7 @@ def run_macro_state(spec: MacroStateSpec, *, store: ImmutableDatasetStore,
         if series_id not in manifests:
             reasons.append(f"MISSING_SERIES:{series_id}")
             continue
-        rows = _read_rows(store, manifests[series_id], series_id, context)
+        rows = _read_rows(store, manifests[series_id], series_id, context, vintage_cutoff.isoformat())
         snapshot = [row for row in rows if row["realtime_start"] <= vintage_cutoff.isoformat() <= row["realtime_end"]
                     and row["observation_date"] <= local_day.isoformat()]
         if len({row["observation_date"] for row in snapshot}) != len(snapshot):

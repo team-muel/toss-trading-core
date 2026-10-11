@@ -9,6 +9,7 @@ callers must not acquire a dependency on ``toss_trading`` for rate limiting.
 from __future__ import annotations
 
 import heapq
+import math
 import time
 from itertools import count
 from threading import Condition, Lock
@@ -72,12 +73,16 @@ class TokenBucket:
         with self._lock or Lock():
             if limit:
                 try:
-                    self.capacity = max(1.0, float(limit))
+                    value = float(limit)
+                    if math.isfinite(value) and value >= 1:
+                        self.capacity = value
                 except ValueError:
                     pass
             if remaining:
                 try:
-                    self.tokens = max(0.0, min(self.capacity, float(remaining)))
+                    value = float(remaining)
+                    if math.isfinite(value) and value >= 0:
+                        self.tokens = min(self.capacity, value)
                 except ValueError:
                     pass
 
@@ -86,7 +91,8 @@ class TokenBucket:
         for key, value in headers.items():
             if key.lower() == "retry-after":
                 try:
-                    return max(0.0, float(value))
+                    seconds = float(value)
+                    return seconds if math.isfinite(seconds) and seconds >= 0 else None
                 except ValueError:
                     return None
         return None
