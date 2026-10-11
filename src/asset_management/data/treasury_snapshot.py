@@ -5,7 +5,7 @@ import re
 from zoneinfo import ZoneInfo
 
 from .alfred import SOURCE, TREASURY_SERIES, _day, read_vintage_rows
-from .immutable import ImmutableDatasetStore, StoredDatasetManifest
+from .immutable import ImmutableDatasetStore, StoredDatasetManifest, canonical
 from ..domain.errors import DataQualityError
 from ..time.asof import AsOfContext, require_as_of_context
 
@@ -82,7 +82,7 @@ def validate_treasury_snapshot_lineage(store, manifest, body):
     context = AsOfContext(**ctx)
     expected, expected_request, parents = _assemble(store, value["manifests"],
         value["observation_date"], value["vintage_date"], context)
-    if (body != expected or request != expected_request
+    if (canonical(body) != canonical(expected) or canonical(request) != canonical(expected_request)
             or manifest.parent_manifest_ids != tuple(sorted(value["manifests"].values()))
             or manifest.available_at != context.as_of_utc.isoformat()
             or manifest.retrieved_at != context.as_of_utc.isoformat()

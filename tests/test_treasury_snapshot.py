@@ -91,7 +91,8 @@ def test_future_receipt_and_incomplete_or_wrong_series_fail_closed(tmp_path):
 
 
 @pytest.mark.parametrize("field,value", [("quote_basis", "EFFECTIVE_ANNUAL"),
-    ("return_authority", True), ("status", "OBSERVED"), ("official_publication_time", "2026-10-09T00:00:00Z")])
+    ("return_authority", True), ("return_authority", 0), ("status", "OBSERVED"),
+    ("official_publication_time", "2026-10-09T00:00:00Z")])
 def test_rehashed_forged_snapshot_is_rejected_on_read(tmp_path, field, value):
     store, manifests = fixture(tmp_path, missing=True)
     good, body = store.read(persist(store, manifests).manifest_id)
