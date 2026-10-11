@@ -340,7 +340,8 @@ def test_canonical_evidence_replays_only_a_complete_persisted_bundle(monkeypatch
     # The test constructs temporary persisted records; the production entry point
     # accepts none of these economic values from its caller.
     now = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=3)
-    conn = sqlite3.connect(":memory:")
+    database = tmp_path / "persisted.sqlite"
+    conn = sqlite3.connect(database)
     _schema(conn, now)
     conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
                  ("canonical-run@1", now.isoformat(), now.isoformat(), "git:canonical", (now - timedelta(hours=5)).isoformat()))
@@ -357,6 +358,18 @@ def test_canonical_evidence_replays_only_a_complete_persisted_bundle(monkeypatch
     assert "external_attestor_registry" in json.loads(conn.execute(
         "SELECT payload_json FROM am_canonical_d2_production_evidence").fetchone()[0])
     assert repository.replay(runtime_run_id="canonical-run@1", store=store) == recorded
+    conn.commit()
+    from scripts.check_application_runtime_deployment_evidence import replay_persisted_d2
+    before_database = database.read_bytes()
+    before_store = {str(path.relative_to(store.layout.root)): path.read_bytes()
+                    for path in store.layout.root.rglob("*") if path.is_file()}
+    replayed, lineage = replay_persisted_d2(database, store.layout.root, "canonical-run@1")
+    assert replayed == recorded
+    assert lineage == {"runtime_run_id": "canonical-run@1", "as_of_utc": now.isoformat(),
+                       "information_cutoff_utc": now.isoformat(), "code_revision": "git:canonical"}
+    assert database.read_bytes() == before_database
+    assert {str(path.relative_to(store.layout.root)): path.read_bytes()
+            for path in store.layout.root.rglob("*") if path.is_file()} == before_store
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute("UPDATE am_canonical_d2_production_evidence SET content_hash='0'")
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):

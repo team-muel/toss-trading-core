@@ -89,12 +89,15 @@ identity, backup/restore result, logging/monitoring configuration, scheduler
 inventory, observation timestamps and the actor/approval. It must distinguish
 current-project observations from unobservable historical environments. It
 also requires runtime run/as-of/information-cutoff/code-revision lineage and a
-replay-only canonical D2 evidence bundle with its persisted component IDs and
-hashes. The canonical D2 CLI now distinguishes `RECORD` from `REPLAY_ONLY`,
-returns its runtime lineage, and hashes the complete operation result; the
-offline checker verifies that receipt and matches the returned lineage to the
-deployment record. The evidence contract records no D2 PASS or gate status and
-does not create or replay D2 evidence as part of this preflight.
+canonical D2 evidence bundle with its persisted component IDs and hashes. The
+evidence validator must verify those values by invoking the existing
+`CanonicalD2ProductionEvidenceRepository.replay` against the supplied local
+SQLite evidence store and immutable source store. That repository replay
+consumes the existing external provenance/attestor boundary and is read-only;
+the validator rejects caller-supplied D2 IDs or timestamps that disagree with
+the persisted result and runtime row. The evidence contract records no D2
+PASS or gate status. This preflight does not run that replay or generate D2
+evidence.
 
 The evidence schema pins the observed project ID and number to the approved
 repository identity and represents one VM with its attached service account
@@ -109,12 +112,19 @@ evidence contract must be updated alongside their repository registries; the
 empty approved-bucket registry still blocks this plan.
 
 Validate a future evidence file with
-`python scripts/check_application_runtime_deployment_evidence.py <evidence.json>`.
-This local checker also enforces snapshot-to-disk and restore-to-snapshot ID
-equality, runtime lineage/replay identity, source revision equality, and
-point-in-time cutoff ordering. It checks schema constants against the
-repository project registry and always reports `deployment_authorized: false`.
-It does not fetch the referenced evidence, query GCP, or approve a deployment.
+`python scripts/check_application_runtime_deployment_evidence.py <evidence.json> --database <existing.sqlite> --immutable-store <existing-store>`.
+This checker opens only the supplied local evidence stores and calls the
+canonical repository's read-only replay. It also enforces snapshot-to-disk
+and restore-to-snapshot ID equality, runtime lineage/replay identity, source
+revision equality, observation-time ordering, and retention duration. It
+checks schema constants against the repository project registry and always
+reports `deployment_authorized: false`. It does not create evidence, fetch
+references, query GCP, or approve a deployment.
+
+Snapshot retention must still be active at the evidence observation time,
+including when its original minimum retention duration has elapsed. An expiry
+equal to the observation time is expired. Unrepresentable retention durations
+or timestamps fail closed rather than skipping the relationship checks.
 
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as

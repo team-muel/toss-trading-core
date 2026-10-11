@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
 
-from asset_management.cli.canonical_d2_production_evidence import _result as canonical_d2_cli_result
+from scripts.check_application_runtime_deployment_evidence import main as check_deployment_evidence
+from scripts.check_application_runtime_deployment_evidence import replay_persisted_d2
 from scripts.check_application_runtime_deployment_evidence import validate_evidence
 from scripts.check_application_runtime_preflight import validate_manifest
 
@@ -35,34 +36,27 @@ def test_plan_manifest_and_future_evidence_schema_are_valid_contracts():
 
 
 def valid_deployment_evidence():
-    observed_at = "2026-09-24T00:00:00Z"
+    observation = "2026-09-24T00:00:00Z"
     project_id = IDENTITY["approved_project_id"]
     zone = "asia-northeast3-a"
     disk_id = f"projects/{project_id}/zones/{zone}/disks/runtime-evidence-01"
     snapshot_id = f"projects/{project_id}/global/snapshots/runtime-evidence-20260924"
     runtime_lineage = {
         "runtime_run_id": "runtime-run-20260924-001",
-        "as_of_utc": "2026-09-24T00:00:00Z",
-        "information_cutoff_utc": "2026-09-23T23:59:00Z",
+        "as_of_utc": "2026-09-23T23:59:00Z",
+        "information_cutoff_utc": "2026-09-23T23:58:00Z",
         "code_revision": "a" * 40,
     }
-    d2_replay = canonical_d2_cli_result(
-        SimpleNamespace(
-            runtime_run_id=runtime_lineage["runtime_run_id"],
-            content_hash="1" * 64,
-            model_registry_snapshot_id="model-registry-snapshot-001",
-            model_registry_binding_hash="2" * 64,
-            factor_risk_calculation_id="3" * 64,
-            risk_free_manifest_id="4" * 64,
-            risk_free_curve_hash="5" * 64,
-            accounting_snapshot_id="accounting-snapshot-001",
-        ),
-        operation_mode="REPLAY_ONLY",
-        runtime_lineage=runtime_lineage,
-        observed_at=observed_at,
-    )
     d2_replay = {
-        "cli_result": d2_replay,
+        "runtime_run_id": runtime_lineage["runtime_run_id"],
+        "canonical_evidence_hash": "1" * 64,
+        "model_registry_snapshot_id": "model-registry-snapshot-001",
+        "model_registry_binding_hash": "2" * 64,
+        "factor_risk_calculation_id": "3" * 64,
+        "risk_free_manifest_id": "4" * 64,
+        "risk_free_curve_hash": "5" * 64,
+        "accounting_snapshot_id": "accounting-snapshot-001",
+        "observed_at": "2026-09-24T00:01:00Z",
         "evidence_reference": "https://evidence.example/d2/replay.json",
     }
 
@@ -76,7 +70,7 @@ def valid_deployment_evidence():
             "resource_id": project_id,
             "project_id": project_id,
             "project_number": IDENTITY["approved_project_number"],
-            "observed_at": observed_at,
+            "observed_at": observation,
             "source_reference": "https://evidence.example/observations/project.json",
         },
         "runtime_topology": {
@@ -84,13 +78,13 @@ def valid_deployment_evidence():
                 "resource_type": "google_compute_instance",
                 "resource_id": f"projects/{project_id}/zones/{zone}/instances/asset-runtime-01",
                 "project_id": project_id,
-                "observed_at": observed_at,
+                "observed_at": observation,
                 "source_reference": "https://evidence.example/observations/instance.json",
                 "attached_evidence_disk": {
                     "resource_type": "google_compute_disk",
                     "resource_id": disk_id,
                     "project_id": project_id,
-                    "observed_at": observed_at,
+                    "observed_at": observation,
                     "source_reference": "https://evidence.example/observations/disk.json",
                     "mount_path": "/var/lib/asset-management/runtime",
                     "backup_snapshot": {
@@ -98,7 +92,7 @@ def valid_deployment_evidence():
                         "resource_id": snapshot_id,
                         "project_id": project_id,
                         "source_disk_resource_id": disk_id,
-                        "observed_at": observed_at,
+                        "observed_at": observation,
                         "source_reference": "https://evidence.example/observations/snapshot.json",
                         "retention_policy": {
                             "policy_reference": "https://evidence.example/retention/runtime-policy.json",
@@ -108,7 +102,7 @@ def valid_deployment_evidence():
                         "restore_test": {
                             "evidence_sha256": "sha256:" + "f" * 64,
                             "evidence_reference": "https://evidence.example/restore-tests/runtime.json",
-                            "verified_at": observed_at,
+                            "verified_at": "2026-09-24T00:00:30Z",
                             "restored_snapshot_resource_id": snapshot_id,
                             "restore_succeeded": True,
                             "database_integrity_check": "ok",
@@ -119,7 +113,7 @@ def valid_deployment_evidence():
                     "resource_type": "google_iam_service_account",
                     "resource_id": f"projects/{project_id}/serviceAccounts/asset-runtime@{project_id}.iam.gserviceaccount.com",
                     "project_id": project_id,
-                    "observed_at": observed_at,
+                    "observed_at": observation,
                     "source_reference": "https://evidence.example/observations/service-account.json",
                 },
             }
@@ -139,7 +133,7 @@ def valid_deployment_evidence():
             "artifact_sha256": "sha256:" + "2" * 64,
             "source_reference": "https://evidence.example/inventory/scheduler.json",
             "project_id": project_id,
-            "observed_at": observed_at,
+            "observed_at": observation,
             "inspected_surfaces": ["cloud_scheduler_jobs", "vm_systemd_timers"],
             "active_scheduled_job_count": 0,
             "active_vm_timer_count": 0,
@@ -148,23 +142,53 @@ def valid_deployment_evidence():
             "artifact_sha256": "sha256:" + "3" * 64,
             "source_reference": "https://evidence.example/inventory/ingress.json",
             "project_id": project_id,
-            "observed_at": observed_at,
+            "observed_at": observation,
             "inspected_surfaces": ["project_firewall_rules", "vm_network_interfaces", "vm_listening_sockets"],
             "inbound_firewall_rule_count": 0,
             "external_ip_count": 0,
             "listening_socket_count": 0,
         },
-        "observed_at": observed_at,
+        "observed_at": "2026-09-24T00:02:00Z",
         "actor": "operator@example.com",
         "approval_reference": "https://evidence.example/approvals/deployment.json",
     }
+
+
+def persisted_d2_fixture():
+    return SimpleNamespace(
+        runtime_run_id="runtime-run-20260924-001",
+        content_hash="1" * 64,
+        model_registry_snapshot_id="model-registry-snapshot-001",
+        model_registry_binding_hash="2" * 64,
+        factor_risk_calculation_id="3" * 64,
+        risk_free_manifest_id="4" * 64,
+        risk_free_curve_hash="5" * 64,
+        accounting_snapshot_id="accounting-snapshot-001",
+    )
+
+
+def persisted_lineage_fixture():
+    return {
+        "runtime_run_id": "runtime-run-20260924-001",
+        "as_of_utc": "2026-09-23T23:59:00Z",
+        "information_cutoff_utc": "2026-09-23T23:58:00Z",
+        "code_revision": "a" * 40,
+    }
+
+
+def validate_future_evidence(evidence):
+    return validate_evidence(
+        evidence, EVIDENCE_SCHEMA, IDENTITY,
+        persisted_d2=persisted_d2_fixture(),
+        persisted_lineage=persisted_lineage_fixture(),
+    )
 
 
 def test_future_deployment_evidence_is_bound_to_approved_project_and_topology():
     validator = Draft202012Validator(EVIDENCE_SCHEMA, format_checker=FormatChecker())
     evidence = valid_deployment_evidence()
     validator.validate(evidence)
-    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY) == []
+    assert validate_future_evidence(evidence) == []
 
     evidence["project"]["project_number"] = "1"
     assert list(validator.iter_errors(evidence))
@@ -206,29 +230,78 @@ def test_future_deployment_evidence_requires_absence_and_durable_restore_proof()
     evidence = valid_deployment_evidence()
     snapshot = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]
     snapshot["source_disk_resource_id"] = f"projects/{IDENTITY['approved_project_id']}/zones/asia-northeast3-a/disks/unrelated-disk"
-    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+    assert validate_future_evidence(evidence)
 
     evidence = valid_deployment_evidence()
     evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]["restore_test"]["restored_snapshot_resource_id"] = "projects/toss-trading-core-lab-508411/global/snapshots/unrelated-snapshot"
-    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+    assert validate_future_evidence(evidence)
 
     evidence = valid_deployment_evidence()
     evidence["runtime_lineage"]["information_cutoff_utc"] = "2026-09-24T00:01:00Z"
-    evidence["d2_replay"]["cli_result"]["runtime_run_id"] = "different-runtime-run"
+    evidence["d2_replay"]["runtime_run_id"] = "different-runtime-run"
     evidence["runtime_lineage"]["code_revision"] = "b" * 40
-    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+    assert validate_future_evidence(evidence)
 
     evidence = valid_deployment_evidence()
-    evidence["d2_replay"]["cli_result"]["operation_mode"] = "RECORD"
-    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
-
-    evidence = valid_deployment_evidence()
-    evidence["d2_replay"]["cli_result"]["operation_receipt_sha256"] = "0" * 64
-    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+    evidence["d2_replay"]["canonical_evidence_hash"] = "9" * 64
+    assert validate_future_evidence(evidence)
 
     evidence = valid_deployment_evidence()
     evidence["runtime_topology"] = "unknown"
-    assert validate_evidence(evidence, EVIDENCE_SCHEMA, IDENTITY)
+    assert validate_future_evidence(evidence)
+
+
+def test_future_deployment_evidence_requires_authoritative_persisted_d2_verification():
+    evidence = valid_deployment_evidence()
+    assert "canonical D2 replay against the persisted evidence store is required" in validate_evidence(
+        evidence, EVIDENCE_SCHEMA, IDENTITY)
+
+
+def test_evidence_checker_reports_structural_errors_without_traceback(tmp_path, capsys):
+    evidence_path = tmp_path / "invalid-deployment-evidence.json"
+    evidence_path.write_text(json.dumps({"runtime_topology": "unknown"}), encoding="utf-8")
+    result = check_deployment_evidence([
+        str(evidence_path), "--database", str(tmp_path / "unused.sqlite"),
+        "--immutable-store", str(tmp_path / "unused-store"),
+    ])
+    output = json.loads(capsys.readouterr().out)
+    assert result == 2
+    assert output["deployment_authorized"] is False
+    assert output["evidence_contract_valid"] is False
+    assert output["errors"]
+
+
+def test_persisted_replay_requires_an_existing_database_without_creating_one(tmp_path):
+    missing = tmp_path / "missing-evidence.sqlite"
+    with pytest.raises(ValueError, match="CANONICAL_D2_EVIDENCE_DATABASE_MISSING"):
+        replay_persisted_d2(missing, tmp_path / "immutable", "run@1")
+    assert not missing.exists()
+
+
+@pytest.mark.parametrize(("mutation", "message"), [
+    (lambda e: e["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"].update(observed_at="2026-09-24T00:01:00Z"), "restore verification must be observed at or after its snapshot"),
+    (lambda e: e["d2_replay"].update(observed_at="2026-09-23T23:58:00Z"), "canonical D2 replay observation must be at or after runtime as_of_utc"),
+    (lambda e: e.update(observed_at="2026-09-24T00:00:30Z"), "deployment evidence observed_at precedes one of its evidence observations"),
+    (lambda e: e["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]["retention_policy"].update(immutable_until="2026-10-01T00:00:00Z"), "snapshot immutable_until does not satisfy its minimum retention period"),
+])
+def test_future_deployment_evidence_rejects_contradictory_observation_times(mutation, message):
+    evidence = valid_deployment_evidence()
+    mutation(evidence)
+    assert message in validate_future_evidence(evidence)
+
+
+@pytest.mark.parametrize("observed_at", ["2026-10-24T00:00:00Z", "2026-10-25T00:00:00Z"])
+def test_future_deployment_evidence_rejects_expired_snapshot_retention(observed_at):
+    evidence = valid_deployment_evidence()
+    evidence["observed_at"] = observed_at
+    assert "snapshot retention must remain active at deployment evidence observed_at" in validate_future_evidence(evidence)
+
+
+def test_future_deployment_evidence_rejects_unrepresentable_retention_duration():
+    evidence = valid_deployment_evidence()
+    snapshot = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]
+    snapshot["retention_policy"]["minimum_retention_days"] = 10**100
+    assert "deployment evidence timestamps or retention duration cannot be verified" in validate_future_evidence(evidence)
 
 
 @pytest.mark.parametrize("mutation", [
