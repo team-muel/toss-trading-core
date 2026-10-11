@@ -2,6 +2,9 @@ from copy import deepcopy
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import datetime, timezone
+from asset_management.time.clock import FrozenClock
+from asset_management.config.migrations import load_migration_catalog
 
 import pytest
 from jsonschema import Draft202012Validator, FormatChecker
@@ -127,7 +130,7 @@ def valid_deployment_evidence():
         "api_state_hash": "sha256:" + "e" * 64,
         "runtime_mode": "READ_ONLY",
         "live_trading_enabled": False,
-        "migration_versions": [1],
+        "migration_versions": [item.version for item in load_migration_catalog(ROOT / "schemas")],
         "observability_config_hash": "sha256:" + "1" * 64,
         "scheduler_inventory": {
             "artifact_sha256": "sha256:" + "2" * 64,
@@ -176,11 +179,13 @@ def persisted_lineage_fixture():
     }
 
 
-def validate_future_evidence(evidence):
+def validate_future_evidence(evidence, *, clock=None):
     return validate_evidence(
         evidence, EVIDENCE_SCHEMA, IDENTITY,
         persisted_d2=persisted_d2_fixture(),
         persisted_lineage=persisted_lineage_fixture(),
+        persisted_migrations=tuple(item.version for item in load_migration_catalog(ROOT / "schemas")),
+        clock=clock or FrozenClock(datetime(2026, 9, 24, 0, 2, tzinfo=timezone.utc)),
     )
 
 
@@ -276,6 +281,38 @@ def test_persisted_replay_requires_an_existing_database_without_creating_one(tmp
     with pytest.raises(ValueError, match="CANONICAL_D2_EVIDENCE_DATABASE_MISSING"):
         replay_persisted_d2(missing, tmp_path / "immutable", "run@1")
     assert not missing.exists()
+
+
+@pytest.mark.parametrize("claimed", [[20], [999], [1], list(range(1, 21)) + [20]])
+def test_claimed_migrations_must_match_applied_inventory(claimed):
+    evidence = valid_deployment_evidence()
+    evidence["migration_versions"] = claimed
+    assert "migration_versions must match the authoritative applied migration inventory" in validate_future_evidence(evidence)
+
+
+@pytest.mark.parametrize(("now", "message"), [
+    (datetime(2026, 9, 23, tzinfo=timezone.utc), "evidence contains observations later than verification time"),
+    (datetime(2026, 9, 24, 2, tzinfo=timezone.utc), "current state observations exceed the one-hour freshness limit"),
+    (datetime(2026, 10, 25, tzinfo=timezone.utc), "snapshot retention has expired at verification time"),
+])
+def test_evidence_freshness_and_retention_use_verifier_clock(now, message):
+    assert message in validate_future_evidence(valid_deployment_evidence(), clock=FrozenClock(now))
+
+
+@pytest.mark.parametrize("error", [KeyError("manifest_id"), TypeError("malformed"), AttributeError("malformed"), IndexError("malformed")])
+def test_corrupt_persisted_evidence_returns_blocked_json(tmp_path, monkeypatch, capsys, error):
+    import scripts.check_application_runtime_deployment_evidence as checker
+    def corrupt(*args):
+        raise error
+    monkeypatch.setattr(checker, "replay_persisted_d2", corrupt)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(valid_deployment_evidence()), encoding="utf-8")
+    assert checker.main([str(evidence_path), "--database", str(tmp_path / "existing.sqlite"),
+                         "--immutable-store", str(tmp_path / "store")]) == 2
+    output = json.loads(capsys.readouterr().out)
+    assert output["evidence_contract_valid"] is False
+    assert output["deployment_authorized"] is False
+    assert "failed closed" in output["errors"][0]
 
 
 @pytest.mark.parametrize(("mutation", "message"), [

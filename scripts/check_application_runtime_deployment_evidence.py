@@ -14,12 +14,14 @@ import sqlite3
 from jsonschema import Draft202012Validator, FormatChecker
 
 from asset_management.data.immutable import ImmutableDatasetStore
+from asset_management.config.migrations import load_migration_catalog
 from asset_management.domain.errors import AssetManagementError
 from asset_management.time.clock import SystemClock
 from asset_management.validation import CanonicalD2ProductionEvidenceRepository
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MAXIMUM_STATE_AGE = timedelta(hours=1)
 
 
 def _instant(value):
@@ -36,10 +38,13 @@ def replay_persisted_d2(database, immutable_store, runtime_run_id):
         raise ValueError("CANONICAL_D2_EVIDENCE_DATABASE_MISSING")
     connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
     try:
-        migrated = connection.execute(
-            "SELECT 1 FROM schema_migration WHERE version=19"
-        ).fetchone()
-        if migrated is None:
+        connection.execute("BEGIN")
+        catalog = load_migration_catalog(ROOT / "schemas")
+        expected = tuple((item.version, item.name, item.content_hash) for item in catalog)
+        applied = tuple(connection.execute(
+            "SELECT version, name, content_hash FROM schema_migration ORDER BY version"
+        ))
+        if applied != expected:
             raise ValueError("CANONICAL_D2_EVIDENCE_SCHEMA_MISSING")
         repository = CanonicalD2ProductionEvidenceRepository(connection, SystemClock())
         result = repository.replay(
@@ -57,12 +62,13 @@ def replay_persisted_d2(database, immutable_store, runtime_run_id):
             ("runtime_run_id", "as_of_utc", "information_cutoff_utc", "code_revision"),
             map(str, row),
         ))
-        return result, lineage
+        return result, lineage, tuple(row[0] for row in applied)
     finally:
         connection.close()
 
 
-def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persisted_lineage=None):
+def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persisted_lineage=None,
+                      persisted_migrations=None, clock=None):
     if not isinstance(evidence, dict):
         return ["deployment evidence must be a JSON object"]
     if not isinstance(schema, dict) or not isinstance(identity, dict):
@@ -121,6 +127,8 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
         for field in ("runtime_run_id", "as_of_utc", "information_cutoff_utc", "code_revision"):
             if lineage[field] != persisted_lineage[field]:
                 errors.append(f"runtime lineage {field} does not match the persisted runtime record")
+    if persisted_migrations is None or evidence["migration_versions"] != list(persisted_migrations):
+        errors.append("migration_versions must match the authoritative applied migration inventory")
 
     try:
         observed_at = _instant(evidence["observed_at"])
@@ -137,6 +145,7 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
                            for name in ("scheduler_inventory", "ingress_inventory")]
         immutable_until = _instant(snapshot["retention_policy"]["immutable_until"])
         retention_days = snapshot["retention_policy"]["minimum_retention_days"]
+        now = _instant((clock or SystemClock()).now_utc())
 
         if cutoff > as_of:
             errors.append("runtime information_cutoff_utc must not be later than as_of_utc")
@@ -154,6 +163,16 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
             errors.append("snapshot immutable_until does not satisfy its minimum retention period")
         if immutable_until <= observed_at:
             errors.append("snapshot retention must remain active at deployment evidence observed_at")
+        if immutable_until <= now:
+            errors.append("snapshot retention has expired at verification time")
+        observations = [observed_at, project_at, instance_at, disk_at, service_account_at,
+                        snapshot_at, restore_at, d2_at, *inventory_times, as_of]
+        if any(value > now for value in observations):
+            errors.append("evidence contains observations later than verification time")
+        current_state = [observed_at, project_at, instance_at, disk_at, service_account_at,
+                         d2_at, *inventory_times]
+        if any(now - value > MAXIMUM_STATE_AGE for value in current_state):
+            errors.append("current state observations exceed the one-hour freshness limit")
     except (TypeError, ValueError, OverflowError):
         errors.append("deployment evidence timestamps or retention duration cannot be verified")
 
@@ -190,14 +209,16 @@ def main(argv=None):
         errors = sorted(set(schema_errors))
     else:
         try:
-            persisted_d2, persisted_lineage = replay_persisted_d2(
+            persisted_d2, persisted_lineage, persisted_migrations = replay_persisted_d2(
                 args.database, args.immutable_store, evidence["d2_replay"]["runtime_run_id"])
             errors = validate_evidence(
                 evidence, schema, identity,
                 persisted_d2=persisted_d2,
                 persisted_lineage=persisted_lineage,
+                persisted_migrations=persisted_migrations,
             )
-        except (AssetManagementError, OSError, ValueError, sqlite3.DatabaseError) as exc:
+        except (AssetManagementError, OSError, ValueError, sqlite3.DatabaseError,
+                KeyError, TypeError, AttributeError, IndexError) as exc:
             errors = [f"persisted canonical D2 replay failed closed: {exc}"]
 
     print(json.dumps({

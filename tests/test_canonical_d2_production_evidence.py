@@ -363,7 +363,8 @@ def test_canonical_evidence_replays_only_a_complete_persisted_bundle(monkeypatch
     before_database = database.read_bytes()
     before_store = {str(path.relative_to(store.layout.root)): path.read_bytes()
                     for path in store.layout.root.rglob("*") if path.is_file()}
-    replayed, lineage = replay_persisted_d2(database, store.layout.root, "canonical-run@1")
+    replayed, lineage, migrations = replay_persisted_d2(database, store.layout.root, "canonical-run@1")
+    assert migrations == tuple(item.version for item in load_migration_catalog(ROOT / "schemas"))
     assert replayed == recorded
     assert lineage == {"runtime_run_id": "canonical-run@1", "as_of_utc": now.isoformat(),
                        "information_cutoff_utc": now.isoformat(), "code_revision": "git:canonical"}

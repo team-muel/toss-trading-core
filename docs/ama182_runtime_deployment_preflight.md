@@ -126,6 +126,16 @@ including when its original minimum retention duration has elapsed. An expiry
 equal to the observation time is expired. Unrepresentable retention durations
 or timestamps fail closed rather than skipping the relationship checks.
 
+Verification uses the CLI system clock, with no caller-selected timestamp.
+All observations must have occurred by verification time, snapshot retention
+must remain active then, and current resource, scheduler/ingress inventory,
+replay, and top-level observations must be at most one hour old. This conservative
+preflight freshness limit is not an approved runtime monitoring policy.
+The complete applied migration number/name/SQL-hash inventory must equal the
+repository catalog, and the evidence's version list must match it exactly.
+The SQLite read transaction spans migration checks, replay, and lineage reads.
+Malformed persisted artifact structure returns blocked JSON without a traceback.
+
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as
 an automatic rollback. No retirement command or physical deletion is part of
