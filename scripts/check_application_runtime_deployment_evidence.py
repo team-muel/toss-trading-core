@@ -216,6 +216,24 @@ def verify_artifact_observation(connection, runtime_run_id, observation, evidenc
                 "observability_config_hash": observability_hash}
     if not isinstance(manifest, dict) or any(canonical(manifest.get(key)) != canonical(value) for key, value in expected.items()):
         raise ValueError("APPLIED_MANIFEST_BINDING_CONFLICT")
+    approval_bytes = b64decode(body["approval_record_bytes_base64"], validate=True)
+    if not approval_bytes or body.get("approval_record_hash") != "sha256:" + sha256(approval_bytes).hexdigest():
+        raise ValueError("DEPLOYMENT_APPROVAL_BYTES_UNVERIFIED")
+    approval = json.loads(approval_bytes.decode("utf-8"), object_pairs_hook=_unique_json_object)
+    approval_expected = {
+        "schema_version": "canonical-application-runtime-deployment-approval@1",
+        "status": "APPROVED", "actor": evidence["actor"],
+        "approval_reference": evidence["approval_reference"],
+        "project_id": bindings["project_id"], "runtime_run_id": runtime_run_id,
+        "instance_resource_id": instance["resource_id"], "source_sha": evidence["source_sha"],
+        "image_digest": image_hash, "manifest_hash": manifest_hash,
+        "observability_config_hash": observability_hash,
+        "runtime_mode": "READ_ONLY", "live_trading_enabled": False,
+    }
+    if not isinstance(approval, dict) or any(canonical(approval.get(key)) != canonical(value) for key, value in approval_expected.items()):
+        raise ValueError("DEPLOYMENT_APPROVAL_BINDING_CONFLICT")
+    if _instant(approval["approved_at"]) > response.requested_at:
+        raise ValueError("DEPLOYMENT_APPROVAL_TIME_CONFLICT")
     return {"artifact_observation": dict(observation)}
 
 

@@ -192,6 +192,16 @@ attests deployment association; bytes or hashes supplied without that record
 cannot substitute for it. This checker performs no registry pull or deployment
 and does not approve an artifact, registry, bucket, IAM grant or live authority.
 
+The same externally attested artifact export must include original approval
+record bytes and their SHA-256. The authenticated record must identify an
+APPROVED review, actor and reference, the exact project/runtime/instance,
+source SHA, image/manifest/observability hashes and READ_ONLY/live-disabled
+scope. Its approval time cannot follow the captured deployment request.
+Caller-invented actor/reference values, revoked reviews, duplicate keys,
+altered bytes and different deployment scopes block. The existing governed
+collector/attestor boundary authenticates this review record; the checker
+does not create a review, authorize a reviewer or grant deployment authority.
+
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as
 an automatic rollback. No retirement command or physical deletion is part of

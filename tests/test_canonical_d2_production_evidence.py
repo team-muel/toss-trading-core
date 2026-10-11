@@ -786,7 +786,7 @@ def test_recovery_observation_requires_signed_bound_snapshot_and_restore(monkeyp
     conn.close()
 
 
-@pytest.mark.parametrize("failure", [None, "unattested", "image_claim", "manifest_claim", "image_bytes", "manifest_bytes", "source", "manifest_mode", "typed_live", "duplicate", "observability_claim", "observability_bytes", "observability_binding", "observability_manifest"])
+@pytest.mark.parametrize("failure", [None, "unattested", "image_claim", "manifest_claim", "image_bytes", "manifest_bytes", "source", "manifest_mode", "typed_live", "duplicate", "observability_claim", "observability_bytes", "observability_binding", "observability_manifest", "actor_claim", "approval_claim", "approval_bytes", "approval_status", "approval_scope", "approval_future", "approval_duplicate"])
 def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, failure):
     from scripts.check_application_runtime_deployment_evidence import verify_artifact_observation
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -834,6 +834,23 @@ def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, f
         body["observability_config_bytes_base64"] = b64encode(b"different").decode()
     elif failure == "observability_binding":
         body["observability_config_hash"] = "sha256:" + "0" * 64
+    approval = {"schema_version": "canonical-application-runtime-deployment-approval@1",
+                "status": "APPROVED", "actor": "test-reviewer", "approval_reference": "review://test-only",
+                "project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance["resource_id"],
+                "source_sha": "a" * 40, "image_digest": image_hash, "manifest_hash": manifest_hash,
+                "observability_config_hash": observability_hash, "runtime_mode": "READ_ONLY", "live_trading_enabled": False,
+                "approved_at": (now - timedelta(minutes=1)).isoformat()}
+    if failure == "approval_status":
+        approval["status"] = "REVOKED"
+    elif failure == "approval_scope":
+        approval["runtime_run_id"] = "different-run"
+    elif failure == "approval_future":
+        approval["approved_at"] = (now + timedelta(seconds=1)).isoformat()
+    approval_bytes = canonical(approval)
+    if failure == "approval_duplicate":
+        approval_bytes = approval_bytes[:-1] + b',"actor":"override"}'
+    body["approval_record_hash"] = "sha256:" + sha256(approval_bytes).hexdigest()
+    body["approval_record_bytes_base64"] = b64encode(approval_bytes if failure != "approval_bytes" else b"different").decode()
     endpoint = f"artifact://{instance['resource_id']}"
     raw = SQLiteRawResponseStore(conn)
     raw_id = raw.append(source="canonical-operations-artifact", endpoint=endpoint, http_method="GET",
@@ -845,7 +862,11 @@ def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, f
                    "source_reference": endpoint, "project_id": project, "observed_at": now.isoformat()}
     evidence = {"runtime_topology": {"instance": instance}, "project": {"project_id": project, "project_number": "347216292745"},
                 "source_sha": "a" * 40, "image_digest": image_hash, "manifest_hash": manifest_hash,
-                "observability_config_hash": observability_hash}
+                "observability_config_hash": observability_hash, "actor": "test-reviewer", "approval_reference": "review://test-only"}
+    if failure == "actor_claim":
+        evidence["actor"] = "invented-reviewer"
+    elif failure == "approval_claim":
+        evidence["approval_reference"] = "review://invented"
     if failure == "observability_claim":
         evidence["observability_config_hash"] = "sha256:" + "0" * 64
     if failure == "image_claim":
