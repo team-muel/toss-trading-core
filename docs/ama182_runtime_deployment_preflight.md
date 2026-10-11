@@ -181,12 +181,12 @@ governed collector's recovery evidence, not a restore performed by this checker.
 
 Artifact evidence also consumes a pre-existing externally attested raw export
 under `artifact://<instance-resource-id>`, an internal collector descriptor.
-The export includes original image-descriptor and applied-manifest bytes in
+The export includes original image-descriptor, observability-configuration and applied-manifest bytes in
 base64 plus the observed deployed-image digest/applied-manifest hash and
-project/runtime/instance/source-revision binding. Both digests are recomputed
+project/runtime/instance/source-revision binding. All three digests are recomputed
 from the original bytes, without normalizing their formatting. The applied
 manifest must bind the same source SHA, project ID/number, instance, disk,
-service account, image digest and READ_ONLY/live-disabled policy. Duplicate
+service account, image digest, observability configuration hash and READ_ONLY/live-disabled policy. Duplicate
 JSON keys and JSON type coercion are rejected. The signed collector record
 attests deployment association; bytes or hashes supplied without that record
 cannot substitute for it. This checker performs no registry pull or deployment

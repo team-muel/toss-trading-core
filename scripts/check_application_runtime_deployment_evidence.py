@@ -191,15 +191,18 @@ def verify_artifact_observation(connection, runtime_run_id, observation, evidenc
                                          response=response, cutoff=now, registry=registry)
     image_bytes = b64decode(body["image_descriptor_bytes_base64"], validate=True)
     manifest_bytes = b64decode(body["applied_manifest_bytes_base64"], validate=True)
-    if not image_bytes or not manifest_bytes:
+    observability_bytes = b64decode(body["observability_config_bytes_base64"], validate=True)
+    if not image_bytes or not manifest_bytes or not observability_bytes:
         raise ValueError("ARTIFACT_BYTES_MISSING")
     image_hash = "sha256:" + sha256(image_bytes).hexdigest()
     manifest_hash = "sha256:" + sha256(manifest_bytes).hexdigest()
+    observability_hash = "sha256:" + sha256(observability_bytes).hexdigest()
     bindings = {"project_id": evidence["project"]["project_id"],
                 "runtime_run_id": runtime_run_id, "instance_resource_id": instance["resource_id"],
                 "source_sha": evidence["source_sha"], "deployed_image_digest": image_hash,
-                "applied_manifest_hash": manifest_hash}
+                "applied_manifest_hash": manifest_hash, "observability_config_hash": observability_hash}
     if (evidence["image_digest"] != image_hash or evidence["manifest_hash"] != manifest_hash or
+            evidence["observability_config_hash"] != observability_hash or
             any(canonical(body.get(key)) != canonical(value) for key, value in bindings.items())):
         raise ValueError("ARTIFACT_DEPLOYMENT_BINDING_CONFLICT")
     manifest = json.loads(manifest_bytes.decode("utf-8"), object_pairs_hook=_unique_json_object)
@@ -209,7 +212,8 @@ def verify_artifact_observation(connection, runtime_run_id, observation, evidenc
                 "disk_resource_id": instance["attached_evidence_disk"]["resource_id"],
                 "service_account_resource_id": instance["attached_service_account"]["resource_id"],
                 "source_sha": evidence["source_sha"], "image_digest": image_hash,
-                "runtime_mode": "READ_ONLY", "live_trading_enabled": False}
+                "runtime_mode": "READ_ONLY", "live_trading_enabled": False,
+                "observability_config_hash": observability_hash}
     if not isinstance(manifest, dict) or any(canonical(manifest.get(key)) != canonical(value) for key, value in expected.items()):
         raise ValueError("APPLIED_MANIFEST_BINDING_CONFLICT")
     return {"artifact_observation": dict(observation)}

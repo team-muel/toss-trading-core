@@ -786,7 +786,7 @@ def test_recovery_observation_requires_signed_bound_snapshot_and_restore(monkeyp
     conn.close()
 
 
-@pytest.mark.parametrize("failure", [None, "unattested", "image_claim", "manifest_claim", "image_bytes", "manifest_bytes", "source", "manifest_mode", "typed_live", "duplicate"])
+@pytest.mark.parametrize("failure", [None, "unattested", "image_claim", "manifest_claim", "image_bytes", "manifest_bytes", "source", "manifest_mode", "typed_live", "duplicate", "observability_claim", "observability_bytes", "observability_binding", "observability_manifest"])
 def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, failure):
     from scripts.check_application_runtime_deployment_evidence import verify_artifact_observation
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -800,17 +800,22 @@ def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, f
     instance = {"resource_id": f"projects/{project}/zones/asia-northeast3-a/instances/runtime-01",
                 "attached_evidence_disk": {"resource_id": f"projects/{project}/zones/asia-northeast3-a/disks/evidence-01"},
                 "attached_service_account": {"resource_id": f"projects/{project}/serviceAccounts/runtime@{project}.iam.gserviceaccount.com"}}
+    observability_bytes = b'{"test_only":true,"logging":"enabled"}'
+    observability_hash = "sha256:" + sha256(observability_bytes).hexdigest()
     image_bytes = b'{"schemaVersion":2,"test_only":true}'
     image_hash = "sha256:" + sha256(image_bytes).hexdigest()
     manifest = {"schema_version": "canonical-application-runtime-applied-manifest@1", "project_id": project,
                 "project_number": "347216292745", "instance_resource_id": instance["resource_id"],
                 "disk_resource_id": instance["attached_evidence_disk"]["resource_id"],
                 "service_account_resource_id": instance["attached_service_account"]["resource_id"],
-                "source_sha": "a" * 40, "image_digest": image_hash, "runtime_mode": "READ_ONLY", "live_trading_enabled": False}
+                "source_sha": "a" * 40, "image_digest": image_hash, "runtime_mode": "READ_ONLY", "live_trading_enabled": False,
+                "observability_config_hash": observability_hash}
     if failure == "manifest_mode":
         manifest["runtime_mode"] = "LIVE"
     elif failure == "typed_live":
         manifest["live_trading_enabled"] = 0
+    if failure == "observability_manifest":
+        manifest["observability_config_hash"] = "sha256:" + "0" * 64
     manifest_bytes = canonical(manifest)
     if failure == "duplicate":
         manifest_bytes = manifest_bytes[:-1] + b',"source_sha":"override"}'
@@ -818,11 +823,17 @@ def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, f
     body = {"project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance["resource_id"],
             "source_sha": "a" * 40, "deployed_image_digest": image_hash, "applied_manifest_hash": manifest_hash,
             "image_descriptor_bytes_base64": b64encode(image_bytes).decode(),
-            "applied_manifest_bytes_base64": b64encode(manifest_bytes).decode()}
+            "applied_manifest_bytes_base64": b64encode(manifest_bytes).decode(),
+            "observability_config_bytes_base64": b64encode(observability_bytes).decode(),
+            "observability_config_hash": observability_hash}
     if failure == "image_bytes":
         body["image_descriptor_bytes_base64"] = b64encode(b"different").decode()
     elif failure == "manifest_bytes":
         body["applied_manifest_bytes_base64"] = b64encode(manifest_bytes + b" ").decode()
+    if failure == "observability_bytes":
+        body["observability_config_bytes_base64"] = b64encode(b"different").decode()
+    elif failure == "observability_binding":
+        body["observability_config_hash"] = "sha256:" + "0" * 64
     endpoint = f"artifact://{instance['resource_id']}"
     raw = SQLiteRawResponseStore(conn)
     raw_id = raw.append(source="canonical-operations-artifact", endpoint=endpoint, http_method="GET",
@@ -833,7 +844,10 @@ def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, f
     observation = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + raw.verified(raw_id).response_hash,
                    "source_reference": endpoint, "project_id": project, "observed_at": now.isoformat()}
     evidence = {"runtime_topology": {"instance": instance}, "project": {"project_id": project, "project_number": "347216292745"},
-                "source_sha": "a" * 40, "image_digest": image_hash, "manifest_hash": manifest_hash}
+                "source_sha": "a" * 40, "image_digest": image_hash, "manifest_hash": manifest_hash,
+                "observability_config_hash": observability_hash}
+    if failure == "observability_claim":
+        evidence["observability_config_hash"] = "sha256:" + "0" * 64
     if failure == "image_claim":
         evidence["image_digest"] = "sha256:" + "0" * 64
     elif failure == "manifest_claim":
