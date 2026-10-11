@@ -6,13 +6,15 @@ here; transport and credential/rights approval remain upstream responsibilities.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Mapping
+from zoneinfo import ZoneInfo
 
-from .immutable import ImmutableDatasetStore, IngestionResult, ProviderDatasetAdapter
+from .immutable import ImmutableDatasetStore, IngestionResult, ProviderDatasetAdapter, canonical, digest
 from .phase9 import ProviderBatch
 from ..domain.errors import DataQualityError
+from ..time.asof import require_as_of_context
 
 SOURCE = "fred-alfred"
 DATASET = "series-observation-revisions"
@@ -27,6 +29,66 @@ ROW_SCHEMA = {
     "realtime_start": "string", "realtime_end": "string", "value_status": "string",
     "output_type": "integer",
 }
+
+
+def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="ALFRED",
+                      require_daily=False, require_vintage_date=None):
+    """Replay canonical Silver against its raw parent at the explicit cutoff."""
+    context = require_as_of_context(context)
+    manifest, rows = store.read(manifest_id)
+    expected_schema = f"{SCHEMA_VERSION}:{digest(canonical(ROW_SCHEMA))}"
+    if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status, manifest.schema_version) != (
+            SOURCE, DATASET, "silver", "VALID", expected_schema):
+        raise DataQualityError(f"{error_prefix}_MANIFEST_CONTRACT_INVALID")
+    context.require_known_at(datetime.fromisoformat(manifest.available_at), label="ALFRED dataset")
+    if not isinstance(rows, list) or not rows or len(manifest.parent_manifest_ids) != 1:
+        raise DataQualityError(f"{error_prefix}_MANIFEST_CONTENT_INVALID")
+    parent, raw = store.read(manifest.parent_manifest_ids[0])
+    expected_raw_schema = f"{SCHEMA_VERSION}:raw:{digest(canonical(RAW_SCHEMA))}"
+    if (parent.source, parent.dataset, parent.layer, parent.schema_version, parent.quality_status) != (
+            SOURCE, DATASET, "bronze", expected_raw_schema, "RAW"):
+        raise DataQualityError(f"{error_prefix}_RAW_LINEAGE_INVALID")
+    context.require_known_at(datetime.fromisoformat(parent.available_at), label="ALFRED raw dataset")
+    output_type = rows[0].get("output_type") if isinstance(rows[0], dict) else None
+    expected = [dict(row, series_id=series_id) for row in normalize_vintages(
+        raw, series_id=series_id, output_type=output_type)]
+    if rows != expected:
+        raise DataQualityError(f"{error_prefix}_NORMALIZATION_MISMATCH")
+    receipt = store.read_catalog("requests", parent.request_hash)
+    if (manifest.request_hash != parent.request_hash or
+            (receipt.get("source"), receipt.get("dataset"), receipt.get("endpoint"), receipt.get("http_method")) !=
+            (SOURCE, DATASET, "/fred/series/observations", "GET")):
+        raise DataQualityError(f"{error_prefix}_REQUEST_CONFLICT")
+    request = receipt["request"]
+    if (not isinstance(request, dict) or request.get("series_id") != series_id
+            or type(request.get("output_type", 1)) is not int
+            or request.get("output_type", 1) != output_type or request.get("units", "lin") != "lin"):
+        raise DataQualityError(f"{error_prefix}_REQUEST_CONFLICT")
+    if require_daily and (request.get("frequency") not in (None, "d")
+                          or request.get("aggregation_method") is not None):
+        raise DataQualityError(f"{error_prefix}_DAILY_FREQUENCY_REQUIRED")
+    if require_vintage_date is not None:
+        if (raw.get("units", "lin") != "lin"
+                or type(raw.get("output_type", output_type)) is not int
+                or raw.get("output_type", output_type) != output_type):
+            raise DataQualityError(f"{error_prefix}_RESPONSE_CONTRACT_CONFLICT")
+        vintage = _day(require_vintage_date)
+        # Explicit query coverage is required; an open normalized final interval
+        # does not establish revisions outside the captured real-time range.
+        start, end = _day(request.get("realtime_start")), _day(request.get("realtime_end"))
+        if not start <= vintage <= end:
+            raise DataQualityError(f"{error_prefix}_VINTAGE_OUTSIDE_REQUEST")
+        if "vintage_dates" in request:
+            dates = request["vintage_dates"]
+            if not isinstance(dates, str) or vintage not in {_day(v) for v in dates.split(",")}:
+                raise DataQualityError(f"{error_prefix}_VINTAGE_OUTSIDE_REQUEST")
+        received_day = datetime.fromisoformat(parent.retrieved_at).astimezone(ZoneInfo("America/Chicago")).date()
+        if vintage >= received_day:
+            raise DataQualityError(f"{error_prefix}_VINTAGE_NOT_CLOSED_AT_CAPTURE")
+        response_start, response_end = _day(raw.get("realtime_start")), _day(raw.get("realtime_end"))
+        if not response_start <= vintage <= response_end:
+            raise DataQualityError(f"{error_prefix}_VINTAGE_OUTSIDE_RESPONSE")
+    return rows
 
 
 def _day(value: object) -> date:

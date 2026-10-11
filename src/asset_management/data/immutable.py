@@ -349,6 +349,11 @@ class ImmutableDatasetStore:
                 and manifest.dataset == "calendar-publication" and manifest.layer == "bronze"):
             from .calendar_ingress import validate_calendar_publication_lineage
             validate_calendar_publication_lineage(self, manifest, body)
+        if (manifest.schema_version == "treasury-quote-snapshot-v1"
+                and manifest.source == "fred-alfred" and manifest.dataset == "treasury-quote-snapshot"
+                and manifest.layer == "gold"):
+            from .treasury_snapshot import validate_treasury_snapshot_lineage
+            validate_treasury_snapshot_lineage(self, manifest, body)
         return manifest, body
 
 
