@@ -192,3 +192,28 @@ The macro-state model still requires its original five series. DTB3 remains a
 separate discount-basis cash-hurdle source; it is not a substitute for DGS3MO.
 No complete curve, intraday publication time, return conversion, runtime evidence
 or OOS acceptance is produced by this observation-ingress change.
+
+## AMA-30: canonical Treasury quote snapshot
+
+`data.treasury_snapshot.persist_treasury_quote_snapshot` derives a RESEARCH Gold
+quote snapshot from exactly four canonical ALFRED Silver parents. Shared ALFRED
+replay checks the raw schema, request series/output type/units and normalized
+rows. Reads of the snapshot repeat the reconstruction, including source parents,
+request identity, metadata and convention fields. Lost or altered lineage blocks
+the snapshot; no manually assembled Bronze curve is created.
+
+The caller supplies an explicit observation date, vintage date and AsOfContext.
+The date-only research selection rule uses America/Chicago with a one-day lag
+and a seven-calendar-day observation age limit. It is a conservative selection
+rule, not proof of economic publication time. No latest-date fallback fills a
+missing observation or expired vintage. Missing-value tombstones remain MISSING.
+Gold VALID describes verified storage, not a valid investment return.
+
+Quotes retain percent units, calendar-month tenors, bond-equivalent simple annual
+basis, semiannual coupons and actual365/366 source day count. Official publication
+time remains UNKNOWN. The existing macro-state required inputs and behavior are
+preserved through the shared replay helper.
+[Treasury FAQ](https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/interest-rates-frequently-asked-questions)
+distinguishes these par yields from effective annual yields and zero-coupon rates.
+This snapshot performs no return conversion, maturity-to-business-day conversion
+or pricing/runtime activation. A separate governed methodology is still required.

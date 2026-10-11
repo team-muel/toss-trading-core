@@ -6,13 +6,14 @@ here; transport and credential/rights approval remain upstream responsibilities.
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Mapping
 
-from .immutable import ImmutableDatasetStore, IngestionResult, ProviderDatasetAdapter
+from .immutable import ImmutableDatasetStore, IngestionResult, ProviderDatasetAdapter, canonical, digest
 from .phase9 import ProviderBatch
 from ..domain.errors import DataQualityError
+from ..time.asof import require_as_of_context
 
 SOURCE = "fred-alfred"
 DATASET = "series-observation-revisions"
@@ -27,6 +28,41 @@ ROW_SCHEMA = {
     "realtime_start": "string", "realtime_end": "string", "value_status": "string",
     "output_type": "integer",
 }
+
+
+def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="ALFRED"):
+    """Replay canonical Silver against its raw parent at the explicit cutoff."""
+    context = require_as_of_context(context)
+    manifest, rows = store.read(manifest_id)
+    expected_schema = f"{SCHEMA_VERSION}:{digest(canonical(ROW_SCHEMA))}"
+    if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status, manifest.schema_version) != (
+            SOURCE, DATASET, "silver", "VALID", expected_schema):
+        raise DataQualityError(f"{error_prefix}_MANIFEST_CONTRACT_INVALID")
+    context.require_known_at(datetime.fromisoformat(manifest.available_at), label="ALFRED dataset")
+    if not isinstance(rows, list) or not rows or len(manifest.parent_manifest_ids) != 1:
+        raise DataQualityError(f"{error_prefix}_MANIFEST_CONTENT_INVALID")
+    parent, raw = store.read(manifest.parent_manifest_ids[0])
+    expected_raw_schema = f"{SCHEMA_VERSION}:raw:{digest(canonical(RAW_SCHEMA))}"
+    if (parent.source, parent.dataset, parent.layer, parent.schema_version, parent.quality_status) != (
+            SOURCE, DATASET, "bronze", expected_raw_schema, "RAW"):
+        raise DataQualityError(f"{error_prefix}_RAW_LINEAGE_INVALID")
+    context.require_known_at(datetime.fromisoformat(parent.available_at), label="ALFRED raw dataset")
+    output_type = rows[0].get("output_type") if isinstance(rows[0], dict) else None
+    expected = [dict(row, series_id=series_id) for row in normalize_vintages(
+        raw, series_id=series_id, output_type=output_type)]
+    if rows != expected:
+        raise DataQualityError(f"{error_prefix}_NORMALIZATION_MISMATCH")
+    receipt = store.read_catalog("requests", parent.request_hash)
+    if (manifest.request_hash != parent.request_hash or
+            (receipt.get("source"), receipt.get("dataset"), receipt.get("endpoint"), receipt.get("http_method")) !=
+            (SOURCE, DATASET, "/fred/series/observations", "GET")):
+        raise DataQualityError(f"{error_prefix}_REQUEST_CONFLICT")
+    request = receipt["request"]
+    if (not isinstance(request, dict) or request.get("series_id") != series_id
+            or type(request.get("output_type", 1)) is not int
+            or request.get("output_type", 1) != output_type or request.get("units", "lin") != "lin"):
+        raise DataQualityError(f"{error_prefix}_REQUEST_CONFLICT")
+    return rows
 
 
 def _day(value: object) -> date:
