@@ -13,3 +13,20 @@ raw root는 `ImmutableDatasetStore`의 검증된 Bronze manifest에서만 생성
 
 그래프 publication은 content-addressed catalog에 저장하며 주문을 생성하거나 실거래
 권한을 변경하지 않는다. `live_trading_enabled` 기본값은 계속 `false`다.
+
+## 모델 출력의 시간 계약
+
+`bind_authorized_model_calculation`은 기존 runtime registry authorization을 다시
+검증한 뒤 final output의 `as_of`와 완전한 `validity`를 요구한다. `validity`는
+forecast/holding horizon, expiry, decay profile, half-life를 모두 명시하며 공통
+`SignalValidity.from_payload`로 읽는다. 누락된 값이나 숫자 형식을 추론하지 않는다.
+선택적인 output `horizon`도 forecast horizon과 일치해야 한다.
+
+생성 시각은 timezone-aware여야 하고 binding 시각보다 미래일 수 없다. 생성 시각
+이전에 만료된 출력과 binding 시각에 이미 만료된 출력은 거부한다. 생성 시각과
+validity는 immutable final node와 binding hash에 함께 포함된다. binding은 decay를
+출력 값에 다시 적용하지 않으며 소비자는 기존 effective-weight 계약을 사용한다.
+
+시간 계약이 없는 과거 graph는 일반 lineage로 보존할 수 있지만 모델 authorization
+binding으로 승격할 수 없다. 이 API 보강은 실제 producer 연결, matured OOS 증거,
+paper 또는 live acceptance를 증명하지 않는다.

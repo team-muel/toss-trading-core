@@ -106,3 +106,22 @@ def test_alignment_requires_typed_validity_even_for_one_input(values):
 def test_alignment_rejects_different_expiry_or_decay(changes):
     with pytest.raises(DataQualityError, match="SIGNAL_VALIDITY_MISMATCH"):
         require_horizon_alignment((validity(), validity(**changes)))
+
+
+def test_complete_validity_roundtrips_without_coercion():
+    item = validity(profile=DecayProfile.EXPONENTIAL, half_life=3600)
+    assert SignalValidity.from_payload(item.payload()) == item
+
+
+@pytest.mark.parametrize("update", [
+    lambda p: p.update(forecast_horizon="63"),
+    lambda p: p.update(holding_horizon=21.0),
+    lambda p: p.update(valid_until="invalid"),
+    lambda p: p.update(decay_profile="UNKNOWN"),
+    lambda p: p.update(extra="ignored"),
+])
+def test_payload_decoder_rejects_coercion_or_incomplete_contract(update):
+    payload = validity().payload()
+    update(payload)
+    with pytest.raises(InvariantViolation, match="SIGNAL_VALIDITY_PAYLOAD_INVALID"):
+        SignalValidity.from_payload(payload)

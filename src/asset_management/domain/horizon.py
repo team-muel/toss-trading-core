@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal, localcontext
 from enum import StrEnum
 from typing import Iterable, cast
+from collections.abc import Mapping
 
 from .errors import DataQualityError, InvariantViolation
 
@@ -74,6 +75,23 @@ class SignalValidity:
             "decay_profile": self.decay_profile.value,
             "half_life_seconds": self.half_life_seconds,
         }
+
+    @classmethod
+    def from_payload(cls, value: object) -> SignalValidity:
+        """Decode the complete contract without coercing numeric or missing fields."""
+        fields = {"forecast_horizon", "holding_horizon", "valid_until", "decay_profile", "half_life_seconds"}
+        if not isinstance(value, Mapping) or set(value) != fields:
+            raise InvariantViolation("SIGNAL_VALIDITY_PAYLOAD_INVALID")
+        forecast, holding = value["forecast_horizon"], value["holding_horizon"]
+        expiry, profile, half_life = value["valid_until"], value["decay_profile"], value["half_life_seconds"]
+        if (type(forecast) is not int or type(holding) is not int or
+                not isinstance(expiry, str) or not isinstance(profile, str) or
+                (half_life is not None and type(half_life) is not int)):
+            raise InvariantViolation("SIGNAL_VALIDITY_PAYLOAD_INVALID")
+        try:
+            return cls(forecast, holding, datetime.fromisoformat(expiry), DecayProfile(profile), half_life)
+        except (ValueError, InvariantViolation) as error:
+            raise InvariantViolation("SIGNAL_VALIDITY_PAYLOAD_INVALID") from error
 
 
 def require_horizon_alignment(signals: Iterable[SignalValidity]) -> SignalValidity:

@@ -11,7 +11,7 @@ import json
 from asset_management.data.asof_query import AsOfRepository
 from asset_management.data.immutable import canonical, digest
 from asset_management.domain.errors import DataQualityError, InvariantViolation
-from asset_management.domain.horizon import DecayProfile, SignalValidity
+from asset_management.domain.horizon import SignalValidity
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.domain.scalars import Currency
 from asset_management.time.asof import AsOfContext
@@ -213,24 +213,9 @@ def _authorization_payload(value: RuntimeModelAuthorization) -> dict[str, str]:
 
 
 def _validity_from_payload(value: object) -> SignalValidity:
-    if not isinstance(value, Mapping) or set(value) != {
-            "forecast_horizon", "holding_horizon", "valid_until", "decay_profile",
-            "half_life_seconds"}:
-        raise DataQualityError("COMPONENT_FORECAST_VALIDITY_INVALID")
-    if (type(value["forecast_horizon"]) is not int or
-            type(value["holding_horizon"]) is not int or
-            not isinstance(value["valid_until"], str) or
-            not isinstance(value["decay_profile"], str) or
-            (value["half_life_seconds"] is not None and
-             type(value["half_life_seconds"]) is not int)):
-        raise DataQualityError("COMPONENT_FORECAST_VALIDITY_INVALID")
     try:
-        return SignalValidity(
-            value["forecast_horizon"], value["holding_horizon"],
-            datetime.fromisoformat(value["valid_until"]),
-            DecayProfile(value["decay_profile"]), value["half_life_seconds"],
-        )
-    except Exception as exc:
+        return SignalValidity.from_payload(value)
+    except InvariantViolation as exc:
         raise DataQualityError("COMPONENT_FORECAST_VALIDITY_INVALID") from exc
 
 
