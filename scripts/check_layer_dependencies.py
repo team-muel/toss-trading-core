@@ -54,6 +54,8 @@ def check_layers(root: Path) -> dict[str, object]:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             for target in import_targets(node, package):
+                if (target == "alpha_management" or target.startswith("alpha_management.")) and source not in SHELLS:
+                    violations.append(f"{path.relative_to(root).as_posix()}:{node.lineno}: {target}: core cannot import sibling research")
                 if target == "asset_management" or target.startswith("asset_management."):
                     layer = target.split(".")[1] if "." in target else None
                     reason = None

@@ -48,6 +48,19 @@ def test_layer_contract_and_execution_boundary(tmp_path, layer, text):
         check_layers(tmp_path)
 
 
+@pytest.mark.parametrize("layer", ["domain", "features", "execution", "governance"])
+@pytest.mark.parametrize("text", [
+    "import alpha_management",
+    "import alpha_management.history as history",
+    "from alpha_management.history import returns",
+    "if False:\n    from alpha_management import history",
+])
+def test_core_cannot_import_sibling_research(tmp_path, layer, text):
+    source(tmp_path, layer, text)
+    with pytest.raises(ValueError, match="core cannot import sibling research"):
+        check_layers(tmp_path)
+
+
 @pytest.mark.parametrize("layer,text", [
     ("features", "from asset_management.domain import errors"),
     ("features", "from ..domain import errors"),
@@ -56,6 +69,7 @@ def test_layer_contract_and_execution_boundary(tmp_path, layer, text):
     ("execution", "from asset_management.decisions import governor"),
     ("orchestration", "from asset_management.execution import intents"),
     ("orchestration", "from asset_management.validation import account_truth"),
+    ("orchestration", "from alpha_management.history import returns"),
 ])
 def test_inward_same_layer_and_shell_composition_allowed(tmp_path, layer, text):
     source(tmp_path, layer, text)

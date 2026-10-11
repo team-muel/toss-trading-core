@@ -36,6 +36,8 @@ pricing/expectation/risk, calculation/signal or portfolio computation modules.
 The existing `check_legacy_boundary.py` separately enforces legacy and
 dynamic-import restrictions; this check does not duplicate those trust rules.
 Import checks do not prove runtime evidence, policy approval or trading authority.
+The layer checker also rejects direct `alpha_management` imports from every
+core layer; only outer shell integration may consume sibling research results.
 
 Imports from the legacy `toss_trading` package are permitted only inside
 anti-corruption adapters while the verified Toss foundation is migrated. They
