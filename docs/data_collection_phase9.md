@@ -224,3 +224,30 @@ preserved through the shared replay helper.
 distinguishes these par yields from effective annual yields and zero-coupon rates.
 This snapshot performs no return conversion, maturity-to-business-day conversion
 or pricing/runtime activation. A separate governed methodology is still required.
+
+## AMA-30: captured ALFRED response lineage
+
+`ingest_captured_alfred_response` consumes a preserved `unadmitted-http-responses`
+catalog identity for the exact official observations API, GET, RESEARCH, HTTP200.
+It verifies decoded-byte SHA256, JSON request/response output type and linear units,
+classified credentials, and aware HTTP Date/actual receipt timestamps. Duplicate
+JSON keys, sensitive response fields, conflicting identity or missing metadata
+are rejected before admission. An incomplete page remains raw and cannot create
+Silver. No request receipt or historical availability is synthesized.
+
+The existing ProviderDatasetAdapter emits version `alfred-captured-vintages-v1`,
+whose Bronze binds the original response receipt and whose Silver preserves the
+existing row semantics and mapping. Every Bronze/Silver read revalidates captured
+bytes, the request and transport times; Silver also recomputes normalized rows.
+Missing or corrupted source receipts block descendants and receipt audits.
+Macro-state and Treasury snapshots consume this version through their existing
+shared replay helper. Their required inputs, date-selection policies, tombstones
+and authority boundaries remain unchanged.
+
+The older `alfred-vintages-v1` decoded-batch contract remains readable under its
+original semantics; it does not carry this transport dependency and is not
+retroactively relabeled as captured evidence. New real-response admission uses
+the captured contract. Both versions remain research inputs: HTTP Date is
+transport metadata, not an economic publication instant. There is no pricing,
+runtime, maturity/OOS, source-rights or live promotion. Reverting this ingress and
+read dispatch stops new captured admission; preserve all immutable source data.

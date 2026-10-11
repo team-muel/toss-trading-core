@@ -36,7 +36,9 @@ def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="A
     """Replay canonical Silver against its raw parent at the explicit cutoff."""
     context = require_as_of_context(context)
     manifest, rows = store.read(manifest_id)
-    expected_schema = f"{SCHEMA_VERSION}:{digest(canonical(ROW_SCHEMA))}"
+    from .alfred_ingress import SCHEMA_VERSION as CAPTURE_VERSION, RAW_SCHEMA as CAPTURE_RAW_SCHEMA
+    version = CAPTURE_VERSION if manifest.schema_version.startswith(f"{CAPTURE_VERSION}:") else SCHEMA_VERSION
+    expected_schema = f"{version}:{digest(canonical(ROW_SCHEMA))}"
     if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status, manifest.schema_version) != (
             SOURCE, DATASET, "silver", "VALID", expected_schema):
         raise DataQualityError(f"{error_prefix}_MANIFEST_CONTRACT_INVALID")
@@ -44,11 +46,14 @@ def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="A
     if not isinstance(rows, list) or not rows or len(manifest.parent_manifest_ids) != 1:
         raise DataQualityError(f"{error_prefix}_MANIFEST_CONTENT_INVALID")
     parent, raw = store.read(manifest.parent_manifest_ids[0])
-    expected_raw_schema = f"{SCHEMA_VERSION}:raw:{digest(canonical(RAW_SCHEMA))}"
+    raw_schema = CAPTURE_RAW_SCHEMA if version == CAPTURE_VERSION else RAW_SCHEMA
+    expected_raw_schema = f"{version}:raw:{digest(canonical(raw_schema))}"
     if (parent.source, parent.dataset, parent.layer, parent.schema_version, parent.quality_status) != (
             SOURCE, DATASET, "bronze", expected_raw_schema, "RAW"):
         raise DataQualityError(f"{error_prefix}_RAW_LINEAGE_INVALID")
     context.require_known_at(datetime.fromisoformat(parent.available_at), label="ALFRED raw dataset")
+    if version == CAPTURE_VERSION:
+        raw = raw["response"]
     output_type = rows[0].get("output_type") if isinstance(rows[0], dict) else None
     expected = [dict(row, series_id=series_id) for row in normalize_vintages(
         raw, series_id=series_id, output_type=output_type)]
