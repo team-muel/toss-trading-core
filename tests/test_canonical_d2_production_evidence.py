@@ -363,7 +363,8 @@ def test_canonical_evidence_replays_only_a_complete_persisted_bundle(monkeypatch
     before_database = database.read_bytes()
     before_store = {str(path.relative_to(store.layout.root)): path.read_bytes()
                     for path in store.layout.root.rglob("*") if path.is_file()}
-    replayed, lineage, migrations = replay_persisted_d2(database, store.layout.root, "canonical-run@1")
+    replayed, lineage, migrations, operations = replay_persisted_d2(database, store.layout.root, "canonical-run@1")
+    assert operations == {}
     assert migrations == tuple(item.version for item in load_migration_catalog(ROOT / "schemas"))
     assert replayed == recorded
     assert lineage == {"runtime_run_id": "canonical-run@1", "as_of_utc": now.isoformat(),
@@ -625,3 +626,55 @@ def test_provider_statement_cannot_be_rebound_to_another_runtime(monkeypatch, tm
         conn.execute("INSERT INTO am_provider_accounting_snapshot VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      ("provider-accounting:other-run:reused", "other-run", row[0], row[1], "account-2",
                       now.isoformat(), "{}", "f" * 64, now.isoformat()))
+
+
+@pytest.mark.parametrize("failure", [None, "unattested", "hash", "time", "project", "endpoint", "source", "stale", "future", "pagination"])
+def test_operations_observations_require_existing_signed_complete_fresh_exports(monkeypatch, failure):
+    from scripts.check_application_runtime_deployment_evidence import verify_operations_observations
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", now.isoformat(), now.isoformat(), "git:test", (now - timedelta(hours=5)).isoformat()))
+    attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
+    project = "toss-trading-core-lab-508411"
+    observations = {}
+    for name, endpoint, method, collection in (
+        ("iam_policy_observation", "https://cloudasset.googleapis.com/v1/projects/347216292745:searchAllIamPolicies", "GET", "results"),
+        ("api_state_observation", "https://serviceusage.googleapis.com/v1/projects/347216292745/services?filter=state%3AENABLED", "GET", "services"),
+    ):
+        received = now
+        if failure == "stale":
+            received -= timedelta(hours=2)
+        elif failure == "future":
+            received += timedelta(seconds=1)
+        body = {collection: []}
+        if failure == "pagination":
+            body["nextPageToken"] = "uncollected"
+        raw_store = SQLiteRawResponseStore(conn)
+        raw_id = raw_store.append(source="untrusted" if failure == "source" else "gcp-operations",
+            endpoint=endpoint + "/wrong" if failure == "endpoint" else endpoint,
+            http_method=method, request_payload={}, status_code=200, body=body,
+            requested_at=received, received_at=received, account_id=None,
+            schema_version="gcp-operation-export@1")
+        if failure != "unattested":
+            _attest(conn, raw_id, attestor, received)
+        response = raw_store.verified(raw_id)
+        observations[name] = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + response.response_hash,
+                              "source_reference": endpoint, "project_id": project,
+                              "observed_at": received.isoformat()}
+    if failure == "hash":
+        observations["iam_policy_observation"]["artifact_sha256"] = "sha256:" + "0" * 64
+    elif failure == "time":
+        observations["iam_policy_observation"]["observed_at"] = (now - timedelta(seconds=1)).isoformat()
+    elif failure == "project":
+        observations["iam_policy_observation"]["project_id"] = "wrong-project"
+    conn.commit()
+    before = conn.total_changes
+    if failure is None:
+        assert verify_operations_observations(conn, "canonical-run@1", observations, clock=FrozenClock(now)) == observations
+    else:
+        with pytest.raises((ValueError, DataQualityError, InvariantViolation)):
+            verify_operations_observations(conn, "canonical-run@1", observations, clock=FrozenClock(now))
+    assert conn.total_changes == before
+    conn.close()

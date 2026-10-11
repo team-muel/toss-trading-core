@@ -14,10 +14,14 @@ import sqlite3
 from jsonschema import Draft202012Validator, FormatChecker
 
 from asset_management.data.immutable import ImmutableDatasetStore
+from asset_management.data.raw_store import SQLiteRawResponseStore
 from asset_management.config.migrations import load_migration_catalog
 from asset_management.domain.errors import AssetManagementError
 from asset_management.time.clock import SystemClock
 from asset_management.validation import CanonicalD2ProductionEvidenceRepository
+from asset_management.validation.external_attestation import (
+    require_runtime_attestor_registry, require_external_evidence_attestation,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,7 +35,39 @@ def _instant(value):
     return parsed.astimezone(timezone.utc)
 
 
-def replay_persisted_d2(database, immutable_store, runtime_run_id):
+def verify_operations_observations(connection, runtime_run_id, observations, *, clock=None):
+    """Verify existing externally attested exports; never collect or persist them."""
+    now = (clock or SystemClock()).now_utc()
+    identity = json.loads((ROOT / "config/research_operations_identity.json").read_text(encoding="utf-8"))
+    project = identity["approved_project_id"]
+    endpoints = {
+        "iam_policy_observation": ("https://cloudasset.googleapis.com/v1/projects/347216292745:searchAllIamPolicies", "GET", "results"),
+        "api_state_observation": (f"https://serviceusage.googleapis.com/v1/projects/{identity['approved_project_number']}/services?filter=state%3AENABLED", "GET", "services"),
+    }
+    registry = require_runtime_attestor_registry(conn=connection, runtime_run_id=runtime_run_id, cutoff=now)
+    verified = {}
+    for name, (endpoint, method, collection) in endpoints.items():
+        observation = observations[name]
+        response = SQLiteRawResponseStore(connection).verified(observation["raw_response_id"])
+        if (response.source != "gcp-operations" or response.endpoint != endpoint or
+                response.http_method != method or response.status_code != 200 or
+                response.schema_version != "gcp-operation-export@1" or
+                observation["project_id"] != project or observation["source_reference"] != endpoint or
+                observation["artifact_sha256"] != "sha256:" + response.response_hash or
+                _instant(observation["observed_at"]) != response.received_at or
+                response.requested_at > response.received_at or
+                response.requested_at > now or response.received_at > now or
+                now - response.requested_at > MAXIMUM_STATE_AGE or
+                not isinstance(response.body, dict) or
+                not isinstance(response.body.get(collection), list) or response.body.get("nextPageToken")):
+            raise ValueError("GCP_OPERATION_OBSERVATION_UNVERIFIED")
+        require_external_evidence_attestation(conn=connection, raw_response_id=observation["raw_response_id"],
+                                             response=response, cutoff=now, registry=registry)
+        verified[name] = dict(observation)
+    return verified
+
+
+def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observations=None):
     """Replay, without writes, one existing canonical D2 bundle and return its source lineage."""
     database = Path(database)
     if not database.is_file():
@@ -62,13 +98,15 @@ def replay_persisted_d2(database, immutable_store, runtime_run_id):
             ("runtime_run_id", "as_of_utc", "information_cutoff_utc", "code_revision"),
             map(str, row),
         ))
-        return result, lineage, tuple(row[0] for row in applied)
+        verified_operations = (verify_operations_observations(connection, runtime_run_id, observations)
+                               if observations is not None else {})
+        return result, lineage, tuple(row[0] for row in applied), verified_operations
     finally:
         connection.close()
 
 
 def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persisted_lineage=None,
-                      persisted_migrations=None, clock=None):
+                      persisted_migrations=None, persisted_operations=None, clock=None):
     if not isinstance(evidence, dict):
         return ["deployment evidence must be a JSON object"]
     if not isinstance(schema, dict) or not isinstance(identity, dict):
@@ -133,6 +171,9 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
                 errors.append(f"runtime lineage {field} does not match the persisted runtime record")
     if persisted_migrations is None or evidence["migration_versions"] != list(persisted_migrations):
         errors.append("migration_versions must match the authoritative applied migration inventory")
+    for name in ("iam_policy_observation", "api_state_observation"):
+        if persisted_operations is None or persisted_operations.get(name) != evidence[name]:
+            errors.append(f"{name} must match an externally attested persisted observation")
 
     try:
         observed_at = _instant(evidence["observed_at"])
@@ -146,7 +187,7 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
         restore_at = _instant(restore_test["verified_at"])
         d2_at = _instant(replay["observed_at"])
         inventory_times = [_instant(evidence[name]["observed_at"])
-                           for name in ("scheduler_inventory", "ingress_inventory")]
+                           for name in ("scheduler_inventory", "ingress_inventory", "iam_policy_observation", "api_state_observation")]
         immutable_until = _instant(snapshot["retention_policy"]["immutable_until"])
         retention_days = snapshot["retention_policy"]["minimum_retention_days"]
         now = _instant((clock or SystemClock()).now_utc())
@@ -211,13 +252,15 @@ def main(argv=None):
         errors = sorted(set(schema_errors))
     else:
         try:
-            persisted_d2, persisted_lineage, persisted_migrations = replay_persisted_d2(
-                args.database, args.immutable_store, evidence["d2_replay"]["runtime_run_id"])
+            persisted_d2, persisted_lineage, persisted_migrations, persisted_operations = replay_persisted_d2(
+                args.database, args.immutable_store, evidence["d2_replay"]["runtime_run_id"],
+                observations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation")})
             errors = validate_evidence(
                 evidence, schema, identity,
                 persisted_d2=persisted_d2,
                 persisted_lineage=persisted_lineage,
                 persisted_migrations=persisted_migrations,
+                persisted_operations=persisted_operations,
             )
         except (AssetManagementError, OSError, ValueError, sqlite3.DatabaseError,
                 KeyError, TypeError, AttributeError, IndexError, RecursionError) as exc:

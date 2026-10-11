@@ -139,6 +139,26 @@ The verifier pins its schema and project identity to the repository-controlled
 files. The CLI accepts no schema or identity override. Recursive JSON failures
 in both input evidence and persisted replay also return blocked JSON.
 
+IAM/API state is represented by timestamped observations referencing existing
+raw response IDs, export hashes, and official project-scoped endpoints. The
+same SQLite read transaction verifies each raw response and its pre-existing
+external attestation against the runtime's governed attestor registry. Actual
+received time must match the observation; request and received times are bound
+by the signed receipt and must be current. Missing signatures, wrong project,
+source, endpoint, hash, schema or method, and uncollected response pages block
+validation. These exports verify provenance and freshness, not least-privilege
+approval or effective inherited IAM access.
+
+The IAM observation uses the official read-only Cloud Asset Inventory
+[`searchAllIamPolicies` GET endpoint](https://docs.cloud.google.com/asset-inventory/docs/reference/rest/v1/TopLevel/searchAllIamPolicies)
+at the approved project number, without query filters that narrow its scope.
+It is an IAM search export rather than the POST Resource Manager getIamPolicy
+response. The API-state observation uses Service Usage's enabled-services GET
+listing for that same project number. Any future collection requires separately
+approved access and complete results; this plan enables no API and performs no
+cloud call. Runtime API allowlists and IAM approval remain separate blockers.
+Tests construct signed temporary exports only; they are not real GCP evidence.
+
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as
 an automatic rollback. No retirement command or physical deletion is part of

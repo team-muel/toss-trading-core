@@ -4,7 +4,7 @@
   "title": "Future separately approved ApplicationRuntime deployment evidence",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "source_sha", "image_digest", "manifest_hash", "project", "runtime_topology", "runtime_lineage", "d2_replay", "iam_policy_export_hash", "api_state_hash", "runtime_mode", "live_trading_enabled", "migration_versions", "observability_config_hash", "scheduler_inventory", "ingress_inventory", "observed_at", "actor", "approval_reference"],
+  "required": ["schema_version", "source_sha", "image_digest", "manifest_hash", "project", "runtime_topology", "runtime_lineage", "d2_replay", "iam_policy_observation", "api_state_observation", "runtime_mode", "live_trading_enabled", "migration_versions", "observability_config_hash", "scheduler_inventory", "ingress_inventory", "observed_at", "actor", "approval_reference"],
   "properties": {
     "schema_version": {"const": "canonical-application-runtime-deployment-evidence@1"},
     "source_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
@@ -18,8 +18,8 @@
     },
     "runtime_lineage": {"$ref": "#/$defs/runtimeLineage"},
     "d2_replay": {"$ref": "#/$defs/d2Replay"},
-    "iam_policy_export_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "api_state_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "iam_policy_observation": {"$ref": "#/$defs/operationObservation"},
+    "api_state_observation": {"$ref": "#/$defs/operationObservation"},
     "runtime_mode": {"const": "READ_ONLY"},
     "live_trading_enabled": {"const": false},
     "migration_versions": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
@@ -31,6 +31,38 @@
     "approval_reference": {"type": "string", "minLength": 1}
   },
   "$defs": {
+    "operationObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "raw_response_id",
+        "artifact_sha256",
+        "source_reference",
+        "project_id",
+        "observed_at"
+      ],
+      "properties": {
+        "raw_response_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artifact_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "source_reference": {
+          "type": "string",
+          "pattern": "^https://[^\\s]+$"
+        },
+        "project_id": {
+          "const": "toss-trading-core-lab-508411"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "observedProject": {
       "type": "object", "additionalProperties": false,
       "required": ["resource_type", "resource_id", "project_id", "project_number", "observed_at", "source_reference"],

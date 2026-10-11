@@ -126,8 +126,12 @@ def valid_deployment_evidence():
             "evidence_reference": "https://evidence.example/runtime/lineage.json",
         },
         "d2_replay": d2_replay,
-        "iam_policy_export_hash": "sha256:" + "d" * 64,
-        "api_state_hash": "sha256:" + "e" * 64,
+        "iam_policy_observation": {"raw_response_id": "iam@1", "artifact_sha256": "sha256:" + "d" * 64,
+                                   "source_reference": "https://cloudasset.googleapis.com/v1/projects/347216292745:searchAllIamPolicies",
+                                   "project_id": project_id, "observed_at": observation},
+        "api_state_observation": {"raw_response_id": "api@1", "artifact_sha256": "sha256:" + "e" * 64,
+                                  "source_reference": "https://serviceusage.googleapis.com/v1/projects/347216292745/services?filter=state%3AENABLED",
+                                  "project_id": project_id, "observed_at": observation},
         "runtime_mode": "READ_ONLY",
         "live_trading_enabled": False,
         "migration_versions": [item.version for item in load_migration_catalog(ROOT / "schemas")],
@@ -185,6 +189,7 @@ def validate_future_evidence(evidence, *, clock=None):
         persisted_d2=persisted_d2_fixture(),
         persisted_lineage=persisted_lineage_fixture(),
         persisted_migrations=tuple(item.version for item in load_migration_catalog(ROOT / "schemas")),
+        persisted_operations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation")},
         clock=clock or FrozenClock(datetime(2026, 9, 24, 0, 2, tzinfo=timezone.utc)),
     )
 
@@ -302,7 +307,7 @@ def test_evidence_freshness_and_retention_use_verifier_clock(now, message):
 @pytest.mark.parametrize("error", [KeyError("manifest_id"), TypeError("malformed"), AttributeError("malformed"), IndexError("malformed"), RecursionError("nested evidence")])
 def test_corrupt_persisted_evidence_returns_blocked_json(tmp_path, monkeypatch, capsys, error):
     import scripts.check_application_runtime_deployment_evidence as checker
-    def corrupt(*args):
+    def corrupt(*args, **kwargs):
         raise error
     monkeypatch.setattr(checker, "replay_persisted_d2", corrupt)
     evidence_path = tmp_path / "evidence.json"
