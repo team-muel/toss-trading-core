@@ -207,6 +207,9 @@ The date-only research selection rule uses America/Chicago with a one-day lag
 and a seven-calendar-day observation age limit. It is a conservative selection
 rule, not proof of economic publication time. No latest-date fallback fills a
 missing observation or expired vintage. Missing-value tombstones remain MISSING.
+Treasury parents must use default/daily frequency without aggregation options;
+weekly/monthly aggregates cannot authorize daily quotes. Macro-state continues
+to use its existing monthly-series contracts.
 Gold VALID describes verified storage, not a valid investment return.
 
 Quotes retain percent units, calendar-month tenors, bond-equivalent simple annual

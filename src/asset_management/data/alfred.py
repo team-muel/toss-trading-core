@@ -30,7 +30,7 @@ ROW_SCHEMA = {
 }
 
 
-def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="ALFRED"):
+def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="ALFRED", require_daily=False):
     """Replay canonical Silver against its raw parent at the explicit cutoff."""
     context = require_as_of_context(context)
     manifest, rows = store.read(manifest_id)
@@ -62,6 +62,9 @@ def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="A
             or type(request.get("output_type", 1)) is not int
             or request.get("output_type", 1) != output_type or request.get("units", "lin") != "lin"):
         raise DataQualityError(f"{error_prefix}_REQUEST_CONFLICT")
+    if require_daily and (request.get("frequency") not in (None, "d")
+                          or request.get("aggregation_method") is not None):
+        raise DataQualityError(f"{error_prefix}_DAILY_FREQUENCY_REQUIRED")
     return rows
 
 

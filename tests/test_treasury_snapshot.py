@@ -16,7 +16,7 @@ RECEIVED = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
 LICENSE = "purpose=synthetic-research;redistribution=forbidden;retention=perpetual"
 
 
-def fixture(tmp_path, *, missing=False):
+def fixture(tmp_path, *, missing=False, request_changes=None):
     store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
     manifests = {}
     for series in TENORS:
@@ -25,7 +25,7 @@ def fixture(tmp_path, *, missing=False):
             "value": "." if missing and series == "DGS3MO" else "4.23"}]}
         captured = ProviderBatch(source=SOURCE, dataset=DATASET, schema_version=SCHEMA_VERSION,
             endpoint="/fred/series/observations", http_method="GET", status_code=200,
-            request={"series_id": series, "output_type": 1}, body=payload,
+            request={"series_id": series, "output_type": 1, **(request_changes or {})}, body=payload,
             received_at=RECEIVED, available_at=RECEIVED, provider_timestamp=RECEIVED,
             source_revision="synthetic", code_revision="git:abcdef0", license_tag=LICENSE)
         result = ingest_alfred(captured, store)
@@ -134,3 +134,17 @@ def test_rehashed_wrong_raw_request_cannot_authorize_quote(tmp_path, change):
     with pytest.raises(DataQualityError, match="ALFRED_REQUEST_CONFLICT"):
         persist(store, manifests)
     assert not list((tmp_path / "gold").glob("*.json"))
+
+
+@pytest.mark.parametrize("request_changes", [{"frequency": "w"}, {"frequency": "m"},
+    {"aggregation_method": "avg"}, {"frequency": "d", "aggregation_method": "eop"}])
+def test_frequency_or_aggregation_transform_is_not_a_daily_quote(tmp_path, request_changes):
+    store, manifests = fixture(tmp_path, request_changes=request_changes)
+    with pytest.raises(DataQualityError, match="ALFRED_DAILY_FREQUENCY_REQUIRED"):
+        persist(store, manifests)
+    assert not list((tmp_path / "gold").glob("*.json"))
+
+
+def test_explicit_daily_frequency_preserves_quote(tmp_path):
+    store, manifests = fixture(tmp_path, request_changes={"frequency": "d"})
+    assert store.read(persist(store, manifests).manifest_id)[1]["status"] == "OBSERVED"

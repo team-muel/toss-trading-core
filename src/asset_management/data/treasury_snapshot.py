@@ -30,7 +30,7 @@ def _assemble(store, manifests, observation_date, vintage_date, context):
         raise DataQualityError("TREASURY_QUOTES_STALE")
     quotes, parents = [], []
     for series in sorted(TREASURY_SERIES):
-        rows = read_vintage_rows(store, manifests[series], series, context)
+        rows = read_vintage_rows(store, manifests[series], series, context, require_daily=True)
         selected = [row for row in rows if row["observation_date"] == observation_date
                     and row["realtime_start"] <= vintage_date <= row["realtime_end"]]
         if len(selected) != 1:
