@@ -44,7 +44,14 @@ def verify_operations_observations(connection, runtime_run_id, observations, *, 
         "iam_policy_observation": ("https://cloudasset.googleapis.com/v1/projects/347216292745:searchAllIamPolicies", "GET", "results"),
         "api_state_observation": (f"https://serviceusage.googleapis.com/v1/projects/{identity['approved_project_number']}/services?filter=state%3AENABLED", "GET", "services"),
     }
-    registry = require_runtime_attestor_registry(conn=connection, runtime_run_id=runtime_run_id, cutoff=now)
+    runtime = connection.execute(
+        "SELECT information_cutoff_utc FROM am_runtime_run WHERE runtime_run_id=?",
+        (runtime_run_id,),
+    ).fetchone()
+    if runtime is None:
+        raise ValueError("CANONICAL_D2_RUNTIME_MISSING")
+    registry = require_runtime_attestor_registry(conn=connection, runtime_run_id=runtime_run_id,
+                                                cutoff=_instant(runtime[0]))
     verified = {}
     for name, (endpoint, method, collection) in endpoints.items():
         observation = observations[name]

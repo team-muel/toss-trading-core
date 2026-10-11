@@ -632,10 +632,11 @@ def test_provider_statement_cannot_be_rebound_to_another_runtime(monkeypatch, tm
 def test_operations_observations_require_existing_signed_complete_fresh_exports(monkeypatch, failure):
     from scripts.check_application_runtime_deployment_evidence import verify_operations_observations
     now = datetime.now(timezone.utc).replace(microsecond=0)
+    runtime_cutoff = now - timedelta(minutes=30)
     conn = sqlite3.connect(":memory:")
     _schema(conn, now)
     conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
-                 ("canonical-run@1", now.isoformat(), now.isoformat(), "git:test", (now - timedelta(hours=5)).isoformat()))
+                 ("canonical-run@1", runtime_cutoff.isoformat(), runtime_cutoff.isoformat(), "git:test", (now - timedelta(hours=5)).isoformat()))
     attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
     project = "toss-trading-core-lab-508411"
     observations = {}
