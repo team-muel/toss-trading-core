@@ -8,6 +8,11 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+if __package__:
+    from .check_research_operations_destination import validate_registry
+else:
+    from check_research_operations_destination import validate_registry
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = ROOT / "deploy/preflight/application_runtime_manifest.json"
 SCHEMA_PATH = ROOT / "schemas/application_runtime_preflight.schema.json"
@@ -72,10 +77,13 @@ def validate_manifest(manifest: object, identity: object, bucket_registry: objec
     if any(item["state"] != "NOT_ENABLED_BY_THIS_CHANGE" for item in manifest["apis"]):
         errors.append("preflight must not represent API enablement")
 
-    approved = bucket_registry.get("approved_buckets")
-    if not isinstance(approved, list):
-        errors.append("approved bucket registry must contain a list")
-        approved = []
+    try:
+        validate_registry(bucket_registry, identity)
+    except (ValueError, KeyError) as error:
+        errors.append(f"approved bucket registry invalid: {error}")
+        approved = set()
+    else:
+        approved = {item["bucket_name"] for item in bucket_registry["approved_buckets"]}
     if any(bucket not in approved for bucket in storage["approved_data_buckets"]):
         errors.append("manifest names a data bucket absent from the approved registry")
     if storage["backup_bucket"] is not None and storage["backup_bucket"] not in approved:

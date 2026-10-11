@@ -45,6 +45,11 @@ def load_identity(path: Path) -> dict[str, Any]:
 
 def load_registry(path: Path, identity: dict[str, Any]) -> dict[str, Any]:
     value = load_json(path)
+    return validate_registry(value, identity)
+
+
+def validate_registry(value: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
+    """Validate the same repository-owned registry for file and object consumers."""
     if value.get("schema_version") != "research-operations-bucket-registry@1":
         raise ValueError("research operations bucket registry schema is invalid")
     if value.get("approved_project_id") != identity["approved_project_id"]:

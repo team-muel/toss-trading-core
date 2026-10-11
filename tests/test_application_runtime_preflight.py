@@ -403,6 +403,31 @@ def test_repository_identity_and_bucket_registry_must_agree():
     assert any("bucket registry" in error for error in errors(buckets=other_buckets))
 
 
+def test_approved_bucket_object_records_match_manifest_names():
+    candidate = deepcopy(MANIFEST)
+    candidate["storage"].update(approved_data_buckets=["test-approved-data"], backup_bucket="test-approved-backup")
+    candidate["preflight"]["blockers"].remove("NO_APPROVED_DATA_OR_BACKUP_BUCKET")
+    registry = deepcopy(BUCKETS)
+    registry["approved_buckets"] = [
+        {"bucket_name": name, "project_id": IDENTITY["approved_project_id"], "approval_evidence_id": "test-only-approval"}
+        for name in ("test-approved-data", "test-approved-backup")
+    ]
+    assert errors(candidate, buckets=registry) == []
+    candidate["storage"]["backup_bucket"] = "unregistered-backup"
+    assert any("backup bucket absent" in error for error in errors(candidate, buckets=registry))
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["approved_buckets"].append("test-approved-data"),
+    lambda r: r["approved_buckets"].append({"bucket_name": "test-approved-data", "project_id": "wrong-project", "approval_evidence_id": "test"}),
+    lambda r: r["approved_buckets"].append({"bucket_name": "test-approved-data", "project_id": IDENTITY["approved_project_id"], "approval_evidence_id": ""}),
+])
+def test_malformed_bucket_registry_records_are_rejected(mutation):
+    registry = deepcopy(BUCKETS)
+    mutation(registry)
+    assert any("bucket registry invalid" in error for error in errors(buckets=registry))
+
+
 def test_unknown_or_extra_api_is_not_implicitly_allowed():
     candidate = deepcopy(MANIFEST)
     candidate["apis"][0]["state"] = "ENABLED"
