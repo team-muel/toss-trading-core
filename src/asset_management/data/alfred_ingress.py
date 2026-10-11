@@ -11,6 +11,7 @@ import re
 from .alfred import DATASET, INGESTION_SERIES, ROW_SCHEMA, SOURCE, _day, normalize_vintages
 from .immutable import (ImmutableDatasetStore, ProviderDatasetAdapter, canonical,
                         digest, sanitize, _assert_no_secret)
+from ..domain.errors import DataQualityError
 
 SCHEMA_VERSION = "alfred-captured-vintages-v1"
 RAW_SCHEMA = {"response": "object", "source_response_receipt": "string"}
@@ -58,6 +59,21 @@ def _unique_object(pairs):
     return result
 
 
+def normalize_captured_vintages(response, *, series_id, output_type):
+    rows = normalize_vintages(response, series_id=series_id, output_type=output_type)
+    start, end = _day(response["realtime_start"]), _day(response["realtime_end"])
+    observation_start, observation_end = _day(response["observation_start"]), _day(response["observation_end"])
+    for row in rows:
+        revision_start, revision_end = _day(row["realtime_start"]), _day(row["realtime_end"])
+        if (not observation_start <= _day(row["observation_date"]) <= observation_end
+                or (output_type == 3 and not start <= revision_start <= end)
+                or (output_type == 1 and (revision_start > end or revision_end < start))):
+            raise DataQualityError("ALFRED_CAPTURE_ROW_RANGE_CONFLICT")
+    # Preserve original row intervals; consumers must additionally prove their
+    # selected date lies in the captured query and precedes the receipt day.
+    return rows
+
+
 def _read_capture(store, response_id):
     receipt = store.read_catalog("unadmitted-http-responses", response_id)
     if not isinstance(receipt, dict) or (
@@ -88,7 +104,10 @@ def _read_capture(store, response_id):
             or type(response.get("output_type")) is not int
             or response["output_type"] != request.get("output_type", 1)):
         raise ValueError("ALFRED_CAPTURE_RESPONSE_CONFLICT")
-    _validate_query_echo(request, response)
+    try:
+        _validate_query_echo(request, response)
+    except DataQualityError as exc:
+        raise ValueError("ALFRED_CAPTURE_QUERY_INVALID") from exc
     if canonical(sanitize(response, store.secrets)) != canonical(response):
         raise ValueError("ALFRED_CAPTURE_UNREDACTED_RESPONSE")
     _assert_no_secret(response, store.secrets)
@@ -117,7 +136,7 @@ def ingest_captured_alfred_response(store: ImmutableDatasetStore, response_id: s
     series, output_type = request["series_id"], request.get("output_type", 1)
 
     def normalize(raw):
-        return normalize_vintages(raw["response"], series_id=series, output_type=output_type)
+        return normalize_captured_vintages(raw["response"], series_id=series, output_type=output_type)
 
     return ProviderDatasetAdapter(store).ingest(
         body={"response": response, "source_response_receipt": response_id},
@@ -152,7 +171,10 @@ def validate_captured_alfred_lineage(store, manifest, body):
         raise ValueError("ALFRED_CAPTURE_LINEAGE_CONFLICT")
     if manifest.layer == "silver":
         request = receipt["request"]
-        expected_rows = [dict(row, series_id=request["series_id"]) for row in normalize_vintages(
-            response, series_id=request["series_id"], output_type=request.get("output_type", 1))]
+        try:
+            expected_rows = [dict(row, series_id=request["series_id"]) for row in normalize_captured_vintages(
+                response, series_id=request["series_id"], output_type=request.get("output_type", 1))]
+        except DataQualityError as exc:
+            raise ValueError("ALFRED_CAPTURE_NORMALIZATION_INVALID") from exc
         if canonical(body) != canonical(expected_rows):
             raise ValueError("ALFRED_CAPTURE_NORMALIZATION_MISMATCH")

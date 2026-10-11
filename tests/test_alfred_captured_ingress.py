@@ -158,8 +158,14 @@ def test_canonical_macro_uses_captured_silver_without_changing_required_series(t
     for series, observations in rows.items():
         manifests[series] = ingest(store, capture(store, series, observations=observations)).silver_manifest_id
     spec = MacroStateSpec()
-    ctx = replace(context(spec), as_of_utc=NOW, information_cutoff_utc=NOW)
+    decision = RECEIVED.replace(hour=13)
+    ctx = replace(context(spec), as_of_utc=decision, information_cutoff_utc=decision)
     assert run_macro_state(spec, store=store, manifests=manifests, context=ctx).payload()["status"] == "COMPUTED"
+    from asset_management.domain.errors import DataQualityError
+    for later in (NOW, NOW.replace(day=12)):
+        with pytest.raises(DataQualityError, match="MACRO_VINTAGE_OUTSIDE_REQUEST"):
+            run_macro_state(spec, store=store, manifests=manifests,
+                            context=replace(ctx, as_of_utc=later, information_cutoff_utc=later))
 
 
 def test_classified_credentials_and_valid_revision_required(tmp_path):
@@ -213,3 +219,36 @@ def test_unverifiable_or_invalid_query_parameters_do_not_publish(tmp_path, chang
     with pytest.raises((ValueError, DataQualityError)):
         ingest(store, store.catalog("unadmitted-http-responses", original))
     assert not list((tmp_path / "bronze").glob("*.json"))
+
+
+@pytest.mark.parametrize("output_type,observations", [
+    (3, [{"date": "2026-10-08", "DGS1_20261010": "4"}]),
+    (3, [{"date": "2026-10-08", "DGS1_20261008": "4"}]),
+    (1, [{"date": "2026-10-08", "realtime_start": "2026-10-10", "realtime_end": "9999-12-31", "value": "4"}]),
+    (1, [{"date": "2026-10-08", "realtime_start": "2026-10-08", "realtime_end": "2026-10-08", "value": "4"}]),
+])
+def test_outside_capture_row_vintages_remain_raw_without_silver(tmp_path, output_type, observations):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    result = ingest(store, capture(store, output_type=output_type, observations=observations))
+    assert result.status == "NO_TRADE" and result.reason_code == "ALFRED_CAPTURE_ROW_RANGE_CONFLICT"
+    assert result.bronze_manifest_id and result.silver_manifest_id is None
+
+
+def test_captured_rows_cannot_be_consumed_without_selected_vintage(tmp_path):
+    from asset_management.data.alfred import read_vintage_rows
+    from asset_management.domain.errors import DataQualityError
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    result = ingest(store, capture(store))
+    ctx = AsOfContext("capture-mechanism", NOW, NOW, "research-policy", "test-spec", "git:abcdef0")
+    with pytest.raises(DataQualityError, match="ALFRED_CAPTURE_VINTAGE_REQUIRED"):
+        read_vintage_rows(store, result.silver_manifest_id, "DGS1", ctx)
+
+
+def test_malformed_capture_query_is_reported_by_receipt_audit(tmp_path):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    manifest, raw = store.read(ingest(store, capture(store)).bronze_manifest_id)
+    receipt = store.read_catalog("unadmitted-http-responses", raw["source_response_receipt"])
+    receipt["request"]["realtime_start"] = None
+    raw["source_response_receipt"] = store.catalog("unadmitted-http-responses", receipt)
+    clone(store, manifest, raw)
+    assert audit_receipts(tmp_path, secrets=())["findings"]

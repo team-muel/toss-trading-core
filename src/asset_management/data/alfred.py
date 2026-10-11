@@ -38,6 +38,8 @@ def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="A
     manifest, rows = store.read(manifest_id)
     from .alfred_ingress import SCHEMA_VERSION as CAPTURE_VERSION, RAW_SCHEMA as CAPTURE_RAW_SCHEMA
     version = CAPTURE_VERSION if manifest.schema_version.startswith(f"{CAPTURE_VERSION}:") else SCHEMA_VERSION
+    if version == CAPTURE_VERSION and require_vintage_date is None:
+        raise DataQualityError(f"{error_prefix}_CAPTURE_VINTAGE_REQUIRED")
     expected_schema = f"{version}:{digest(canonical(ROW_SCHEMA))}"
     if (manifest.source, manifest.dataset, manifest.layer, manifest.quality_status, manifest.schema_version) != (
             SOURCE, DATASET, "silver", "VALID", expected_schema):

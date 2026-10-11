@@ -56,8 +56,11 @@ class MacroStateResult:
 
 
 def _read_rows(store: ImmutableDatasetStore, manifest_id: str, series_id: str,
-               context: AsOfContext) -> list[dict]:
-    return read_vintage_rows(store, manifest_id, series_id, context, error_prefix="MACRO")
+               context: AsOfContext, vintage_date: str) -> list[dict]:
+    from asset_management.data.alfred_ingress import SCHEMA_VERSION as capture_version
+    captured = store.read_manifest(manifest_id).schema_version.startswith(f"{capture_version}:")
+    return read_vintage_rows(store, manifest_id, series_id, context, error_prefix="MACRO",
+                             require_vintage_date=vintage_date if captured else None)
 
 
 def _monthly_window(rows: list[dict], count: int) -> list[dict] | None:
@@ -89,7 +92,7 @@ def run_macro_state(spec: MacroStateSpec, *, store: ImmutableDatasetStore,
         if series_id not in manifests:
             reasons.append(f"MISSING_SERIES:{series_id}")
             continue
-        rows = _read_rows(store, manifests[series_id], series_id, context)
+        rows = _read_rows(store, manifests[series_id], series_id, context, vintage_cutoff.isoformat())
         snapshot = [row for row in rows if row["realtime_start"] <= vintage_cutoff.isoformat() <= row["realtime_end"]
                     and row["observation_date"] <= local_day.isoformat()]
         if len({row["observation_date"] for row in snapshot}) != len(snapshot):

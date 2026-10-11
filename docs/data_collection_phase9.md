@@ -249,6 +249,13 @@ Missing or corrupted source receipts block descendants and receipt audits.
 Macro-state and Treasury snapshots consume this version through their existing
 shared replay helper. Their required inputs, date-selection policies, tombstones
 and authority boundaries remain unchanged.
+Captured consumers must supply the selected vintage date. Macro-state uses its
+existing lag policy to select that date; shared replay checks explicit query and
+response coverage and requires the vintage day to have closed before receipt.
+An open final row interval cannot authorize dates beyond the captured envelope.
+Output-type3 vintage columns must lie within that envelope; output-type1 intervals
+must intersect it, and observations must lie within its observation range. Raw
+intervals are preserved, never silently extended or relabeled as new revisions.
 
 The older `alfred-vintages-v1` decoded-batch contract remains readable under its
 original semantics; it does not carry this transport dependency and is not
