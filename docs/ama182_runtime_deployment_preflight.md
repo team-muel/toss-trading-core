@@ -135,6 +135,9 @@ The complete applied migration number/name/SQL-hash inventory must equal the
 repository catalog, and the evidence's version list must match it exactly.
 The SQLite read transaction spans migration checks, replay, and lineage reads.
 Malformed persisted artifact structure returns blocked JSON without a traceback.
+The verifier pins its schema and project identity to the repository-controlled
+files. The CLI accepts no schema or identity override. Recursive JSON failures
+in both input evidence and persisted replay also return blocked JSON.
 
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as

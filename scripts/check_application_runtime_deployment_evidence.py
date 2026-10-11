@@ -73,6 +73,10 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
         return ["deployment evidence must be a JSON object"]
     if not isinstance(schema, dict) or not isinstance(identity, dict):
         return ["evidence schema and repository identity must be JSON objects"]
+    trusted_schema = json.loads((ROOT / "schemas/application_runtime_deployment_evidence.schema.json").read_text(encoding="utf-8"))
+    trusted_identity = json.loads((ROOT / "config/research_operations_identity.json").read_text(encoding="utf-8"))
+    if schema != trusted_schema or identity != trusted_identity:
+        return ["evidence contract and identity must match the repository-controlled definitions"]
     errors = [
         error.message
         for error in Draft202012Validator(schema, format_checker=FormatChecker()).iter_errors(evidence)
@@ -186,15 +190,13 @@ def main(argv=None):
                         help="existing canonical SQLite evidence store; opened read-only by replay")
     parser.add_argument("--immutable-store", type=Path, required=True,
                         help="existing immutable D2 source store; replay reads verified objects only")
-    parser.add_argument("--schema", type=Path, default=ROOT / "schemas/application_runtime_deployment_evidence.schema.json")
-    parser.add_argument("--identity", type=Path, default=ROOT / "config/research_operations_identity.json")
     args = parser.parse_args(argv)
 
     try:
         evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
-        schema = json.loads(args.schema.read_text(encoding="utf-8"))
-        identity = json.loads(args.identity.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        schema = json.loads((ROOT / "schemas/application_runtime_deployment_evidence.schema.json").read_text(encoding="utf-8"))
+        identity = json.loads((ROOT / "config/research_operations_identity.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
         print(json.dumps({
             "evidence_contract_valid": False,
             "deployment_authorized": False,
@@ -218,7 +220,7 @@ def main(argv=None):
                 persisted_migrations=persisted_migrations,
             )
         except (AssetManagementError, OSError, ValueError, sqlite3.DatabaseError,
-                KeyError, TypeError, AttributeError, IndexError) as exc:
+                KeyError, TypeError, AttributeError, IndexError, RecursionError) as exc:
             errors = [f"persisted canonical D2 replay failed closed: {exc}"]
 
     print(json.dumps({

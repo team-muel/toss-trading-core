@@ -299,7 +299,7 @@ def test_evidence_freshness_and_retention_use_verifier_clock(now, message):
     assert message in validate_future_evidence(valid_deployment_evidence(), clock=FrozenClock(now))
 
 
-@pytest.mark.parametrize("error", [KeyError("manifest_id"), TypeError("malformed"), AttributeError("malformed"), IndexError("malformed")])
+@pytest.mark.parametrize("error", [KeyError("manifest_id"), TypeError("malformed"), AttributeError("malformed"), IndexError("malformed"), RecursionError("nested evidence")])
 def test_corrupt_persisted_evidence_returns_blocked_json(tmp_path, monkeypatch, capsys, error):
     import scripts.check_application_runtime_deployment_evidence as checker
     def corrupt(*args):
@@ -313,6 +313,28 @@ def test_corrupt_persisted_evidence_returns_blocked_json(tmp_path, monkeypatch, 
     assert output["evidence_contract_valid"] is False
     assert output["deployment_authorized"] is False
     assert "failed closed" in output["errors"][0]
+
+
+@pytest.mark.parametrize("option", ["--schema", "--identity"])
+def test_cli_rejects_caller_selected_authority_contracts(tmp_path, option):
+    with pytest.raises(SystemExit):
+        check_deployment_evidence([str(tmp_path / "evidence.json"), "--database", str(tmp_path / "db"),
+                                   "--immutable-store", str(tmp_path / "store"), option, str(tmp_path / "override.json")])
+
+
+def test_direct_validator_rejects_relaxed_repository_contract():
+    candidate = deepcopy(EVIDENCE_SCHEMA)
+    candidate["properties"]["live_trading_enabled"] = {"type": "boolean"}
+    assert validate_evidence(valid_deployment_evidence(), candidate, IDENTITY) == [
+        "evidence contract and identity must match the repository-controlled definitions"]
+
+
+def test_recursive_input_json_returns_blocked_result(tmp_path, capsys):
+    path = tmp_path / "recursive.json"
+    path.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
+    assert check_deployment_evidence([str(path), "--database", str(tmp_path / "db"),
+                                    "--immutable-store", str(tmp_path / "store")]) == 2
+    assert json.loads(capsys.readouterr().out)["evidence_contract_valid"] is False
 
 
 @pytest.mark.parametrize(("mutation", "message"), [
