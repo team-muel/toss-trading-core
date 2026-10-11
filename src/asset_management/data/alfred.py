@@ -68,6 +68,10 @@ def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="A
                           or request.get("aggregation_method") is not None):
         raise DataQualityError(f"{error_prefix}_DAILY_FREQUENCY_REQUIRED")
     if require_vintage_date is not None:
+        if (raw.get("units", "lin") != "lin"
+                or type(raw.get("output_type", output_type)) is not int
+                or raw.get("output_type", output_type) != output_type):
+            raise DataQualityError(f"{error_prefix}_RESPONSE_CONTRACT_CONFLICT")
         vintage = _day(require_vintage_date)
         # Explicit query coverage is required; an open normalized final interval
         # does not establish revisions outside the captured real-time range.

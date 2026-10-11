@@ -181,7 +181,8 @@ def test_wide_final_revision_cannot_extend_captured_query(tmp_path):
                 context=replace(context(), as_of_utc=NOW.replace(day=12), information_cutoff_utc=NOW.replace(day=12)))
 
 
-@pytest.mark.parametrize("response_changes", [{"realtime_end": "2026-10-08"}, {"realtime_end": None}])
+@pytest.mark.parametrize("response_changes", [{"realtime_end": "2026-10-08"}, {"realtime_end": None},
+    {"units": "pch"}, {"output_type": True}])
 def test_provider_response_bounds_also_constrain_snapshot(tmp_path, response_changes):
     store, manifests = fixture(tmp_path, response_changes=response_changes)
     with pytest.raises(DataQualityError): persist(store, manifests)
