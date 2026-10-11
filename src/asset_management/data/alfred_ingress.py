@@ -8,7 +8,7 @@ from email.utils import parsedate_to_datetime
 import json
 import re
 
-from .alfred import DATASET, INGESTION_SERIES, ROW_SCHEMA, SOURCE, normalize_vintages
+from .alfred import DATASET, INGESTION_SERIES, ROW_SCHEMA, SOURCE, _day, normalize_vintages
 from .immutable import (ImmutableDatasetStore, ProviderDatasetAdapter, canonical,
                         digest, sanitize, _assert_no_secret)
 
@@ -16,6 +16,37 @@ SCHEMA_VERSION = "alfred-captured-vintages-v1"
 RAW_SCHEMA = {"response": "object", "source_response_receipt": "string"}
 ENDPOINT = "https://api.stlouisfed.org/fred/series/observations"
 REQUEST_ENDPOINT = "/fred/series/observations"
+QUERY_DEFAULTS = {"file_type": "json", "units": "lin", "output_type": 1,
+                  "observation_start": "1776-07-04", "observation_end": "9999-12-31",
+                  "offset": 0, "limit": 100000, "sort_order": "asc"}
+
+
+def _validate_query_echo(request, response):
+    # Real-time defaults depend on the provider's current date; require their
+    # explicit captured request values instead of guessing that date later.
+    expected = {key: request.get(key, default) for key, default in QUERY_DEFAULTS.items()}
+    for key in ("realtime_start", "realtime_end"):
+        expected[key] = request.get(key)
+    for start, end in (("realtime_start", "realtime_end"), ("observation_start", "observation_end")):
+        if _day(expected[start]) > _day(expected[end]):
+            raise ValueError("ALFRED_CAPTURE_REQUEST_RANGE_INVALID")
+    if (type(expected["offset"]) is not int or expected["offset"] < 0
+            or type(expected["limit"]) is not int or not 1 <= expected["limit"] <= 100000
+            or expected["sort_order"] not in ("asc", "desc")):
+        raise ValueError("ALFRED_CAPTURE_REQUEST_PAGE_INVALID")
+    allowed = set(expected) | {"api_key", "series_id", "frequency", "aggregation_method", "vintage_dates"}
+    if set(request) - allowed:
+        raise ValueError("ALFRED_CAPTURE_REQUEST_PARAMETER_UNSUPPORTED")
+    for key in ("frequency", "aggregation_method", "vintage_dates", "series_id"):
+        if key in response or (key != "series_id" and key in request):
+            if key not in request or key not in response:
+                raise ValueError("ALFRED_CAPTURE_QUERY_ECHO_MISSING")
+            expected[key] = request[key]
+    # order_by is response metadata, not a documented request parameter.
+    expected["order_by"] = "observation_date"
+    if any(key not in response or canonical(response[key]) != canonical(value)
+           for key, value in expected.items()):
+        raise ValueError("ALFRED_CAPTURE_QUERY_CONFLICT")
 
 
 def _unique_object(pairs):
@@ -57,6 +88,7 @@ def _read_capture(store, response_id):
             or type(response.get("output_type")) is not int
             or response["output_type"] != request.get("output_type", 1)):
         raise ValueError("ALFRED_CAPTURE_RESPONSE_CONFLICT")
+    _validate_query_echo(request, response)
     if canonical(sanitize(response, store.secrets)) != canonical(response):
         raise ValueError("ALFRED_CAPTURE_UNREDACTED_RESPONSE")
     _assert_no_secret(response, store.secrets)

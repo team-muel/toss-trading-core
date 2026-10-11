@@ -23,7 +23,9 @@ def capture(store, series="DGS1", output_type=1, *, receipt_changes=None, respon
                           "realtime_end": "9999-12-31", "value": "."}]
                         if output_type == 1 else [{"date": "2026-10-08", f"{series}_20261009": "."}])
     body = dict(count=len(observations), offset=0, output_type=output_type, units="lin",
-                realtime_start="2026-10-09", realtime_end="2026-10-09", observations=observations)
+                realtime_start="2026-10-09", realtime_end="2026-10-09", observations=observations,
+                file_type="json", limit=100000, sort_order="asc", order_by="observation_date",
+                observation_start="1776-07-04", observation_end="9999-12-31")
     body.update(response_changes or {})
     raw = canonical(body)
     receipt = dict(source=SOURCE, dataset=DATASET, endpoint=ENDPOINT, http_method="GET", mode="RESEARCH",
@@ -186,3 +188,28 @@ def test_special_dispatch_is_scoped_to_exact_source_dataset_and_schema(tmp_path)
     raw["source_response_receipt"] = "0" * 64
     unrelated = clone(store, manifest, raw, source="other-source")
     assert store.read(unrelated.manifest_id)[1] == raw
+
+
+@pytest.mark.parametrize("change", [{"realtime_start": "2026-10-08"}, {"realtime_end": "2026-10-10"},
+    {"observation_start": "2026-10-01"}, {"observation_end": "2026-10-08"}, {"offset": 1},
+    {"offset": False}, {"limit": 1}, {"sort_order": "desc"}, {"file_type": "xml"},
+    {"order_by": "value"}, {"frequency": "w"}, {"aggregation_method": "avg"},
+    {"vintage_dates": "2026-10-08"}, {"series_id": "DGS2"}])
+def test_conflicting_echoed_query_semantics_do_not_publish(tmp_path, change):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    with pytest.raises(ValueError): ingest(store, capture(store, response_changes=change))
+    assert not list((tmp_path / "bronze").glob("*.json"))
+    assert not list((tmp_path / "silver").glob("*.json"))
+
+
+@pytest.mark.parametrize("change", [{"frequency": "w"}, {"aggregation_method": "avg"},
+    {"vintage_dates": "2026-10-09"}, {"realtime_start": None}, {"offset": False}, {"limit": True},
+    {"unknown": "query"}])
+def test_unverifiable_or_invalid_query_parameters_do_not_publish(tmp_path, change):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    original = store.read_catalog("unadmitted-http-responses", capture(store))
+    original["request"].update(change)
+    from asset_management.domain.errors import DataQualityError
+    with pytest.raises((ValueError, DataQualityError)):
+        ingest(store, store.catalog("unadmitted-http-responses", original))
+    assert not list((tmp_path / "bronze").glob("*.json"))

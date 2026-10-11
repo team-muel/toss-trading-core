@@ -234,6 +234,12 @@ classified credentials, and aware HTTP Date/actual receipt timestamps. Duplicate
 JSON keys, sensitive response fields, conflicting identity or missing metadata
 are rejected before admission. An incomplete page remains raw and cannot create
 Silver. No request receipt or historical availability is synthesized.
+Request/response realtime and observation ranges, pagination, file type, units,
+output type and sort order must agree, including the documented observation/page
+defaults. Real-time request bounds must be explicit. Optional transformations or
+vintage-date parameters require an identical response echo; absent echoes fail
+closed. Unknown query parameters are unsupported. Query rules follow the
+[official observations API contract](https://fred.stlouisfed.org/docs/api/fred/series_observations.html).
 
 The existing ProviderDatasetAdapter emits version `alfred-captured-vintages-v1`,
 whose Bronze binds the original response receipt and whose Silver preserves the
