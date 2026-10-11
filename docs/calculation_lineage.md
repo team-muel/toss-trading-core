@@ -36,3 +36,7 @@ exact integer horizon과 typed validity를 요구한다. forecast as-of에 이�
 validity는 계산·저장 전에 거부하며 DB 상태를 변경하지 않는다. 이 producer는 자체
 observation/manifest lineage와 runtime model evidence를 소비한다. 별도의 일반 graph
 binding을 호출하지 않는다는 이유만으로 해당 authority를 대체하거나 중복하지 않는다.
+Persisted component forecast replay/consume도 원래 runtime as-of의 만료 여부와
+component 전체의 horizon·expiry·decay 정렬을 다시 검증한다. 재계산된 content hash가
+있어도 서로 다른 validity를 합산하거나 생성 시점에 만료된 출력을 소비할 수 없다.
+현재 wall-clock으로 과거 replay를 만료시키지 않으며 기존 artifact를 다시 쓰지 않는다.

@@ -11,7 +11,7 @@ import json
 from asset_management.data.asof_query import AsOfRepository
 from asset_management.data.immutable import canonical, digest
 from asset_management.domain.errors import DataQualityError, InvariantViolation
-from asset_management.domain.horizon import SignalValidity
+from asset_management.domain.horizon import SignalValidity, require_horizon_alignment
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.domain.scalars import Currency
 from asset_management.time.asof import AsOfContext
@@ -528,6 +528,8 @@ class ComponentForecastAssembler:
                 raise DataQualityError("COMPONENT_FORECAST_LINEAGE_UNVERIFIED")
             exposures.add(exposure)
             validity = _validity_from_payload(stored.get("validity"))
+            if validity.valid_until <= runtime_context.as_of_utc:
+                raise DataQualityError("COMPONENT_FORECAST_SIGNAL_EXPIRED")
             component = shrink_component(raw_estimate=_horizon_return(annual, horizon), prior=_horizon_return(prior, horizon),
                 confidence=confidence, uncertainty=uncertainty*Decimal(horizon)/Decimal(252), component_name=name,
                 input_features=(f"observation:{observation.content_hash}",), horizon=horizon, validity=validity)
@@ -537,6 +539,7 @@ class ComponentForecastAssembler:
             if stored != expected:
                 raise DataQualityError("COMPONENT_FORECAST_LINEAGE_UNVERIFIED")
             replayed.append(component)
+        require_horizon_alignment(item.validity for item in replayed)
         gross = sum(item.point_estimate for item in replayed); total_uncertainty = sum(item.uncertainty for item in replayed)
         expected_gross = {"gross_expected_return": str(gross),
                           "lower_bound": str(gross-Decimal("1.96")*total_uncertainty),

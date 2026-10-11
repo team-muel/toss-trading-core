@@ -289,6 +289,26 @@ def test_rehashed_forged_calculation_rows_fail_closed(mutation):
         assembler.replay_gross_forecast(calculation_id=forged_id)
 
 
+@pytest.mark.parametrize("mutation", ["expired", "holding", "expiry", "decay"])
+def test_rehashed_invalid_validity_cannot_cross_persisted_consumer_boundary(mutation):
+    inputs, assembler, _, original = persisted_calculation()
+    artifact = deepcopy(original)
+    if mutation == "expired":
+        for item in artifact["components"]:
+            item["validity"]["valid_until"] = NOW.isoformat()
+    elif mutation == "holding":
+        artifact["components"][0]["validity"]["holding_horizon"] = 21
+    elif mutation == "expiry":
+        artifact["components"][0]["validity"]["valid_until"] = (NOW + timedelta(days=2)).isoformat()
+    else:
+        artifact["components"][0]["validity"]["decay_profile"] = "LINEAR"
+    forged_id = insert_forged(inputs, artifact)
+    before = tuple(inputs.connection.iterdump())
+    with pytest.raises(DataQualityError):
+        assembler.consume_gross_forecast(calculation_id=forged_id)
+    assert tuple(inputs.connection.iterdump()) == before
+
+
 def test_cross_run_forged_reference_fails_closed():
     inputs, assembler, _, original = persisted_calculation()
     inputs.connection.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
