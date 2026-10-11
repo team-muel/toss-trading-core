@@ -31,7 +31,7 @@ class ExpectedReturnComponent:
         if (not isinstance(self.validity, SignalValidity) or not self.component_name.strip() or
                 any(not x.is_finite() for x in values) or
                 self.uncertainty < 0 or not Decimal(0) <= self.confidence <= Decimal(1) or
-                not self.input_features or self.horizon not in HORIZONS):
+                not self.input_features or type(self.horizon) is not int or self.horizon not in HORIZONS):
             raise ValueError("EXPECTED_RETURN_COMPONENT_INVALID")
         if self.validity.forecast_horizon != self.horizon:
             raise ValueError("EXPECTED_RETURN_COMPONENT_HORIZON_CONFLICT")
@@ -67,7 +67,7 @@ class ExpectedReturnEstimate:
                   self.expected_tax_drag, self.expected_fx_cost, self.net_expected_return,
                   self.lower_bound, self.upper_bound, self.confidence)
         if (not isinstance(self.validity, SignalValidity) or not self.instrument_id.strip() or
-                not self.components or self.horizon not in HORIZONS or
+                not self.components or type(self.horizon) is not int or self.horizon not in HORIZONS or
                 any(x.horizon != self.horizon for x in self.components) or self.as_of.tzinfo is None or
                 self.as_of.utcoffset() is None or any(not x.is_finite() for x in values) or
                 any(x < 0 for x in (self.expected_transaction_cost, self.expected_tax_drag, self.expected_fx_cost)) or
@@ -123,7 +123,7 @@ class AlphaEstimate:
         values = (self.net_expected_return, self.required_return, self.alpha,
                   self.lower_bound, self.upper_bound)
         if (not isinstance(self.validity, SignalValidity) or not self.instrument_id.strip() or
-                self.horizon not in HORIZONS or
+                type(self.horizon) is not int or self.horizon not in HORIZONS or
                 self.validity.forecast_horizon != self.horizon or
                 any(not x.is_finite() for x in values) or self.alpha != self.net_expected_return-self.required_return or
                 self.lower_bound > self.upper_bound or self.decision not in {"ELIGIBLE", "ABSTAIN"} or

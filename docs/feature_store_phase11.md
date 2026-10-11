@@ -11,6 +11,10 @@ boundary; numerically equal float/Decimal values are not coerced into eligibilit
 Alignment requires typed `SignalValidity` for every input, including a single
 input, and equal horizons, expiry and decay policy. Missing/untyped inputs and
 conflicting validity block combination rather than silently passing through.
+The same exact-integer rule applies to annual-return conversion, risk-free curve
+selection/alignment and typed pricing, expected-return and legacy alpha carriers.
+These checks do not rewrite historical payload hashes or grant current authority
+to legacy model outputs.
 
 Every `FeatureDefinition` records `feature_id`, namespace, name, version, input fields,
 lookback, horizon, transformation, missing policy, and quality policy. Re-registering a
