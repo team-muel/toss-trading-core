@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 import sqlite3
@@ -241,8 +242,38 @@ def persisted_calculation():
         (persisted.calculation_id,),).fetchone()
     artifact = json.loads(row[0])
     assert persisted.calculation_id == digest(canonical(artifact))
+    assert persisted.as_of == NOW
+    assert persisted.validity == VALIDITY
     assert assembler.consume_gross_forecast(calculation_id=persisted.calculation_id) == persisted
     return inputs, assembler, persisted, artifact
+
+
+def test_persisted_forecast_preserves_original_as_of_and_validity_with_lagged_cutoff():
+    as_of = NOW + timedelta(seconds=30)
+    inputs, evidence, authorization = repository(run_as_of=as_of)
+    assembler = ComponentForecastAssembler(inputs, evidence)
+    context = AsOfContext("run@1", as_of, NOW, "policy@1", "parameters@1", "git:test")
+    produced = assembler.assemble_gross_forecast(
+        context=context, instrument_id="SPY", asset_class=AssetClass.EQUITY_ETF,
+        currency=Currency.USD, currency_basis=CurrencyBasis.BASE, horizon=252, validity=VALIDITY,
+        model_key="economic@1", runtime_authorization=authorization,
+    )
+    before = tuple(inputs.connection.iterdump())
+    replayed = assembler.consume_gross_forecast(calculation_id=produced.calculation_id)
+    assert replayed == produced
+    assert replayed.as_of == as_of and replayed.as_of != context.information_cutoff_utc
+    assert replayed.validity == VALIDITY
+    assert tuple(inputs.connection.iterdump()) == before
+
+
+@pytest.mark.parametrize("changes", [
+    {"validity": None}, {"as_of": NOW.replace(tzinfo=None)},
+    {"validity": SignalValidity(252, 252, NOW, DecayProfile.STEP)},
+])
+def test_persisted_forecast_return_requires_complete_temporal_contract(changes):
+    _, _, produced, _ = persisted_calculation()
+    with pytest.raises(DataQualityError, match="COMPONENT_FORECAST_VALIDITY_INVALID"):
+        replace(produced, **changes)
 
 
 def insert_forged(inputs, artifact, *, runtime="run@1"):

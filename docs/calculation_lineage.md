@@ -40,3 +40,7 @@ Persisted component forecast replay/consume도 원래 runtime as-of의 만료 �
 component 전체의 horizon·expiry·decay 정렬을 다시 검증한다. 재계산된 content hash가
 있어도 서로 다른 validity를 합산하거나 생성 시점에 만료된 출력을 소비할 수 없다.
 현재 wall-clock으로 과거 replay를 만료시키지 않으며 기존 artifact를 다시 쓰지 않는다.
+반환 객체 `PersistedGrossComponentForecast`는 검증된 `SignalValidity`와 원래 persisted
+runtime의 `as_of`를 명시한다. 생성 직후 반환도 replay reader를 사용하므로 동일 ID의
+생성·재실행·소비가 같은 시간 계약을 제공한다. cutoff나 현재 시각에서 생성 시각을
+추론하지 않으며 기존 저장 artifact 및 calculation ID는 변경하지 않는다.

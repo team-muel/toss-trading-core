@@ -165,6 +165,14 @@ class PersistedGrossComponentForecast:
     lower_bound: Decimal
     upper_bound: Decimal
     confidence: Decimal
+    as_of: datetime
+    validity: SignalValidity
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.validity, SignalValidity) or
+                self.as_of.tzinfo is None or self.as_of.utcoffset() is None or
+                self.validity.valid_until <= self.as_of):
+            raise DataQualityError("COMPONENT_FORECAST_VALIDITY_INVALID")
 
 
 def _decimal(value: object, label: str) -> Decimal:
@@ -389,9 +397,7 @@ class ComponentForecastAssembler:
                      calculation_id, bundle.information_cutoff_utc.isoformat()))
         elif json.loads(str(row[0])) != artifact or row[1] != calculation_id:
             raise DataQualityError("COMPONENT_FORECAST_CALCULATION_CONFLICT")
-        return PersistedGrossComponentForecast(calculation_id, bundle.runtime_run_id, gross,
-            gross-Decimal("1.96")*uncertainty, gross+Decimal("1.96")*uncertainty,
-            min(item.confidence for item in bundle.components))
+        return self.replay_gross_forecast(calculation_id=calculation_id)
 
     def assemble_gross_forecast(self, **arguments: object) -> PersistedGrossComponentForecast:
         """Only public typed consumer; net return requires separately persisted cost evidence."""
@@ -539,7 +545,7 @@ class ComponentForecastAssembler:
             if stored != expected:
                 raise DataQualityError("COMPONENT_FORECAST_LINEAGE_UNVERIFIED")
             replayed.append(component)
-        require_horizon_alignment(item.validity for item in replayed)
+        validity = require_horizon_alignment(item.validity for item in replayed)
         gross = sum(item.point_estimate for item in replayed); total_uncertainty = sum(item.uncertainty for item in replayed)
         expected_gross = {"gross_expected_return": str(gross),
                           "lower_bound": str(gross-Decimal("1.96")*total_uncertainty),
@@ -549,7 +555,7 @@ class ComponentForecastAssembler:
             raise DataQualityError("COMPONENT_FORECAST_LINEAGE_UNVERIFIED")
         return PersistedGrossComponentForecast(calculation_id, row[0], gross,
             Decimal(expected_gross["lower_bound"]), Decimal(expected_gross["upper_bound"]),
-            Decimal(expected_gross["confidence"]))
+            Decimal(expected_gross["confidence"]), runtime_context.as_of_utc, validity)
 
     def consume_gross_forecast(self, *, calculation_id: str) -> PersistedGrossComponentForecast:
         """Production consumer boundary: a persisted calculation ID is the sole input."""
