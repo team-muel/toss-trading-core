@@ -210,6 +210,10 @@ missing observation or expired vintage. Missing-value tombstones remain MISSING.
 Treasury parents must use default/daily frequency without aggregation options;
 weekly/monthly aggregates cannot authorize daily quotes. Macro-state continues
 to use its existing monthly-series contracts.
+Snapshot vintages must also lie within explicitly captured realtime_start/end
+and any finite vintage_dates constraint. The vintage day must have ended before
+the raw receipt's America/Chicago local date. Querying an open/future end or
+normalizing the final revision to9999-12-31 cannot establish uncaptured revisions.
 Gold VALID describes verified storage, not a valid investment return.
 
 Quotes retain percent units, calendar-month tenors, bond-equivalent simple annual

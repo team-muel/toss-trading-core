@@ -25,7 +25,8 @@ def fixture(tmp_path, *, missing=False, request_changes=None):
             "value": "." if missing and series == "DGS3MO" else "4.23"}]}
         captured = ProviderBatch(source=SOURCE, dataset=DATASET, schema_version=SCHEMA_VERSION,
             endpoint="/fred/series/observations", http_method="GET", status_code=200,
-            request={"series_id": series, "output_type": 1, **(request_changes or {})}, body=payload,
+            request={"series_id": series, "output_type": 1, "realtime_start": "2026-10-09",
+                     "realtime_end": "2026-10-09", **(request_changes or {})}, body=payload,
             received_at=RECEIVED, available_at=RECEIVED, provider_timestamp=RECEIVED,
             source_revision="synthetic", code_revision="git:abcdef0", license_tag=LICENSE)
         result = ingest_alfred(captured, store)
@@ -148,3 +149,21 @@ def test_frequency_or_aggregation_transform_is_not_a_daily_quote(tmp_path, reque
 def test_explicit_daily_frequency_preserves_quote(tmp_path):
     store, manifests = fixture(tmp_path, request_changes={"frequency": "d"})
     assert store.read(persist(store, manifests).manifest_id)[1]["status"] == "OBSERVED"
+
+
+@pytest.mark.parametrize("request_changes", [
+    {"realtime_end": "2026-10-08"}, {"realtime_start": "2026-10-10"},
+    {"vintage_dates": "2026-10-08"}, {"realtime_end": None},
+])
+def test_selected_vintage_must_be_explicitly_covered_by_capture(tmp_path, request_changes):
+    store, manifests = fixture(tmp_path, request_changes=request_changes)
+    with pytest.raises(DataQualityError): persist(store, manifests)
+    assert not list((tmp_path / "gold").glob("*.json"))
+
+
+def test_query_end_does_not_authorize_uncaptured_future_revisions(tmp_path):
+    store, manifests = fixture(tmp_path, request_changes={"realtime_end": "9999-12-31"})
+    with pytest.raises(DataQualityError, match="ALFRED_VINTAGE_NOT_CLOSED_AT_CAPTURE"):
+        persist(store, manifests, vintage_date="2026-10-10",
+                context=replace(context(), as_of_utc=NOW.replace(day=12), information_cutoff_utc=NOW.replace(day=12)))
+    assert not list((tmp_path / "gold").glob("*.json"))

@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Mapping
+from zoneinfo import ZoneInfo
 
 from .immutable import ImmutableDatasetStore, IngestionResult, ProviderDatasetAdapter, canonical, digest
 from .phase9 import ProviderBatch
@@ -30,7 +31,8 @@ ROW_SCHEMA = {
 }
 
 
-def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="ALFRED", require_daily=False):
+def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="ALFRED",
+                      require_daily=False, require_vintage_date=None):
     """Replay canonical Silver against its raw parent at the explicit cutoff."""
     context = require_as_of_context(context)
     manifest, rows = store.read(manifest_id)
@@ -65,6 +67,20 @@ def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="A
     if require_daily and (request.get("frequency") not in (None, "d")
                           or request.get("aggregation_method") is not None):
         raise DataQualityError(f"{error_prefix}_DAILY_FREQUENCY_REQUIRED")
+    if require_vintage_date is not None:
+        vintage = _day(require_vintage_date)
+        # Explicit query coverage is required; an open normalized final interval
+        # does not establish revisions outside the captured real-time range.
+        start, end = _day(request.get("realtime_start")), _day(request.get("realtime_end"))
+        if not start <= vintage <= end:
+            raise DataQualityError(f"{error_prefix}_VINTAGE_OUTSIDE_REQUEST")
+        if "vintage_dates" in request:
+            dates = request["vintage_dates"]
+            if not isinstance(dates, str) or vintage not in {_day(v) for v in dates.split(",")}:
+                raise DataQualityError(f"{error_prefix}_VINTAGE_OUTSIDE_REQUEST")
+        received_day = datetime.fromisoformat(parent.retrieved_at).astimezone(ZoneInfo("America/Chicago")).date()
+        if vintage >= received_day:
+            raise DataQualityError(f"{error_prefix}_VINTAGE_NOT_CLOSED_AT_CAPTURE")
     return rows
 
 
