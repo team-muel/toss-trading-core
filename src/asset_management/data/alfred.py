@@ -81,6 +81,9 @@ def read_vintage_rows(store, manifest_id, series_id, context, *, error_prefix="A
         received_day = datetime.fromisoformat(parent.retrieved_at).astimezone(ZoneInfo("America/Chicago")).date()
         if vintage >= received_day:
             raise DataQualityError(f"{error_prefix}_VINTAGE_NOT_CLOSED_AT_CAPTURE")
+        response_start, response_end = _day(raw.get("realtime_start")), _day(raw.get("realtime_end"))
+        if not response_start <= vintage <= response_end:
+            raise DataQualityError(f"{error_prefix}_VINTAGE_OUTSIDE_RESPONSE")
     return rows
 
 

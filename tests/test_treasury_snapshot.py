@@ -16,16 +16,20 @@ RECEIVED = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
 LICENSE = "purpose=synthetic-research;redistribution=forbidden;retention=perpetual"
 
 
-def fixture(tmp_path, *, missing=False, request_changes=None):
+def fixture(tmp_path, *, missing=False, request_changes=None, output_type=1, response_changes=None):
     store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
     manifests = {}
     for series in TENORS:
-        payload = {"count": 1, "offset": 0, "observations": [{"date": "2026-10-08",
+        observation = {"date": "2026-10-08",
             "realtime_start": "2026-10-09", "realtime_end": "9999-12-31",
-            "value": "." if missing and series == "DGS3MO" else "4.23"}]}
+            "value": "." if missing and series == "DGS3MO" else "4.23"}
+        if output_type == 3:
+            observation = {"date": observation["date"], f"{series}_20261009": observation["value"]}
+        payload = {"count": 1, "offset": 0, "realtime_start": "2026-10-09",
+                   "realtime_end": "2026-10-09", "observations": [observation], **(response_changes or {})}
         captured = ProviderBatch(source=SOURCE, dataset=DATASET, schema_version=SCHEMA_VERSION,
             endpoint="/fred/series/observations", http_method="GET", status_code=200,
-            request={"series_id": series, "output_type": 1, "realtime_start": "2026-10-09",
+            request={"series_id": series, "output_type": output_type, "realtime_start": "2026-10-09",
                      "realtime_end": "2026-10-09", **(request_changes or {})}, body=payload,
             received_at=RECEIVED, available_at=RECEIVED, provider_timestamp=RECEIVED,
             source_revision="synthetic", code_revision="git:abcdef0", license_tag=LICENSE)
@@ -166,4 +170,19 @@ def test_query_end_does_not_authorize_uncaptured_future_revisions(tmp_path):
     with pytest.raises(DataQualityError, match="ALFRED_VINTAGE_NOT_CLOSED_AT_CAPTURE"):
         persist(store, manifests, vintage_date="2026-10-10",
                 context=replace(context(), as_of_utc=NOW.replace(day=12), information_cutoff_utc=NOW.replace(day=12)))
+    assert not list((tmp_path / "gold").glob("*.json"))
+
+
+def test_wide_final_revision_cannot_extend_captured_query(tmp_path):
+    store, manifests = fixture(tmp_path, output_type=3)
+    assert store.read(persist(store, manifests).manifest_id)[1]["status"] == "OBSERVED"
+    with pytest.raises(DataQualityError, match="ALFRED_VINTAGE_OUTSIDE_REQUEST"):
+        persist(store, manifests, vintage_date="2026-10-10",
+                context=replace(context(), as_of_utc=NOW.replace(day=12), information_cutoff_utc=NOW.replace(day=12)))
+
+
+@pytest.mark.parametrize("response_changes", [{"realtime_end": "2026-10-08"}, {"realtime_end": None}])
+def test_provider_response_bounds_also_constrain_snapshot(tmp_path, response_changes):
+    store, manifests = fixture(tmp_path, response_changes=response_changes)
+    with pytest.raises(DataQualityError): persist(store, manifests)
     assert not list((tmp_path / "gold").glob("*.json"))
