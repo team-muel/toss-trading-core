@@ -679,3 +679,53 @@ def test_operations_observations_require_existing_signed_complete_fresh_exports(
             verify_operations_observations(conn, "canonical-run@1", observations, clock=FrozenClock(now))
     assert conn.total_changes == before
     conn.close()
+
+
+@pytest.mark.parametrize("failure", [None, "unattested", "resources", "scope", "instance", "hash", "stale"])
+def test_absence_inventory_consumes_signed_contents(monkeypatch, failure):
+    from scripts.check_application_runtime_deployment_evidence import verify_absence_inventories
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    cutoff = now - timedelta(minutes=30)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", cutoff.isoformat(), cutoff.isoformat(), "git:test", (now - timedelta(hours=5)).isoformat()))
+    attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
+    project = "toss-trading-core-lab-508411"
+    instance = f"projects/{project}/zones/asia-northeast3-a/instances/runtime-01"
+    inventories = {}
+    mappings = {
+        "scheduler_inventory": {"cloud_scheduler_jobs": "active_scheduled_job_count", "vm_systemd_timers": "active_vm_timer_count"},
+        "ingress_inventory": {"project_firewall_rules": "inbound_firewall_rule_count", "vm_network_interfaces": "external_ip_count", "vm_listening_sockets": "listening_socket_count"},
+    }
+    for name, mapping in mappings.items():
+        received = now - timedelta(hours=2) if failure == "stale" else now
+        body = {"project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance,
+                "coverage": "COMPLETE_PROJECT_AND_INSTANCE", "surfaces": {surface: [] for surface in mapping}}
+        if failure == "resources":
+            body["surfaces"][next(iter(mapping))] = ["active-resource"]
+        elif failure == "scope":
+            body["coverage"] = "PARTIAL"
+        elif failure == "instance":
+            body["instance_resource_id"] = instance + "-other"
+        endpoint = f"inventory://{instance}/{name}"
+        raw = SQLiteRawResponseStore(conn)
+        raw_id = raw.append(source="canonical-operations-inventory", endpoint=endpoint, http_method="GET",
+                            request_payload={}, status_code=200, body=body, requested_at=received,
+                            received_at=received, account_id=None, schema_version="canonical-absence-inventory@1")
+        if failure != "unattested":
+            _attest(conn, raw_id, attestor, received)
+        inventories[name] = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + raw.verified(raw_id).response_hash,
+                            "source_reference": endpoint, "project_id": project, "observed_at": received.isoformat(),
+                            "inspected_surfaces": list(mapping), **{count: 0 for count in mapping.values()}}
+        if failure == "hash":
+            inventories[name]["artifact_sha256"] = "sha256:" + "0" * 64
+    conn.commit()
+    before = conn.total_changes
+    if failure is None:
+        assert verify_absence_inventories(conn, "canonical-run@1", inventories, instance, clock=FrozenClock(now)) == inventories
+    else:
+        with pytest.raises((ValueError, DataQualityError, InvariantViolation)):
+            verify_absence_inventories(conn, "canonical-run@1", inventories, instance, clock=FrozenClock(now))
+    assert conn.total_changes == before
+    conn.close()

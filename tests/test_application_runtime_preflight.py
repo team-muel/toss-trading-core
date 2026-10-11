@@ -138,7 +138,8 @@ def valid_deployment_evidence():
         "observability_config_hash": "sha256:" + "1" * 64,
         "scheduler_inventory": {
             "artifact_sha256": "sha256:" + "2" * 64,
-            "source_reference": "https://evidence.example/inventory/scheduler.json",
+            "raw_response_id": "scheduler@1",
+            "source_reference": f"inventory://projects/{project_id}/zones/{zone}/instances/asset-runtime-01/scheduler_inventory",
             "project_id": project_id,
             "observed_at": observation,
             "inspected_surfaces": ["cloud_scheduler_jobs", "vm_systemd_timers"],
@@ -147,7 +148,8 @@ def valid_deployment_evidence():
         },
         "ingress_inventory": {
             "artifact_sha256": "sha256:" + "3" * 64,
-            "source_reference": "https://evidence.example/inventory/ingress.json",
+            "raw_response_id": "ingress@1",
+            "source_reference": f"inventory://projects/{project_id}/zones/{zone}/instances/asset-runtime-01/ingress_inventory",
             "project_id": project_id,
             "observed_at": observation,
             "inspected_surfaces": ["project_firewall_rules", "vm_network_interfaces", "vm_listening_sockets"],
@@ -189,7 +191,7 @@ def validate_future_evidence(evidence, *, clock=None):
         persisted_d2=persisted_d2_fixture(),
         persisted_lineage=persisted_lineage_fixture(),
         persisted_migrations=tuple(item.version for item in load_migration_catalog(ROOT / "schemas")),
-        persisted_operations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation")},
+        persisted_operations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory")},
         clock=clock or FrozenClock(datetime(2026, 9, 24, 0, 2, tzinfo=timezone.utc)),
     )
 

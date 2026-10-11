@@ -187,10 +187,11 @@
     },
     "absenceInventoryBase": {
       "type": "object",
-      "required": ["artifact_sha256", "source_reference", "project_id", "observed_at", "inspected_surfaces"],
+      "required": ["raw_response_id", "artifact_sha256", "source_reference", "project_id", "observed_at", "inspected_surfaces"],
       "properties": {
+        "raw_response_id": {"type": "string", "minLength": 1},
         "artifact_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-        "source_reference": {"type": "string", "pattern": "^https://[^\\s]+$"},
+        "source_reference": {"type": "string", "pattern": "^inventory://[^\\s]+$"},
         "project_id": {"const": "toss-trading-core-lab-508411"},
         "observed_at": {"type": "string", "format": "date-time"}
       }

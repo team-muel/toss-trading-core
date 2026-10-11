@@ -74,7 +74,50 @@ def verify_operations_observations(connection, runtime_run_id, observations, *, 
     return verified
 
 
-def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observations=None):
+def verify_absence_inventories(connection, runtime_run_id, inventories, instance_id, *, clock=None):
+    """Read existing signed collector exports and derive absence from their contents."""
+    now = (clock or SystemClock()).now_utc()
+    row = connection.execute("SELECT information_cutoff_utc FROM am_runtime_run WHERE runtime_run_id=?",
+                             (runtime_run_id,)).fetchone()
+    if row is None:
+        raise ValueError("CANONICAL_D2_RUNTIME_MISSING")
+    registry = require_runtime_attestor_registry(conn=connection, runtime_run_id=runtime_run_id,
+                                                cutoff=_instant(row[0]))
+    surfaces = {
+        "scheduler_inventory": {"cloud_scheduler_jobs": "active_scheduled_job_count", "vm_systemd_timers": "active_vm_timer_count"},
+        "ingress_inventory": {"project_firewall_rules": "inbound_firewall_rule_count", "vm_network_interfaces": "external_ip_count", "vm_listening_sockets": "listening_socket_count"},
+    }
+    verified = {}
+    for name, mapping in surfaces.items():
+        claim = inventories[name]
+        response = SQLiteRawResponseStore(connection).verified(claim["raw_response_id"])
+        endpoint = f"inventory://{instance_id}/{name}"
+        body = response.body
+        if (response.source != "canonical-operations-inventory" or response.endpoint != endpoint or
+                response.http_method != "GET" or response.status_code != 200 or
+                response.schema_version != "canonical-absence-inventory@1" or
+                claim["source_reference"] != endpoint or
+                claim["artifact_sha256"] != "sha256:" + response.response_hash or
+                _instant(claim["observed_at"]) != response.received_at or
+                response.requested_at > response.received_at or response.received_at > now or
+                now - response.requested_at > MAXIMUM_STATE_AGE or
+                not isinstance(body, dict) or body.get("project_id") != claim["project_id"] or
+                body.get("runtime_run_id") != runtime_run_id or body.get("instance_resource_id") != instance_id or
+                body.get("coverage") != "COMPLETE_PROJECT_AND_INSTANCE" or
+                not isinstance(body.get("surfaces"), dict) or set(body["surfaces"]) != set(mapping) or
+                set(claim["inspected_surfaces"]) != set(mapping)):
+            raise ValueError("ABSENCE_INVENTORY_UNVERIFIED")
+        for surface, count in mapping.items():
+            entries = body["surfaces"][surface]
+            if not isinstance(entries, list) or entries or claim[count] != len(entries):
+                raise ValueError("ABSENCE_INVENTORY_CONTAINS_RESOURCES")
+        require_external_evidence_attestation(conn=connection, raw_response_id=claim["raw_response_id"],
+                                             response=response, cutoff=now, registry=registry)
+        verified[name] = dict(claim)
+    return verified
+
+
+def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observations=None, inventories=None, instance_id=None):
     """Replay, without writes, one existing canonical D2 bundle and return its source lineage."""
     database = Path(database)
     if not database.is_file():
@@ -107,6 +150,8 @@ def replay_persisted_d2(database, immutable_store, runtime_run_id, *, observatio
         ))
         verified_operations = (verify_operations_observations(connection, runtime_run_id, observations)
                                if observations is not None else {})
+        if inventories is not None:
+            verified_operations.update(verify_absence_inventories(connection, runtime_run_id, inventories, instance_id))
         return result, lineage, tuple(row[0] for row in applied), verified_operations
     finally:
         connection.close()
@@ -178,7 +223,7 @@ def validate_evidence(evidence, schema, identity, *, persisted_d2=None, persiste
                 errors.append(f"runtime lineage {field} does not match the persisted runtime record")
     if persisted_migrations is None or evidence["migration_versions"] != list(persisted_migrations):
         errors.append("migration_versions must match the authoritative applied migration inventory")
-    for name in ("iam_policy_observation", "api_state_observation"):
+    for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory"):
         if persisted_operations is None or persisted_operations.get(name) != evidence[name]:
             errors.append(f"{name} must match an externally attested persisted observation")
 
@@ -261,7 +306,9 @@ def main(argv=None):
         try:
             persisted_d2, persisted_lineage, persisted_migrations, persisted_operations = replay_persisted_d2(
                 args.database, args.immutable_store, evidence["d2_replay"]["runtime_run_id"],
-                observations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation")})
+                observations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation")},
+                inventories={name: evidence[name] for name in ("scheduler_inventory", "ingress_inventory")},
+                instance_id=evidence["runtime_topology"]["instance"]["resource_id"])
             errors = validate_evidence(
                 evidence, schema, identity,
                 persisted_d2=persisted_d2,

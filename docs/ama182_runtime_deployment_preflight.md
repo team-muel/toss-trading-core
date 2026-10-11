@@ -159,6 +159,17 @@ approved access and complete results; this plan enables no API and performs no
 cloud call. Runtime API allowlists and IAM approval remain separate blockers.
 Tests construct signed temporary exports only; they are not real GCP evidence.
 
+Scheduler/ingress absence also requires existing externally attested collector
+exports in the raw store. `inventory://<instance-resource-id>/<inventory-kind>`
+is an internal export descriptor, not an HTTP endpoint or a cloud request.
+The signed body binds project, runtime, exact instance, complete project/instance
+coverage and every required surface's entries. Counts are derived from those
+entries, rather than accepted from a caller's zero assertion. Any nonempty
+surface, partial coverage, wrong instance, missing receipt, mismatched hash or
+stale export blocks. The existing attestor governance boundary authenticates
+the collector's observation; this checker does not itself inspect the cloud
+or VM. No producer or actual absence proof is created by this plan.
+
 Rollback is a reviewed revert to the previous immutable image plus a verified
 pre-change data snapshot. Never restore or activate a legacy second runtime as
 an automatic rollback. No retirement command or physical deletion is part of
