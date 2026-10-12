@@ -18,6 +18,10 @@ to legacy model outputs.
 Serialized validity schemas enforce the same decay policy: EXPONENTIAL requires
 a positive integer half-life; STEP and LINEAR require a null half-life. The rule
 also applies to embedded forecast, portfolio-transition and state validity.
+`ModelRelativeAlphaAssessment` requires an explicit aligned, unexpired validity
+contract and carries it together with the assessment as-of in its payload.
+The helper retains its existing calculation and runtime authorization checks;
+this temporal contract does not activate a new producer or diagnostics path.
 
 Every `FeatureDefinition` records `feature_id`, namespace, name, version, input fields,
 lookback, horizon, transformation, missing policy, and quality policy. Re-registering a

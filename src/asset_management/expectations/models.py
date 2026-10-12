@@ -149,12 +149,18 @@ class ModelRelativeAlphaAssessment:
     combined_signal_forecast_id: str
     decision: str
     reason_codes: tuple[str, ...]
+    as_of: datetime
+    validity: SignalValidity
 
     def __post_init__(self) -> None:
         from asset_management.domain.economics import ReturnSemanticType, ReturnMetricStatus
         values = (self.raw_alpha, self.lower_bound, self.upper_bound, self.confidence,
                   self.prior, self.shrinkage_amount)
-        if (self.value.semantic_type is not ReturnSemanticType.MODEL_RELATIVE_ALPHA or
+        if (not isinstance(self.validity, SignalValidity) or
+                self.as_of.tzinfo is None or self.as_of.utcoffset() is None or
+                self.validity.forecast_horizon != self.value.forecast_horizon or
+                self.validity.valid_until <= self.as_of or
+                self.value.semantic_type is not ReturnSemanticType.MODEL_RELATIVE_ALPHA or
                 self.value.status is not ReturnMetricStatus.AVAILABLE or
                 any(not item.is_finite() for item in values) or
                 not Decimal(0) <= self.confidence <= Decimal(1) or
@@ -173,4 +179,5 @@ class ModelRelativeAlphaAssessment:
                 "upper_bound": str(self.upper_bound), "confidence": str(self.confidence),
                 "prior": str(self.prior), "shrinkage_amount": str(self.shrinkage_amount),
                 "combined_signal_forecast_id": self.combined_signal_forecast_id,
-                "decision": self.decision, "reason_codes": list(self.reason_codes)}
+                "decision": self.decision, "reason_codes": list(self.reason_codes),
+                "as_of": self.as_of.isoformat(), "validity": self.validity.payload()}
