@@ -210,7 +210,7 @@ class CalculationLineageGraph:
             except (FileNotFoundError, ValueError) as exc:
                 raise DataQualityError("CALCULATION_RAW_MANIFEST_UNVERIFIED") from exc
             if (manifest.layer != "bronze" or manifest.content_sha256 != node.output_hash or
-                    _jsonable(body) != node.output_value):
+                    _jsonable(body) != _jsonable(node.output_value)):
                 raise DataQualityError("CALCULATION_RAW_MANIFEST_CONFLICT")
 
     def payload(self) -> dict[str, object]:

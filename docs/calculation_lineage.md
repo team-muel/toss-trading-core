@@ -14,6 +14,9 @@ Publication payload는 전체 node catalog를 포함하므로 raw manifest 재�
 catalog에 적용한다. 최종 trace 밖의 raw node도 manifest가 없거나 Bronze가 아니거나
 content가 충돌하면 catalog를 쓰기 전에 거부한다. Node ID 순으로 검증하며, 검증된
 공유·캐시 node의 publication과 기존 trace/hash 계약은 유지한다.
+Node는 JSON array를 immutable tuple로 보존하므로 content 비교에서는 양쪽을 같은
+JSON 표현으로 정규화한다. Bronze layer와 원래 content hash 검증은 그대로 적용하며,
+정상 array·중첩 array를 충돌로 오인하거나 caller의 값을 변경하지 않는다.
 
 그래프 publication은 content-addressed catalog에 저장하며 주문을 생성하거나 실거래
 권한을 변경하지 않는다. `live_trading_enabled` 기본값은 계속 `false`다.

@@ -18,7 +18,7 @@ LICENSE = "purpose=internal-research;redistribution=forbidden;retention=perpetua
 
 def bronze(store, body=None):
     return store.write(
-        body or {"instrument_id": "SPY", "close": "100"},
+        {"instrument_id": "SPY", "close": "100"} if body is None else body,
         layer="bronze", source="provider", dataset="prices-raw", schema_version="raw-v1",
         retrieved_at=NOW, available_at=NOW, provider_timestamp=NOW,
         license_tag=LICENSE, code_revision="git:abcdef0", request_hash="a" * 64,
@@ -34,9 +34,9 @@ def derived(kind, parents, formula, intermediate, output):
     )
 
 
-def graph(store):
+def graph(store, raw_body=None):
     raw = CalculationNode.from_raw_manifest(
-        store, bronze(store).manifest_id, parameter_set_id="parameters-v1")
+        store, bronze(store, raw_body).manifest_id, parameter_set_id="parameters-v1")
     feature = derived(CalculationNodeType.FEATURE, (raw,), "return@1",
                       {"start": "90", "end": "100"}, {"return": "0.1111111111"})
     intermediate = derived(CalculationNodeType.INTERMEDIATE_CALCULATION, (feature,),
@@ -110,6 +110,22 @@ def test_verified_unreachable_raw_node_is_published_with_deterministic_identity(
     assert first.trace() == valid.trace()
     assert first.graph_hash == second.graph_hash
     assert first.publish(store) == second.publish(store)
+
+
+@pytest.mark.parametrize("body", [
+    [],
+    [{"instrument_id": "SPY", "close": "100"}],
+    {"results": [{"instrument_id": "SPY", "values": [1, 2, 3]}]},
+])
+def test_verified_json_arrays_match_immutable_node_values_without_mutation(tmp_path, body):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    lineage = graph(store, body)
+    original = json.loads(json.dumps(body))
+    lineage.verify_raw_manifests(store)
+    first = lineage.publish(store)
+    assert lineage.publish(store) == first
+    assert body == original
+    assert lineage.trace()[0].payload()["output_value"] == body
 
 
 def test_missing_parent_and_layer_skip_fail_closed(tmp_path):
