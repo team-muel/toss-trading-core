@@ -10,6 +10,7 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
+import shutil
 from types import MappingProxyType
 from typing import Mapping
 
@@ -84,6 +85,23 @@ class FeatureStateModelSourceRevisionVerifier:
             return None
         value = result.stdout.strip()
         return value if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", value) else None
+
+
+def _executing_source_identity(code_revision: str,
+                               requested_verifier: FeatureStateModelSourceRevisionVerifier | None
+                               ) -> tuple[str, str] | None:
+    """Bind source identity to this executing module, never a caller checkout."""
+    repository_root = Path(__file__).resolve().parents[3]
+    if requested_verifier is not None and (
+            type(requested_verifier) is not FeatureStateModelSourceRevisionVerifier or
+            requested_verifier.repository_root.resolve() != repository_root or
+            requested_verifier.git_executable != "git"):
+        return None
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        return None
+    verifier = FeatureStateModelSourceRevisionVerifier(repository_root, git_executable)
+    return FeatureStateModelSourceRevisionVerifier.verify(verifier, code_revision)
 
 
 @dataclass(frozen=True, slots=True)
@@ -316,8 +334,7 @@ def evaluate_feature_state_model_integrity_gate(
     elif (_GIT_REVISION.fullmatch(inputs.code_revision) is not None and
           inputs.code_revision != inputs.evidence_code_revision):
         reasons.append("EVIDENCE_CODE_REVISION_MISMATCH")
-    source = (source_revision_verifier.verify(inputs.code_revision)
-              if isinstance(source_revision_verifier, FeatureStateModelSourceRevisionVerifier) else None)
+    source = _executing_source_identity(inputs.code_revision, source_revision_verifier)
     if source is None:
         reasons.append("SOURCE_REVISION_UNVERIFIED")
     if not isinstance(evidence_store, ImmutableDatasetStore):

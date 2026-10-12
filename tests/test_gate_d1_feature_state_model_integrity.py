@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
+import shutil
 
 import pytest
 
@@ -13,6 +14,7 @@ from asset_management.validation import (
     FeatureStateModelIntegrityGateInput, FeatureStateModelSourceRevisionVerifier,
     evaluate_feature_state_model_integrity_gate,
 )
+from asset_management.validation.feature_state_model_integrity import _executing_source_identity
 
 
 ROOT = Path(__file__).parents[1]
@@ -81,6 +83,40 @@ def passing_input(tmp_path: Path):
         store,
         FeatureStateModelSourceRevisionVerifier(ROOT),
     )
+
+
+@pytest.mark.parametrize("override", ("subclass", "other_checkout", "git_executable"))
+def test_caller_cannot_select_source_verification_authority(tmp_path, override):
+    inputs, store, _ = passing_input(tmp_path / "store")
+    _, tree = _revision_and_tree()
+    if override == "subclass":
+        class CallerSource(FeatureStateModelSourceRevisionVerifier):
+            def verify(self, code_revision):
+                return code_revision, tree
+        verifier = CallerSource(ROOT)
+    elif override == "other_checkout":
+        clone = tmp_path / "clone"
+        subprocess.run(["git", "clone", "--quiet", "--shared", str(ROOT), str(clone)],
+                       check=True, capture_output=True, text=True)
+        verifier = FeatureStateModelSourceRevisionVerifier(clone)
+        assert verifier.verify(inputs.code_revision) == (inputs.code_revision, tree)
+    else:
+        verifier = FeatureStateModelSourceRevisionVerifier(ROOT, git_executable=shutil.which("git"))
+    result = evaluate_feature_state_model_integrity_gate(
+        inputs, evidence_store=store, source_revision_verifier=verifier)
+    assert result.decision is AcceptanceDecision.FAIL
+    assert "SOURCE_REVISION_UNVERIFIED" in result.reason_codes
+
+
+def test_source_identity_is_resolved_internally_from_executing_checkout():
+    revision, tree = _revision_and_tree()
+    assert _executing_source_identity(revision, None) == (revision, tree)
+
+
+def test_missing_git_cannot_establish_executing_source_identity(monkeypatch):
+    revision, _ = _revision_and_tree()
+    monkeypatch.setattr(shutil, "which", lambda executable: None)
+    assert _executing_source_identity(revision, None) is None
 
 
 def test_fixture_catalog_labels_cannot_pass_d1_without_a_replayed_runtime_bundle(tmp_path):
