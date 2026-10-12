@@ -92,6 +92,13 @@ class ModelDefinition:
             if ((scope in self.approved_scope or output in self.outputs) and
                     (set(self.approved_scope) != {scope} or self.outputs != (output,))):
                 raise InvariantViolation("PRICING_OUTPUT_AUTHORITY_CONFLICT")
+        if self.model_id in {"CAPM", "MULTIFACTOR"} and (
+                any(scope in {ModelScope.POSITION_SIZING, ModelScope.ORDER_CREATION}
+                    for scope in self.approved_scope) or
+                (ModelScope.REQUIRED_RETURN in self.approved_scope and
+                 (self.approved_scope != (ModelScope.REQUIRED_RETURN,) or
+                  self.outputs != ("required_return",)))):
+            raise InvariantViolation("PRICING_MODEL_AUTHORITY_CONFLICT")
 
     @property
     def key(self) -> str:

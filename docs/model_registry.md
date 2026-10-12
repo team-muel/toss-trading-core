@@ -49,4 +49,9 @@ fail-closed다. 이 경계는 실제 model validation evidence를 만들어내�
 scope를 추가해 사전 예측 및 주문 권한과 분리한다. JSON Schema도 같은 규칙을 적용한다.
 새 CAPM/MULTIFACTOR v2는 `PRICING_BASELINE_RETURN`을 사용한다.
 기존 REQUIRED_RETURN 모델의 payload와 registry hash는 변경하지 않는다.
+CAPM/MULTIFACTOR model ID는 선언의 출력 이름을 바꿔도 `POSITION_SIZING`이나
+`ORDER_CREATION` 권한을 받을 수 없다. Legacy `REQUIRED_RETURN` scope는 해당
+`required_return` 출력 하나에 결속돼 개인 hurdle 출력으로 재명명할 수 없다.
+이 제한은 definition 생성과 snapshot 재구성, JSON Schema에 동일하게 적용한다.
+기존 canonical semantic/output pair와 유효한 legacy payload/hash는 유지한다.
 이 변경은 출력 권한 계약이며 사후 수익률 계산기 자체를 추가하지 않는다.
