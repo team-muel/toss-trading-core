@@ -362,6 +362,26 @@ def test_complete_sibling_pricing_runs_remain_replayable(tmp_path):
     assert {item["pricing_run_id"] for item in body["calculation_lineage"]} == {"pricing@1", "pricing@2"}
 
 
+def test_conflicting_record_retry_does_not_publish_a_second_catalog(tmp_path):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    repository.record(runtime_run_id="runtime@1", store=store)
+    catalog = store.layout.resolve("catalog", "canonical-d1-runtime-evidence")
+    before = {p.name: p.read_bytes() for p in catalog.iterdir()}
+    rows = conn.execute("SELECT * FROM am_canonical_d1_runtime_evidence").fetchall()
+    payload, content_hash = _hashed({"pricing_outputs": {"ETF": "0.03"}})
+    conn.execute("INSERT INTO am_pricing_run VALUES (?, ?, ?, ?, ?)",
+                 ("pricing@2", "state@1", "pricing@1", payload, content_hash))
+    payload, content_hash = _hashed({"forecast_values": {"ETF": "0.04"}})
+    conn.execute("INSERT INTO am_expectation_run VALUES (?, ?, ?, ?, ?)",
+                 ("expectation@2", "pricing@2", "expectation@1", payload, content_hash))
+    for _ in range(2):
+        with pytest.raises(InvariantViolation, match="CANONICAL_D1_EVIDENCE_CONFLICT"):
+            repository.record(runtime_run_id="runtime@1", store=store)
+        assert {p.name: p.read_bytes() for p in catalog.iterdir()} == before
+        assert conn.execute("SELECT * FROM am_canonical_d1_runtime_evidence").fetchall() == rows
+
+
 def test_source_manifest_hash_drift_is_rejected_on_replay(tmp_path):
     conn, store = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))

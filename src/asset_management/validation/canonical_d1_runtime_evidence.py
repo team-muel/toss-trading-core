@@ -84,7 +84,7 @@ class CanonicalD1RuntimeEvidenceRepository:
         return self._conn
 
     def record(self, *, runtime_run_id: str, store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
-        result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, publish_catalog=True)
+        result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, verify_catalog=False)
         recorded_at = self._recorded_at()
         serialized = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         existing = self._conn.execute(
@@ -96,7 +96,10 @@ class CanonicalD1RuntimeEvidenceRepository:
                         result.catalog_object_id, serialized, result.content_hash)
             if tuple(existing) != expected:
                 raise InvariantViolation("CANONICAL_D1_EVIDENCE_CONFLICT")
+            self._verify_catalog(store, result.catalog_object_id, body)
             return result
+        if store.catalog("canonical-d1-runtime-evidence", body) != result.catalog_object_id:
+            raise InvariantViolation("CANONICAL_D1_EVIDENCE_CATALOG_INVALID")
         with self._conn:
             self._conn.execute(
                 """INSERT INTO am_canonical_d1_runtime_evidence
@@ -123,7 +126,7 @@ class CanonicalD1RuntimeEvidenceRepository:
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_INVALID") from exc
         if digest(canonical(stored)) != _hash(row[1], "CANONICAL_D1_EVIDENCE_INVALID"):
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_INVALID")
-        result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, publish_catalog=False)
+        result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, verify_catalog=True)
         if body != stored or result.content_hash != row[1] or result.catalog_object_id != row[2]:
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_REPLAY_MISMATCH")
         return result
@@ -151,7 +154,7 @@ class CanonicalD1RuntimeEvidenceRepository:
         return cutoff
 
     def _assemble(self, *, runtime_run_id: str, store: ImmutableDatasetStore,
-                  publish_catalog: bool) -> tuple[CanonicalD1RuntimeEvidence, dict[str, object]]:
+                  verify_catalog: bool) -> tuple[CanonicalD1RuntimeEvidence, dict[str, object]]:
         if not isinstance(runtime_run_id, str) or not runtime_run_id.strip() or not isinstance(store, ImmutableDatasetStore):
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_INVALID")
         runtime = self._conn.execute(
@@ -193,19 +196,21 @@ class CanonicalD1RuntimeEvidenceRepository:
         }
         content_hash = digest(canonical(body))
         catalog_id = content_hash
-        if publish_catalog:
-            if store.catalog("canonical-d1-runtime-evidence", body) != catalog_id:
-                raise InvariantViolation("CANONICAL_D1_EVIDENCE_CATALOG_INVALID")
-        else:
-            try:
-                catalog = store.layout.resolve(
-                    "catalog", f"canonical-d1-runtime-evidence/{catalog_id}.json").read_bytes()
-            except OSError as exc:
-                raise DataQualityError("CANONICAL_D1_EVIDENCE_CATALOG_MISSING") from exc
-            if catalog != canonical(body):
-                raise InvariantViolation("CANONICAL_D1_EVIDENCE_CATALOG_INVALID")
+        if verify_catalog:
+            self._verify_catalog(store, catalog_id, body)
         return CanonicalD1RuntimeEvidence(runtime_run_id, str(runtime[2]), snapshot_id, binding_hash,
                                           catalog_id, content_hash), body
+
+    @staticmethod
+    def _verify_catalog(store: ImmutableDatasetStore, catalog_id: str,
+                        body: dict[str, object]) -> None:
+        try:
+            catalog = store.layout.resolve(
+                "catalog", f"canonical-d1-runtime-evidence/{catalog_id}.json").read_bytes()
+        except OSError as exc:
+            raise DataQualityError("CANONICAL_D1_EVIDENCE_CATALOG_MISSING") from exc
+        if catalog != canonical(body):
+            raise InvariantViolation("CANONICAL_D1_EVIDENCE_CATALOG_INVALID")
 
     def _features(self, runtime_run_id: str, store: ImmutableDatasetStore, *,
                   cutoff: datetime, authorized_model_keys: tuple[str, ...]) -> list[dict[str, object]]:

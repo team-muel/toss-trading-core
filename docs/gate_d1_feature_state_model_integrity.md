@@ -59,3 +59,6 @@ republish it.
 Every persisted pricing run for the selected runtime must have expectation evidence. An incomplete
 sibling pricing run cannot disappear behind a complete chain for the same state; record and replay
 reject the missing coverage before publishing or changing the bundle.
+Recording assembles and compares an existing runtime binding before publishing a catalog object.
+A conflicting retry leaves both the existing evidence row and catalog bytes unchanged; an identical
+retry verifies the existing catalog rather than repairing or replacing it.
