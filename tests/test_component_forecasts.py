@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 from copy import deepcopy
+from dataclasses import replace
 import json
 from pathlib import Path
 import sqlite3
@@ -33,11 +34,11 @@ MANIFEST = "a" * 64
 
 def repository(*, runtime="run@1", semantic_type="ECONOMIC_COMPONENT_INPUT", fresh_until=None,
                conflicting=False, manifest_runtime="run@1", payload_cutoff=None,
-               duplicate_exposure=False, numeric_observation_ids=False):
+               duplicate_exposure=False, numeric_observation_ids=False, run_as_of=None):
     conn = sqlite3.connect(":memory:")
     Migrator(conn, FrozenClock(NOW)).migrate(load_migration_catalog(ROOT / "schemas"))
     conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
-                 ("run@1", NOW.isoformat(), NOW.isoformat(), "git:test", NOW.isoformat()))
+                 ("run@1", (run_as_of or NOW).isoformat(), NOW.isoformat(), "git:test", NOW.isoformat()))
     if manifest_runtime != "run@1":
         conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
                      (manifest_runtime, NOW.isoformat(), NOW.isoformat(), "git:other", NOW.isoformat()))
@@ -100,6 +101,44 @@ def assemble(source):
         currency=Currency.USD, currency_basis=CurrencyBasis.BASE, horizon=252, validity=VALIDITY,
         model_key="economic@1", runtime_authorization=authorization,
     )
+
+
+@pytest.mark.parametrize("horizon,validity,reason", [
+    (252.0, VALIDITY, "COMPONENT_FORECAST_CONTEXT_INVALID"),
+    ("252", VALIDITY, "COMPONENT_FORECAST_CONTEXT_INVALID"),
+    (252, None, "COMPONENT_FORECAST_CONTEXT_INVALID"),
+    (252, VALIDITY.payload(), "COMPONENT_FORECAST_CONTEXT_INVALID"),
+    (252, SignalValidity(252, 252, NOW, DecayProfile.STEP), "COMPONENT_FORECAST_SIGNAL_EXPIRED"),
+    (252, SignalValidity(252, 252, NOW - timedelta(seconds=1), DecayProfile.STEP),
+     "COMPONENT_FORECAST_SIGNAL_EXPIRED"),
+])
+def test_producer_rejects_untyped_or_expired_signal_before_persistence(horizon, validity, reason):
+    inputs, evidence, authorization = repository()
+    before = tuple(inputs.connection.iterdump())
+    with pytest.raises(DataQualityError, match=reason):
+        ComponentForecastAssembler(inputs, evidence).assemble_gross_forecast(
+            context=CONTEXT, instrument_id="SPY", asset_class=AssetClass.EQUITY_ETF,
+            currency=Currency.USD, currency_basis=CurrencyBasis.BASE, horizon=horizon,
+            validity=validity, model_key="economic@1", runtime_authorization=authorization,
+        )
+    assert tuple(inputs.connection.iterdump()) == before
+
+
+@pytest.mark.parametrize("expiry_offset", [30, 60])
+def test_signal_expiring_between_cutoff_and_as_of_is_not_published(expiry_offset):
+    as_of = NOW + timedelta(seconds=60)
+    inputs, evidence, authorization = repository(run_as_of=as_of)
+    context = AsOfContext("run@1", as_of, NOW, "policy@1", "parameters@1", "git:test")
+    inputs.require_exact_runtime_context(context)
+    before = tuple(inputs.connection.iterdump())
+    with pytest.raises(DataQualityError, match="COMPONENT_FORECAST_SIGNAL_EXPIRED"):
+        ComponentForecastAssembler(inputs, evidence).assemble_gross_forecast(
+            context=context, instrument_id="SPY", asset_class=AssetClass.EQUITY_ETF,
+            currency=Currency.USD, currency_basis=CurrencyBasis.BASE, horizon=252,
+            validity=SignalValidity(252, 252, NOW + timedelta(seconds=expiry_offset), DecayProfile.STEP),
+            model_key="economic@1", runtime_authorization=authorization,
+        )
+    assert tuple(inputs.connection.iterdump()) == before
 
 
 def test_assembler_reads_persisted_pit_values_replays_and_feeds_typed_consumer():
@@ -203,8 +242,38 @@ def persisted_calculation():
         (persisted.calculation_id,),).fetchone()
     artifact = json.loads(row[0])
     assert persisted.calculation_id == digest(canonical(artifact))
+    assert persisted.as_of == NOW
+    assert persisted.validity == VALIDITY
     assert assembler.consume_gross_forecast(calculation_id=persisted.calculation_id) == persisted
     return inputs, assembler, persisted, artifact
+
+
+def test_persisted_forecast_preserves_original_as_of_and_validity_with_lagged_cutoff():
+    as_of = NOW + timedelta(seconds=30)
+    inputs, evidence, authorization = repository(run_as_of=as_of)
+    assembler = ComponentForecastAssembler(inputs, evidence)
+    context = AsOfContext("run@1", as_of, NOW, "policy@1", "parameters@1", "git:test")
+    produced = assembler.assemble_gross_forecast(
+        context=context, instrument_id="SPY", asset_class=AssetClass.EQUITY_ETF,
+        currency=Currency.USD, currency_basis=CurrencyBasis.BASE, horizon=252, validity=VALIDITY,
+        model_key="economic@1", runtime_authorization=authorization,
+    )
+    before = tuple(inputs.connection.iterdump())
+    replayed = assembler.consume_gross_forecast(calculation_id=produced.calculation_id)
+    assert replayed == produced
+    assert replayed.as_of == as_of and replayed.as_of != context.information_cutoff_utc
+    assert replayed.validity == VALIDITY
+    assert tuple(inputs.connection.iterdump()) == before
+
+
+@pytest.mark.parametrize("changes", [
+    {"validity": None}, {"as_of": NOW.replace(tzinfo=None)},
+    {"validity": SignalValidity(252, 252, NOW, DecayProfile.STEP)},
+])
+def test_persisted_forecast_return_requires_complete_temporal_contract(changes):
+    _, _, produced, _ = persisted_calculation()
+    with pytest.raises(DataQualityError, match="COMPONENT_FORECAST_VALIDITY_INVALID"):
+        replace(produced, **changes)
 
 
 def insert_forged(inputs, artifact, *, runtime="run@1"):
@@ -249,6 +318,26 @@ def test_rehashed_forged_calculation_rows_fail_closed(mutation):
     forged_id = insert_forged(inputs, artifact)
     with pytest.raises(DataQualityError):
         assembler.replay_gross_forecast(calculation_id=forged_id)
+
+
+@pytest.mark.parametrize("mutation", ["expired", "holding", "expiry", "decay"])
+def test_rehashed_invalid_validity_cannot_cross_persisted_consumer_boundary(mutation):
+    inputs, assembler, _, original = persisted_calculation()
+    artifact = deepcopy(original)
+    if mutation == "expired":
+        for item in artifact["components"]:
+            item["validity"]["valid_until"] = NOW.isoformat()
+    elif mutation == "holding":
+        artifact["components"][0]["validity"]["holding_horizon"] = 21
+    elif mutation == "expiry":
+        artifact["components"][0]["validity"]["valid_until"] = (NOW + timedelta(days=2)).isoformat()
+    else:
+        artifact["components"][0]["validity"]["decay_profile"] = "LINEAR"
+    forged_id = insert_forged(inputs, artifact)
+    before = tuple(inputs.connection.iterdump())
+    with pytest.raises(DataQualityError):
+        assembler.consume_gross_forecast(calculation_id=forged_id)
+    assert tuple(inputs.connection.iterdump()) == before
 
 
 def test_cross_run_forged_reference_fails_closed():

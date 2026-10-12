@@ -1,6 +1,7 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from asset_management.domain.economics import (
 )
 from asset_management.domain.errors import DataQualityError, InvariantViolation
 from asset_management.domain.scalars import Currency
+from asset_management.domain.horizon import SignalValidity, DecayProfile
 from asset_management.expectations import assess_model_relative_alpha
 from asset_management.governance import ModelDefinition, ModelRegistry, ModelScope, ModelStatus
 from tests.runtime_model_support import persisted_runtime_authorization
@@ -18,6 +20,14 @@ from tests.runtime_model_support import persisted_runtime_authorization
 D = Decimal
 NOW = datetime(2026, 1, 2, tzinfo=timezone.utc)
 FORECAST_ID = "a" * 64
+VALIDITY = SignalValidity(252, 63, NOW + timedelta(days=1), DecayProfile.STEP)
+
+
+def test_packaged_alpha_schema_bundle_declares_its_relative_dependency():
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    bundle = project["tool"]["setuptools"]["data-files"]["share/toss-trading/schemas/model-relative-alpha"]
+    assert "schemas/model_relative_alpha_assessment.schema.json" in bundle
+    assert "schemas/decision_horizon.schema.json" in bundle
 
 
 def metric(semantic_type, value, reference="forecast@1"):
@@ -50,7 +60,7 @@ def test_assessment_shrinks_forecast_before_preserving_alpha_identity():
         combined_signal_forecast_id=FORECAST_ID, confidence=D(".5"), prior=D("0"),
         forecast_uncertainty=D(".001"), baseline_uncertainty=D(".001"),
         uncertainty_threshold=D(".02"), formula_version="model-alpha@1", model_key="MODEL_ALPHA@1",
-        as_of=NOW, model_registry_evidence=repository, runtime_authorization=token)
+        as_of=NOW, validity=VALIDITY, model_registry_evidence=repository, runtime_authorization=token)
     assert assessment.raw_alpha == D(".08")
     assert assessment.value.value == D(".04")
     assert assessment.shrinkage_amount == D(".04")
@@ -58,7 +68,11 @@ def test_assessment_shrinks_forecast_before_preserving_alpha_identity():
     assert not assessment.abstain
     schema = json.loads(Path("schemas/model_relative_alpha_assessment.schema.json").read_text())
     import jsonschema
-    jsonschema.Draft202012Validator(schema).validate(assessment.payload())
+    from referencing import Registry, Resource
+    shared = json.loads(Path("schemas/decision_horizon.schema.json").read_text())
+    registry = Registry().with_resource("decision_horizon.schema.json", Resource.from_contents(shared))
+    jsonschema.Draft202012Validator(schema, registry=registry).validate(assessment.payload())
+    assert assessment.as_of == NOW and assessment.validity == VALIDITY
 
 
 def test_assessment_abstains_and_rejects_noncanonical_or_misaligned_inputs():
@@ -68,7 +82,7 @@ def test_assessment_abstains_and_rejects_noncanonical_or_misaligned_inputs():
         combined_signal_forecast_id=FORECAST_ID, confidence=D(1), prior=D(0),
         forecast_uncertainty=D(".01"), baseline_uncertainty=D(".01"),
         uncertainty_threshold=D(".005"), formula_version="model-alpha@1", model_key="MODEL_ALPHA@1",
-        as_of=NOW, model_registry_evidence=repository, runtime_authorization=token)
+        as_of=NOW, validity=VALIDITY, model_registry_evidence=repository, runtime_authorization=token)
     assessment = assess_model_relative_alpha(**arguments)
     assert assessment.abstain
     assert set(assessment.reason_codes) == {"MODEL_RELATIVE_ALPHA_INTERVAL_CROSSES_ZERO", "MODEL_RELATIVE_ALPHA_UNCERTAINTY_HIGH"}
@@ -87,8 +101,39 @@ def test_assessment_rejects_deleted_persisted_review_evidence():
         combined_signal_forecast_id=FORECAST_ID, confidence=D(".5"), prior=D("0"),
         forecast_uncertainty=D(".001"), baseline_uncertainty=D(".001"),
         uncertainty_threshold=D(".02"), formula_version="model-alpha@1", model_key="MODEL_ALPHA@1",
-        as_of=NOW, model_registry_evidence=repository, runtime_authorization=token)
+        as_of=NOW, validity=VALIDITY, model_registry_evidence=repository, runtime_authorization=token)
     repository._conn.execute("DROP TRIGGER am_model_governance_review_evidence_no_delete")
     repository._conn.execute("DELETE FROM am_model_governance_review_evidence")
     with pytest.raises(InvariantViolation, match="MODEL_RUNTIME_EVIDENCE_INVALID"):
         assess_model_relative_alpha(**arguments)
+
+
+@pytest.mark.parametrize("changes", [
+    {"validity": None}, {"validity": VALIDITY.payload()},
+    {"validity": SignalValidity(252, 63, NOW, DecayProfile.STEP)},
+    {"validity": SignalValidity(63, 63, NOW + timedelta(days=1), DecayProfile.STEP)},
+    {"as_of": NOW.replace(tzinfo=None)},
+])
+def test_assessment_requires_explicit_unexpired_aligned_validity(changes):
+    _, repository, token = authorization()
+    arguments = dict(net_forecast=metric(ReturnSemanticType.FORECAST_TOTAL_RETURN_NET, ".12"),
+        pricing_baseline=metric(ReturnSemanticType.PRICING_BASELINE_RETURN, ".04", "CAPM@2"),
+        combined_signal_forecast_id=FORECAST_ID, confidence=D(".5"), prior=D(0),
+        forecast_uncertainty=D(".001"), baseline_uncertainty=D(".001"),
+        uncertainty_threshold=D(".02"), formula_version="model-alpha@1", model_key="MODEL_ALPHA@1",
+        as_of=NOW, validity=VALIDITY, model_registry_evidence=repository, runtime_authorization=token)
+    before = tuple(repository._conn.iterdump())
+    with pytest.raises(DataQualityError, match="MODEL_RELATIVE_ALPHA_VALIDITY_INVALID"):
+        assess_model_relative_alpha(**(arguments | changes))
+    assert tuple(repository._conn.iterdump()) == before
+
+
+def test_assessment_cannot_infer_a_missing_validity_contract():
+    _, repository, token = authorization()
+    with pytest.raises(TypeError, match="validity"):
+        assess_model_relative_alpha(net_forecast=metric(ReturnSemanticType.FORECAST_TOTAL_RETURN_NET, ".12"),
+            pricing_baseline=metric(ReturnSemanticType.PRICING_BASELINE_RETURN, ".04", "CAPM@2"),
+            combined_signal_forecast_id=FORECAST_ID, confidence=D(".5"), prior=D(0),
+            forecast_uncertainty=D(".001"), baseline_uncertainty=D(".001"),
+            uncertainty_threshold=D(".02"), formula_version="model-alpha@1", model_key="MODEL_ALPHA@1",
+            as_of=NOW, model_registry_evidence=repository, runtime_authorization=token)

@@ -81,7 +81,12 @@ investment policy -> account truth -> time truth -> data truth
 
 근거: `src/asset_management/domain/`, `src/asset_management/time/`,
 `src/asset_management/config/`, `docs/db_migrations.md`,
-`tests/test_phase1_common_foundation.py`, `tests/test_integration_startup.py`.
+`tests/test_foundation_startup_contract.py`, `tests/test_foundation_static_checks.py`,
+`tests/test_layer_dependencies.py`, `tests/test_integration_startup.py`.
+
+AMA-12의 현재 CI 기반은 canonical inward import 규칙과 core→alpha sibling
+경계 검사, domain/time/config 22파일의 pinned correctness lint 및 strict type
+검사를 포함한다. 이 범위는 전체 저장소 typing 또는 실계좌/운영 gate PASS가 아니다.
 
 판정: **완료**.
 

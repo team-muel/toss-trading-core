@@ -6,6 +6,23 @@ current runs; only `FeatureContext.as_of` and `information_cutoff` select eligib
 
 ## Contracts
 
+AMA-32 forecast and holding horizons require exact integer values at the Python
+boundary; numerically equal float/Decimal values are not coerced into eligibility.
+Alignment requires typed `SignalValidity` for every input, including a single
+input, and equal horizons, expiry and decay policy. Missing/untyped inputs and
+conflicting validity block combination rather than silently passing through.
+The same exact-integer rule applies to annual-return conversion, risk-free curve
+selection/alignment and typed pricing, expected-return and legacy alpha carriers.
+These checks do not rewrite historical payload hashes or grant current authority
+to legacy model outputs.
+Serialized validity schemas enforce the same decay policy: EXPONENTIAL requires
+a positive integer half-life; STEP and LINEAR require a null half-life. The rule
+also applies to embedded forecast, portfolio-transition and state validity.
+`ModelRelativeAlphaAssessment` requires an explicit aligned, unexpired validity
+contract and carries it together with the assessment as-of in its payload.
+The helper retains its existing calculation and runtime authorization checks;
+this temporal contract does not activate a new producer or diagnostics path.
+
 Every `FeatureDefinition` records `feature_id`, namespace, name, version, input fields,
 lookback, horizon, transformation, missing policy, and quality policy. Re-registering a
 feature ID with a different contract is rejected. The safe defaults are
@@ -14,6 +31,8 @@ feature ID with a different contract is rejected. The safe defaults are
 Feature snapshots also carry the AMA-32 signal-validity contract: forecast and holding
 horizons, an aware `valid_until`, and an explicit decay profile. This contract is part
 of the deterministic feature identity and immutable Gold payload.
+The snapshot constructor requires typed `SignalValidity`, matching the context
+and consumer boundaries; an untyped dict or missing validity is rejected.
 
 Every successful `FeatureSnapshot` records `feature_run_id`, instrument ID, feature ID,
 `as_of`, `information_cutoff`, Decimal value, quality status, every input manifest ID,

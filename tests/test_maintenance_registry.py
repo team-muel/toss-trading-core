@@ -17,6 +17,11 @@ REGISTRY = json.loads((ROOT / 'config/maintenance_surfaces.json').read_text())
 
 
 class MaintenanceRegistryTests(unittest.TestCase):
+    def test_canonical_architecture_document_has_explicit_documentation_owner(self):
+        result = check.classify(REGISTRY, ['src/asset_management/ARCHITECTURE.md'])
+        self.assertIn('AMA-146', result['umbrellas'])
+        self.assertEqual(result['unmapped'], [])
+
     def test_registry_and_exact_umbrellas(self):
         check.validate(REGISTRY)
         self.assertEqual({s['issue'] for s in REGISTRY['surfaces']}, check.EXPECTED)
