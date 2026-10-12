@@ -10,6 +10,13 @@ raw root는 `ImmutableDatasetStore`의 검증된 Bronze manifest에서만 생성
 없거나, 계층을 건너뛰거나, output/node hash가 충돌하거나, 네 단계 중 하나가 빠지면
 실패로 닫힌다. 동일 계산 node를 여러 후속 계산이 공유할 수 있지만 최종 추정치에서
 도달할 수 없는 node는 추적 결과에 포함되지 않는다.
+Publication payload는 전체 node catalog를 포함하므로 raw manifest 재검증도 전체
+catalog에 적용한다. 최종 trace 밖의 raw node도 manifest가 없거나 Bronze가 아니거나
+content가 충돌하면 catalog를 쓰기 전에 거부한다. Node ID 순으로 검증하며, 검증된
+공유·캐시 node의 publication과 기존 trace/hash 계약은 유지한다.
+Node는 JSON array를 immutable tuple로 보존하므로 content 비교에서는 양쪽을 같은
+JSON 표현으로 정규화한다. Bronze layer와 원래 content hash 검증은 그대로 적용하며,
+정상 array·중첩 array를 충돌로 오인하거나 caller의 값을 변경하지 않는다.
 
 그래프 publication은 content-addressed catalog에 저장하며 주문을 생성하거나 실거래
 권한을 변경하지 않는다. `live_trading_enabled` 기본값은 계속 `false`다.
