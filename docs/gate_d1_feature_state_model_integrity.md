@@ -37,6 +37,8 @@ a caller cannot create new check labels under an existing bundle signature. Vers
 without signed check hashes are rejected. Version-5 artifact bodies include `passed=true`, the
 source tree, bundle, registry and store URI, and omit the attestation hash to avoid circular hashing.
 The gate result retains the attestation identity. A
+caller-provided subclass of the runtime authority verifier is rejected; the gate invokes the exact
+concrete verifier implementation rather than dispatching to a caller override. A
 copied registry therefore cannot authorize a synthetic local runtime. A caller-supplied label, test
 selector, mutable file, fixture-only catalog, local SQLite file, or historical result cannot produce
 PASS without that independently signed authority.

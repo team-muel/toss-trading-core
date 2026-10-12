@@ -291,6 +291,23 @@ def test_fixture_runtime_bundle_cannot_pass_without_external_canonical_authority
     assert "CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED" in result.reason_codes
 
 
+def test_caller_authority_verifier_subclass_cannot_skip_signature_verification(tmp_path):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    repository.record(runtime_run_id="runtime@1", store=store)
+    checks = {name: CheckEvidence(True, ("sha256:" + "a" * 64,))
+              for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS}
+    class CallerVerifier(CanonicalD1RuntimeAuthorityVerifier):
+        def verify(self, **kwargs):
+            raise AssertionError("caller-supplied verifier was executed")
+    result = evaluate_feature_state_model_integrity_gate(
+        FeatureStateModelIntegrityGateInput(NOW, "runtime@1", REVISION, REVISION, checks),
+        evidence_store=store, source_revision_verifier=FeatureStateModelSourceRevisionVerifier(ROOT),
+        runtime_evidence_repository=repository, runtime_authority_verifier=CallerVerifier(repository))
+    assert result.decision is AcceptanceDecision.FAIL
+    assert "CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED" in result.reason_codes
+
+
 def test_copied_signed_registry_cannot_authorize_a_local_runtime_bundle(tmp_path, monkeypatch):
     conn, store = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))

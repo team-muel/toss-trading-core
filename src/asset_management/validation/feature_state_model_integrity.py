@@ -335,11 +335,12 @@ def evaluate_feature_state_model_integrity_gate(
         else:
             if runtime_evidence.code_revision != inputs.code_revision:
                 reasons.append("RUNTIME_EVIDENCE_CODE_REVISION_MISMATCH")
-    if not isinstance(runtime_authority_verifier, CanonicalD1RuntimeAuthorityVerifier):
+    if type(runtime_authority_verifier) is not CanonicalD1RuntimeAuthorityVerifier:
         reasons.append("CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED")
     elif runtime_evidence is not None and isinstance(
             runtime_evidence_repository, CanonicalD1RuntimeEvidenceRepository):
-        runtime_authority = runtime_authority_verifier.verify(
+        runtime_authority = CanonicalD1RuntimeAuthorityVerifier.verify(
+            runtime_authority_verifier,
             runtime_evidence_repository=runtime_evidence_repository,
             runtime_evidence=runtime_evidence,
         )
