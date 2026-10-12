@@ -18,6 +18,32 @@ from asset_management.validation import (
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.parametrize("change", ("unstaged", "staged", "untracked"))
+def test_dirty_checkout_cannot_verify_committed_source(tmp_path, change):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], check=True,
+                              capture_output=True, text=True)
+    git("init", "--quiet")
+    git("config", "user.name", "test")
+    git("config", "user.email", "test@example.invalid")
+    source = repository / "source.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    git("add", "source.py")
+    git("commit", "--quiet", "-m", "source")
+    revision, tree = _revision_and_tree(repository)
+    verifier = FeatureStateModelSourceRevisionVerifier(repository)
+    assert verifier.verify(revision) == (revision, tree)
+    if change == "untracked":
+        (repository / "injected.py").write_text("value = 2\n", encoding="utf-8")
+    else:
+        source.write_text("value = 2\n", encoding="utf-8")
+        if change == "staged":
+            git("add", "source.py")
+    assert verifier.verify(revision) is None
+
+
 def _revision_and_tree(repository: Path = ROOT) -> tuple[str, str]:
     revision = subprocess.run(
         ["git", "-C", str(repository), "rev-parse", "HEAD"], check=True, capture_output=True,

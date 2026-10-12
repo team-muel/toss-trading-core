@@ -18,7 +18,10 @@ The required checks are:
 
 `FeatureStateModelIntegrityGateInput` requires the exact check set, one `runtime_run_id`, an exact
 full Git revision for both the evaluation and the producing evidence, and immutable catalog artifact
-IDs. The revision must resolve to the verifier checkout's current HEAD and tree. Each `sha256:`
+IDs. The revision must resolve to the verifier checkout's current HEAD and tree.
+The verifier also rejects staged, unstaged, and non-ignored untracked files, or an unsuccessful
+Git status read; a committed tree does not identify the executed code in a dirty checkout.
+Each `sha256:`
 artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@4` catalog record
 for the named check, revision/tree, replayed canonical runtime-bundle hash/catalog ID, and the
 runtime-bound external-attestor-registry snapshot/hash. `CanonicalD1RuntimeAuthorityVerifier` verifies

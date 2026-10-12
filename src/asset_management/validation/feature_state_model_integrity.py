@@ -61,6 +61,16 @@ class FeatureStateModelSourceRevisionVerifier:
         if (self._rev_parse(f"{commit}^{{commit}}") != commit or
                 self._rev_parse("HEAD^{commit}") != commit):
             return None
+        try:
+            status = subprocess.run(
+                [self.git_executable, "-C", str(self.repository_root), "status",
+                 "--porcelain=v1", "--untracked-files=all"],
+                check=False, capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if status.returncode != 0 or status.stdout:
+            return None
         source_tree = self._rev_parse(f"{commit}^{{tree}}")
         return (code_revision, source_tree) if source_tree is not None else None
 
