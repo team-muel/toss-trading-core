@@ -5,6 +5,9 @@ validation/review 날짜, owner와 lifecycle 상태를 보존한다. 등록은 D
 시작하며 `DEVELOPMENT → VALIDATED → APPROVED → ACTIVE` 승격과 명시된
 degrade/suspend/retire 경로만 허용한다. 모든 전이는 UTC 시각, 사유, evidence ID를
 기록하고 registry snapshot은 canonical hash로 식별한다.
+입출력·failure mode·transition evidence ID는 list/tuple로 명시해야 하며 단일 문자열을
+문자별 ID로 변환하지 않는다. Validation/review 필드는 `date`만 허용하고 `datetime`을
+날짜로 추론하지 않는다. 잘못된 형태는 등록·전이 상태를 변경하기 전에 거부한다.
 
 모델 실행은 요청 시각에 effective한 ACTIVE 상태, review 유효기간, 승인 scope를 모두 통과한 authorization을
 요구한다. registry가 바뀌면 이전 authorization은 무효다. CAPM과 multifactor

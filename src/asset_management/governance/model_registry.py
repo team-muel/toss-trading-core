@@ -48,7 +48,7 @@ _TRANSITIONS = {
 
 
 def _identifiers(values: tuple[str, ...], reason: str) -> tuple[str, ...]:
-    if (not values or len(values) != len(set(values)) or
+    if (not isinstance(values, (tuple, list)) or not values or len(values) != len(set(values)) or
             any(not isinstance(value, str) or not value.strip() for value in values)):
         raise InvariantViolation(reason)
     return tuple(sorted(values))
@@ -72,7 +72,7 @@ class ModelDefinition:
         if (any(not isinstance(value, str) or not value.strip()
                 for value in (self.model_id, self.version, self.purpose, self.owner)) or
                 not isinstance(self.status, ModelStatus) or
-                not isinstance(self.validation_date, date) or not isinstance(self.review_date, date) or
+                type(self.validation_date) is not date or type(self.review_date) is not date or
                 self.review_date < self.validation_date or not self.approved_scope or
                 len(self.approved_scope) != len(set(self.approved_scope)) or
                 any(not isinstance(scope, ModelScope) for scope in self.approved_scope)):

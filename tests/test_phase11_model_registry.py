@@ -99,6 +99,30 @@ def test_generic_allocator_scope_and_legacy_pricing_identity_remain_explicit():
     assert ModelRegistry.from_payload(legacy).payload() == legacy
 
 
+@pytest.mark.parametrize("field,reason", [
+    ("inputs", "MODEL_INPUTS_INVALID"), ("outputs", "MODEL_OUTPUTS_INVALID"),
+    ("known_failure_modes", "MODEL_FAILURE_MODES_INVALID"),
+])
+def test_identifier_list_cannot_be_supplied_as_a_string(field, reason):
+    with pytest.raises(InvariantViolation, match=reason):
+        replace(definition("GENERIC"), **{field: "abc"})
+
+
+def test_validation_and_review_fields_are_dates_not_datetimes():
+    with pytest.raises(InvariantViolation, match="MODEL_DEFINITION_INVALID"):
+        replace(definition(), validation_date=NOW, review_date=NOW + timedelta(days=30))
+
+
+def test_transition_evidence_ids_cannot_be_split_from_a_string():
+    registry = ModelRegistry()
+    registry.register(definition())
+    before = registry.payload()
+    with pytest.raises(InvariantViolation, match="MODEL_TRANSITION_EVIDENCE_INVALID"):
+        registry.transition("CAPM@1", ModelStatus.VALIDATED, effective_at=NOW,
+                            reason="test", evidence_ids="abc")
+    assert registry.payload() == before
+
+
 def test_registration_cannot_skip_development_and_definition_cannot_change():
     registry = ModelRegistry()
     with pytest.raises(InvariantViolation, match="MUST_START_IN_DEVELOPMENT"):
