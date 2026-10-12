@@ -254,12 +254,14 @@ class CanonicalD1RuntimeEvidenceRepository:
                FROM am_pricing_run pricing
                JOIN am_state_run state ON state.state_run_id=pricing.state_run_id
                JOIN am_feature_run feature ON feature.feature_run_id=state.feature_run_id
-               JOIN am_expectation_run expectation ON expectation.pricing_run_id=pricing.pricing_run_id
+               LEFT JOIN am_expectation_run expectation ON expectation.pricing_run_id=pricing.pricing_run_id
                WHERE feature.runtime_run_id=? ORDER BY expectation.expectation_run_id""", (runtime_run_id,)).fetchall()
         if not rows:
             raise DataQualityError("CANONICAL_D1_CALCULATION_LINEAGE_MISSING")
         result = []
         for pricing_id, state_id, pricing_version, pricing_payload, pricing_hash, expectation_id, expectation_version, expectation_payload, expectation_hash in rows:
+            if expectation_id is None:
+                raise DataQualityError("CANONICAL_D1_EXPECTATION_COVERAGE_MISSING")
             _payload(pricing_payload, pricing_hash, "CANONICAL_D1_PRICING_PAYLOAD_INVALID")
             _payload(expectation_payload, expectation_hash, "CANONICAL_D1_EXPECTATION_PAYLOAD_INVALID")
             if str(pricing_version) not in pricing_model_keys:

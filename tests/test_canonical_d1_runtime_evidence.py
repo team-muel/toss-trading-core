@@ -331,6 +331,37 @@ def test_missing_state_is_blocked_and_cannot_be_recorded(tmp_path):
         repository.record(runtime_run_id="runtime@1", store=store)
 
 
+@pytest.mark.parametrize("operation", ("record", "replay"))
+def test_incomplete_sibling_pricing_run_cannot_be_hidden(tmp_path, operation):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    if operation == "replay":
+        repository.record(runtime_run_id="runtime@1", store=store)
+    payload, content_hash = _hashed({"pricing_outputs": {"ETF": "0.03"}})
+    conn.execute("INSERT INTO am_pricing_run VALUES (?, ?, ?, ?, ?)",
+                 ("pricing@2", "state@1", "pricing@1", payload, content_hash))
+    before = conn.execute("SELECT * FROM am_canonical_d1_runtime_evidence").fetchall()
+    with pytest.raises(DataQualityError, match="CANONICAL_D1_EXPECTATION_COVERAGE_MISSING"):
+        getattr(repository, operation)(runtime_run_id="runtime@1", store=store)
+    assert conn.execute("SELECT * FROM am_canonical_d1_runtime_evidence").fetchall() == before
+
+
+def test_complete_sibling_pricing_runs_remain_replayable(tmp_path):
+    conn, store = _repository(tmp_path)
+    payload, content_hash = _hashed({"pricing_outputs": {"ETF": "0.03"}})
+    conn.execute("INSERT INTO am_pricing_run VALUES (?, ?, ?, ?, ?)",
+                 ("pricing@2", "state@1", "pricing@1", payload, content_hash))
+    payload, content_hash = _hashed({"forecast_values": {"ETF": "0.04"}})
+    conn.execute("INSERT INTO am_expectation_run VALUES (?, ?, ?, ?, ?)",
+                 ("expectation@2", "pricing@2", "expectation@1", payload, content_hash))
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    recorded = repository.record(runtime_run_id="runtime@1", store=store)
+    assert repository.replay(runtime_run_id="runtime@1", store=store) == recorded
+    body = json.loads(store.layout.resolve(
+        "catalog", f"canonical-d1-runtime-evidence/{recorded.catalog_object_id}.json").read_bytes())
+    assert {item["pricing_run_id"] for item in body["calculation_lineage"]} == {"pricing@1", "pricing@2"}
+
+
 def test_source_manifest_hash_drift_is_rejected_on_replay(tmp_path):
     conn, store = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))

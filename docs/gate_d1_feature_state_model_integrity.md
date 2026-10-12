@@ -56,3 +56,6 @@ The seven semantic checks still require their own real canonical runtime evidenc
 synthetic input, catalog bundle, or historical GitHub result is not acceptance evidence.
 Replay is read-only: a missing runtime-bundle catalog object is a failure, never an instruction to
 republish it.
+Every persisted pricing run for the selected runtime must have expectation evidence. An incomplete
+sibling pricing run cannot disappear behind a complete chain for the same state; record and replay
+reject the missing coverage before publishing or changing the bundle.
