@@ -101,6 +101,10 @@ class FeatureSnapshot:
     code_revision: str
     validity: SignalValidity
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.validity, SignalValidity):
+            raise ValueError("FEATURE_SIGNAL_VALIDITY_MISSING")
+
 
 def utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).isoformat()

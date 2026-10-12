@@ -31,6 +31,8 @@ feature ID with a different contract is rejected. The safe defaults are
 Feature snapshots also carry the AMA-32 signal-validity contract: forecast and holding
 horizons, an aware `valid_until`, and an explicit decay profile. This contract is part
 of the deterministic feature identity and immutable Gold payload.
+The snapshot constructor requires typed `SignalValidity`, matching the context
+and consumer boundaries; an untyped dict or missing validity is rejected.
 
 Every successful `FeatureSnapshot` records `feature_run_id`, instrument ID, feature ID,
 `as_of`, `information_cutoff`, Decimal value, quality status, every input manifest ID,
