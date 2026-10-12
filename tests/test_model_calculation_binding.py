@@ -99,3 +99,14 @@ def test_expired_output_is_rejected_at_exact_expiry_even_if_produced_earlier():
         bind_authorized_model_calculation(model_registry_evidence=repository, runtime_authorization=token,
             model_key="CAPM@2", scope=ModelScope.PRICING_BASELINE_RETURN,
             lineage=lineage(update=update), bound_at=NOW)
+
+
+def test_open_validity_does_not_authorize_a_pre_cutoff_calculation():
+    repository, token = authorization()
+    before = tuple(repository.connection.iterdump())
+    with pytest.raises(InvariantViolation):
+        bind_authorized_model_calculation(model_registry_evidence=repository, runtime_authorization=token,
+            model_key="CAPM@2", scope=ModelScope.PRICING_BASELINE_RETURN,
+            lineage=lineage(update=lambda output: output.update(as_of=(NOW-timedelta(seconds=1)).isoformat())),
+            bound_at=NOW)
+    assert tuple(repository.connection.iterdump()) == before

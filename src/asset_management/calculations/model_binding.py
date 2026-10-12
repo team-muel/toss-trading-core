@@ -103,9 +103,12 @@ def bind_authorized_model_calculation(*,
             "lineage_graph_hash": lineage.graph_hash, "final_node_id": final.node_id,
             "bound_at": bound.isoformat(), "produced_at": produced.astimezone(timezone.utc).isoformat(),
             "validity": validity.payload()}
-    return ModelCalculationBinding(
+    binding = ModelCalculationBinding(
         runtime_authorization.runtime_run_id, runtime_authorization.model_registry_snapshot_id,
         runtime_authorization.binding_hash, model_key, scope,
         runtime_authorization.authorization.authorization_hash, lineage.graph_hash, final.node_id,
         bound, produced, validity, digest(canonical(body)),
     )
+    model_registry_evidence.require_authorization(runtime_authorization, model_key=model_key,
+                                                 scope=scope, at=produced)
+    return binding

@@ -21,6 +21,8 @@ raw root는 `ImmutableDatasetStore`의 검증된 Bronze manifest에서만 생성
 forecast/holding horizon, expiry, decay profile, half-life를 모두 명시하며 공통
 `SignalValidity.from_payload`로 읽는다. 누락된 값이나 숫자 형식을 추론하지 않는다.
 선택적인 output `horizon`도 forecast horizon과 일치해야 한다.
+기존 runtime registry authority를 binding 시각과 output 생성 시각 양쪽에서 재검증한다.
+열린 expiry만으로 runtime cutoff 이전의 계산을 승인된 출력으로 취급하지 않는다.
 
 생성 시각은 timezone-aware여야 하고 binding 시각보다 미래일 수 없다. 생성 시각
 이전에 만료된 출력과 binding 시각에 이미 만료된 출력은 거부한다. 생성 시각과
