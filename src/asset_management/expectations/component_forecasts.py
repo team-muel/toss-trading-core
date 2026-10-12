@@ -11,7 +11,7 @@ import json
 from asset_management.data.asof_query import AsOfRepository
 from asset_management.data.immutable import canonical, digest
 from asset_management.domain.errors import DataQualityError, InvariantViolation
-from asset_management.domain.horizon import DecayProfile, SignalValidity
+from asset_management.domain.horizon import SignalValidity, require_horizon_alignment
 from asset_management.domain.economics import CurrencyBasis
 from asset_management.domain.scalars import Currency
 from asset_management.time.asof import AsOfContext
@@ -165,6 +165,14 @@ class PersistedGrossComponentForecast:
     lower_bound: Decimal
     upper_bound: Decimal
     confidence: Decimal
+    as_of: datetime
+    validity: SignalValidity
+
+    def __post_init__(self) -> None:
+        if (not isinstance(self.validity, SignalValidity) or
+                self.as_of.tzinfo is None or self.as_of.utcoffset() is None or
+                self.validity.valid_until <= self.as_of):
+            raise DataQualityError("COMPONENT_FORECAST_VALIDITY_INVALID")
 
 
 def _decimal(value: object, label: str) -> Decimal:
@@ -213,24 +221,9 @@ def _authorization_payload(value: RuntimeModelAuthorization) -> dict[str, str]:
 
 
 def _validity_from_payload(value: object) -> SignalValidity:
-    if not isinstance(value, Mapping) or set(value) != {
-            "forecast_horizon", "holding_horizon", "valid_until", "decay_profile",
-            "half_life_seconds"}:
-        raise DataQualityError("COMPONENT_FORECAST_VALIDITY_INVALID")
-    if (type(value["forecast_horizon"]) is not int or
-            type(value["holding_horizon"]) is not int or
-            not isinstance(value["valid_until"], str) or
-            not isinstance(value["decay_profile"], str) or
-            (value["half_life_seconds"] is not None and
-             type(value["half_life_seconds"]) is not int)):
-        raise DataQualityError("COMPONENT_FORECAST_VALIDITY_INVALID")
     try:
-        return SignalValidity(
-            value["forecast_horizon"], value["holding_horizon"],
-            datetime.fromisoformat(value["valid_until"]),
-            DecayProfile(value["decay_profile"]), value["half_life_seconds"],
-        )
-    except Exception as exc:
+        return SignalValidity.from_payload(value)
+    except InvariantViolation as exc:
         raise DataQualityError("COMPONENT_FORECAST_VALIDITY_INVALID") from exc
 
 
@@ -252,10 +245,13 @@ class ComponentForecastAssembler:
                  validity: SignalValidity,
                  model_key: str, runtime_authorization: RuntimeModelAuthorization,
                  commodity_structure: CommodityStructure | None = None) -> ComponentForecastBundle:
-        if (not isinstance(asset_class, AssetClass) or not isinstance(currency, Currency) or
+        if (not isinstance(validity, SignalValidity) or type(horizon) is not int or
+                not isinstance(asset_class, AssetClass) or not isinstance(currency, Currency) or
                 not isinstance(currency_basis, CurrencyBasis) or horizon != validity.forecast_horizon or
                 context.run_id.strip() == ""):
             raise DataQualityError("COMPONENT_FORECAST_CONTEXT_INVALID")
+        if validity.valid_until <= context.as_of_utc:
+            raise DataQualityError("COMPONENT_FORECAST_SIGNAL_EXPIRED")
         if asset_class is AssetClass.EQUITY:
             raise DataQualityError("COMPONENT_FORECAST_EQUITY_GROWTH_BASIS_UNSUPPORTED")
         self._repository.require_exact_runtime_context(context)
@@ -401,9 +397,7 @@ class ComponentForecastAssembler:
                      calculation_id, bundle.information_cutoff_utc.isoformat()))
         elif json.loads(str(row[0])) != artifact or row[1] != calculation_id:
             raise DataQualityError("COMPONENT_FORECAST_CALCULATION_CONFLICT")
-        return PersistedGrossComponentForecast(calculation_id, bundle.runtime_run_id, gross,
-            gross-Decimal("1.96")*uncertainty, gross+Decimal("1.96")*uncertainty,
-            min(item.confidence for item in bundle.components))
+        return self.replay_gross_forecast(calculation_id=calculation_id)
 
     def assemble_gross_forecast(self, **arguments: object) -> PersistedGrossComponentForecast:
         """Only public typed consumer; net return requires separately persisted cost evidence."""
@@ -540,6 +534,8 @@ class ComponentForecastAssembler:
                 raise DataQualityError("COMPONENT_FORECAST_LINEAGE_UNVERIFIED")
             exposures.add(exposure)
             validity = _validity_from_payload(stored.get("validity"))
+            if validity.valid_until <= runtime_context.as_of_utc:
+                raise DataQualityError("COMPONENT_FORECAST_SIGNAL_EXPIRED")
             component = shrink_component(raw_estimate=_horizon_return(annual, horizon), prior=_horizon_return(prior, horizon),
                 confidence=confidence, uncertainty=uncertainty*Decimal(horizon)/Decimal(252), component_name=name,
                 input_features=(f"observation:{observation.content_hash}",), horizon=horizon, validity=validity)
@@ -549,6 +545,7 @@ class ComponentForecastAssembler:
             if stored != expected:
                 raise DataQualityError("COMPONENT_FORECAST_LINEAGE_UNVERIFIED")
             replayed.append(component)
+        validity = require_horizon_alignment(item.validity for item in replayed)
         gross = sum(item.point_estimate for item in replayed); total_uncertainty = sum(item.uncertainty for item in replayed)
         expected_gross = {"gross_expected_return": str(gross),
                           "lower_bound": str(gross-Decimal("1.96")*total_uncertainty),
@@ -558,7 +555,7 @@ class ComponentForecastAssembler:
             raise DataQualityError("COMPONENT_FORECAST_LINEAGE_UNVERIFIED")
         return PersistedGrossComponentForecast(calculation_id, row[0], gross,
             Decimal(expected_gross["lower_bound"]), Decimal(expected_gross["upper_bound"]),
-            Decimal(expected_gross["confidence"]))
+            Decimal(expected_gross["confidence"]), runtime_context.as_of_utc, validity)
 
     def consume_gross_forecast(self, *, calculation_id: str) -> PersistedGrossComponentForecast:
         """Production consumer boundary: a persisted calculation ID is the sole input."""

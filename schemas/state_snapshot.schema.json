@@ -89,7 +89,8 @@
                         "valid_until": {"type": "string", "format": "date-time"},
                         "decay_profile": {"enum": ["STEP", "LINEAR", "EXPONENTIAL"]},
                         "half_life_seconds": {"type": ["integer", "null"]}
-                      }
+                      },
+                      "allOf": [{"if":{"properties":{"decay_profile":{"const":"EXPONENTIAL"}},"required":["decay_profile"]},"then":{"properties":{"half_life_seconds":{"type":"integer","minimum":1}}},"else":{"properties":{"half_life_seconds":{"type":"null"}}}}]
                     }
                   }
                 }

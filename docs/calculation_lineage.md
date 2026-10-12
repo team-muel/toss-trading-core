@@ -13,3 +13,36 @@ raw root는 `ImmutableDatasetStore`의 검증된 Bronze manifest에서만 생성
 
 그래프 publication은 content-addressed catalog에 저장하며 주문을 생성하거나 실거래
 권한을 변경하지 않는다. `live_trading_enabled` 기본값은 계속 `false`다.
+
+## 모델 출력의 시간 계약
+
+`bind_authorized_model_calculation`은 기존 runtime registry authorization을 다시
+검증한 뒤 final output의 `as_of`와 완전한 `validity`를 요구한다. `validity`는
+forecast/holding horizon, expiry, decay profile, half-life를 모두 명시하며 공통
+`SignalValidity.from_payload`로 읽는다. 누락된 값이나 숫자 형식을 추론하지 않는다.
+선택적인 output `horizon`도 forecast horizon과 일치해야 한다.
+기존 runtime registry authority를 binding 시각과 output 생성 시각 양쪽에서 재검증한다.
+열린 expiry만으로 runtime cutoff 이전의 계산을 승인된 출력으로 취급하지 않는다.
+
+생성 시각은 timezone-aware여야 하고 binding 시각보다 미래일 수 없다. 생성 시각
+이전에 만료된 출력과 binding 시각에 이미 만료된 출력은 거부한다. 생성 시각과
+validity는 immutable final node와 binding hash에 함께 포함된다. binding은 decay를
+출력 값에 다시 적용하지 않으며 소비자는 기존 effective-weight 계약을 사용한다.
+
+시간 계약이 없는 과거 graph는 일반 lineage로 보존할 수 있지만 모델 authorization
+binding으로 승격할 수 없다. 이 API 보강은 실제 producer 연결, matured OOS 증거,
+paper 또는 live acceptance를 증명하지 않는다.
+
+실제 persisted economic input을 읽는 `ComponentForecastAssembler`도 생성 경계에서
+exact integer horizon과 typed validity를 요구한다. forecast as-of에 이미 만료된
+validity는 계산·저장 전에 거부하며 DB 상태를 변경하지 않는다. 이 producer는 자체
+observation/manifest lineage와 runtime model evidence를 소비한다. 별도의 일반 graph
+binding을 호출하지 않는다는 이유만으로 해당 authority를 대체하거나 중복하지 않는다.
+Persisted component forecast replay/consume도 원래 runtime as-of의 만료 여부와
+component 전체의 horizon·expiry·decay 정렬을 다시 검증한다. 재계산된 content hash가
+있어도 서로 다른 validity를 합산하거나 생성 시점에 만료된 출력을 소비할 수 없다.
+현재 wall-clock으로 과거 replay를 만료시키지 않으며 기존 artifact를 다시 쓰지 않는다.
+반환 객체 `PersistedGrossComponentForecast`는 검증된 `SignalValidity`와 원래 persisted
+runtime의 `as_of`를 명시한다. 생성 직후 반환도 replay reader를 사용하므로 동일 ID의
+생성·재실행·소비가 같은 시간 계약을 제공한다. cutoff나 현재 시각에서 생성 시각을
+추론하지 않으며 기존 저장 artifact 및 calculation ID는 변경하지 않는다.
