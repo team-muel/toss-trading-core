@@ -1,6 +1,7 @@
 from datetime import date, datetime, timezone, timedelta
 from decimal import Decimal
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -20,6 +21,13 @@ D = Decimal
 NOW = datetime(2026, 1, 2, tzinfo=timezone.utc)
 FORECAST_ID = "a" * 64
 VALIDITY = SignalValidity(252, 63, NOW + timedelta(days=1), DecayProfile.STEP)
+
+
+def test_packaged_alpha_schema_bundle_declares_its_relative_dependency():
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    bundle = project["tool"]["setuptools"]["data-files"]["share/toss-trading/schemas/model-relative-alpha"]
+    assert "schemas/model_relative_alpha_assessment.schema.json" in bundle
+    assert "schemas/decision_horizon.schema.json" in bundle
 
 
 def metric(semantic_type, value, reference="forecast@1"):
