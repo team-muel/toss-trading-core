@@ -99,6 +99,19 @@ def test_generic_allocator_scope_and_legacy_pricing_identity_remain_explicit():
     assert ModelRegistry.from_payload(legacy).payload() == legacy
 
 
+@pytest.mark.parametrize("model_id,scope,output", [
+    ("CUSTOM_POLICY", ModelScope.REQUIRED_RETURN, "hurdle_rate"),
+    ("ALLOCATOR", ModelScope.POSITION_SIZING, "position_weights"),
+    ("CAPM", ModelScope.REQUIRED_RETURN, "required_return"),
+    ("MULTIFACTOR", ModelScope.PRICING_BASELINE_RETURN, "pricing_baseline_return"),
+])
+def test_identity_specific_schema_rule_preserves_valid_generic_and_pricing_roles(model_id, scope, output):
+    import jsonschema
+    model = replace(definition(model_id), outputs=(output,), approved_scope=(scope,))
+    schema = json.loads(__import__("pathlib").Path("schemas/model_registry.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema["$defs"]["model"]).validate(model.payload())
+
+
 @pytest.mark.parametrize("field,reason", [
     ("inputs", "MODEL_INPUTS_INVALID"), ("outputs", "MODEL_OUTPUTS_INVALID"),
     ("known_failure_modes", "MODEL_FAILURE_MODES_INVALID"),
