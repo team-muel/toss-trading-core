@@ -38,7 +38,7 @@ REQUIRED_FEATURE_STATE_MODEL_CHECKS = (
 _GIT_REVISION = re.compile(r"git:[0-9a-f]{40}")
 _IMMUTABLE_EVIDENCE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 _EVIDENCE_CATALOG_KIND = "feature-state-model-gate-evidence"
-_D1_RUNTIME_ATTESTATION_SCHEMA = "canonical-d1-runtime-attestation@1"
+_D1_RUNTIME_ATTESTATION_SCHEMA = "canonical-d1-runtime-attestation@2"
 _CANONICAL_STORE_URI = re.compile(r"gs://[a-z0-9](?:[a-z0-9._-]{1,220}[a-z0-9])?(?:/[^\s?#]*)?")
 
 
@@ -95,6 +95,7 @@ class CanonicalD1RuntimeAuthority:
     runtime_attestation_id: str
     runtime_attestation_hash: str
     canonical_store_uri: str
+    semantic_checks: Mapping[str, CheckEvidence]
 
     def __post_init__(self) -> None:
         identifiers = (self.attestor_registry_snapshot_id, self.attestor_registry_content_hash,
@@ -103,12 +104,41 @@ class CanonicalD1RuntimeAuthority:
                 for value in identifiers) or not isinstance(self.canonical_store_uri, str) or
                 _CANONICAL_STORE_URI.fullmatch(self.canonical_store_uri) is None):
             raise InvariantViolation("CANONICAL_D1_RUNTIME_AUTHORITY_INVALID")
+        _signed_checks_payload(self.semantic_checks)
+        object.__setattr__(self, "semantic_checks", MappingProxyType(dict(self.semantic_checks)))
+
+
+def _signed_checks_payload(checks: Mapping[str, CheckEvidence]) -> dict[str, object]:
+    if (not isinstance(checks, Mapping) or set(checks) != set(REQUIRED_FEATURE_STATE_MODEL_CHECKS)
+            or any(not isinstance(check, CheckEvidence) or
+                   any(_IMMUTABLE_EVIDENCE_ID.fullmatch(artifact) is None
+                       for artifact in check.artifact_ids) for check in checks.values())):
+        raise InvariantViolation("CANONICAL_D1_SEMANTIC_CHECKS_INVALID")
+    return {name: {"passed": checks[name].passed,
+                   "artifact_ids": list(checks[name].artifact_ids)}
+            for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS}
+
+
+def _parse_signed_checks(value: object) -> Mapping[str, CheckEvidence]:
+    if not isinstance(value, dict) or set(value) != set(REQUIRED_FEATURE_STATE_MODEL_CHECKS):
+        raise InvariantViolation("CANONICAL_D1_SEMANTIC_CHECKS_INVALID")
+    checks = {}
+    for name, entry in value.items():
+        if (not isinstance(entry, dict) or set(entry) != {"passed", "artifact_ids"}
+                or not isinstance(entry["artifact_ids"], list)
+                or any(not isinstance(item, str) for item in entry["artifact_ids"])):
+            raise InvariantViolation("CANONICAL_D1_SEMANTIC_CHECKS_INVALID")
+        checks[name] = CheckEvidence(entry["passed"], tuple(entry["artifact_ids"]))
+    if _signed_checks_payload(checks) != value:
+        raise InvariantViolation("CANONICAL_D1_SEMANTIC_CHECKS_INVALID")
+    return checks
 
 
 def _runtime_attestation_payload(*, runtime_evidence: CanonicalD1RuntimeEvidence,
                                  attestor_id: str, issued_at: datetime,
                                  registry_snapshot_id: str, registry_content_hash: str,
-                                 canonical_store_uri: str) -> dict[str, str]:
+                                 canonical_store_uri: str,
+                                 semantic_checks: Mapping[str, CheckEvidence]) -> dict[str, object]:
     return {
         "schema_version": _D1_RUNTIME_ATTESTATION_SCHEMA,
         "runtime_run_id": runtime_evidence.runtime_run_id,
@@ -120,6 +150,7 @@ def _runtime_attestation_payload(*, runtime_evidence: CanonicalD1RuntimeEvidence
         "attestor_registry_snapshot_id": registry_snapshot_id,
         "attestor_registry_content_hash": registry_content_hash,
         "issued_at": issued_at.astimezone(timezone.utc).isoformat(),
+        "semantic_checks": _signed_checks_payload(semantic_checks),
     }
 
 
@@ -174,11 +205,13 @@ class CanonicalD1RuntimeAuthorityVerifier:
             issued_at = issued_at.astimezone(timezone.utc)
             signature = b64decode(str(signature_raw), validate=True)
             canonical_store_uri = payload.get("canonical_store_uri") if isinstance(payload, dict) else None
+            semantic_checks = _parse_signed_checks(
+                payload.get("semantic_checks") if isinstance(payload, dict) else None)
             if (not isinstance(canonical_store_uri, str) or issued_at < registry.bound_at or
                     issued_at > cutoff or payload != _runtime_attestation_payload(
                         runtime_evidence=runtime_evidence, attestor_id=str(attestor_id), issued_at=issued_at,
                         registry_snapshot_id=registry.snapshot_id, registry_content_hash=registry.content_hash,
-                        canonical_store_uri=canonical_store_uri) or
+                        canonical_store_uri=canonical_store_uri, semantic_checks=semantic_checks) or
                     str(content_hash) != digest(canonical({"payload": payload,
                                                            "signature_base64": str(signature_raw)})) or
                     str(attestation_id) != str(content_hash)):
@@ -189,7 +222,7 @@ class CanonicalD1RuntimeAuthorityVerifier:
             Ed25519PublicKey.from_public_bytes(rule[0]).verify(signature, canonical(payload))
             return CanonicalD1RuntimeAuthority(
                 registry.snapshot_id, registry.content_hash, str(attestation_id), str(content_hash),
-                canonical_store_uri,
+                canonical_store_uri, semantic_checks,
             )
         except (Base64Error, DataQualityError, InvariantViolation, InvalidSignature,
                 OSError, TypeError, ValueError, json.JSONDecodeError, sqlite3.DatabaseError):
@@ -240,6 +273,9 @@ def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: s
     if (store is None or source is None or runtime_evidence is None or runtime_authority is None or
             _IMMUTABLE_EVIDENCE_ID.fullmatch(artifact_id) is None):
         return False
+    signed_check = runtime_authority.semantic_checks.get(check_name)
+    if signed_check is None or not signed_check.passed or artifact_id not in signed_check.artifact_ids:
+        return False
     identifier = artifact_id.removeprefix("sha256:")
     try:
         content = store.layout.resolve(
@@ -248,8 +284,9 @@ def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: s
     except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return False
     expected = {
-        "schema_version": "feature-state-model-gate-evidence@4",
+        "schema_version": "feature-state-model-gate-evidence@5",
         "check_name": check_name,
+        "passed": True,
         "code_revision": source[0],
         "source_tree": source[1],
         "runtime_run_id": runtime_evidence.runtime_run_id,
@@ -258,8 +295,6 @@ def _artifact_is_verified(*, store: ImmutableDatasetStore | None, artifact_id: s
         "canonical_runtime_catalog_object_id": runtime_evidence.catalog_object_id,
         "attestor_registry_snapshot_id": runtime_authority.attestor_registry_snapshot_id,
         "attestor_registry_content_hash": runtime_authority.attestor_registry_content_hash,
-        "runtime_attestation_id": runtime_authority.runtime_attestation_id,
-        "runtime_attestation_hash": runtime_authority.runtime_attestation_hash,
         "canonical_store_uri": runtime_authority.canonical_store_uri,
     }
     return content == canonical(expected) and digest(content) == identifier and body == expected
@@ -316,7 +351,10 @@ def evaluate_feature_state_model_integrity_gate(
         check = inputs.checks[name]
         if not check.passed:
             reasons.append(f"CHECK_FAILED:{name}")
-        elif not all(_artifact_is_verified(
+        else:
+            if runtime_authority is None or check != runtime_authority.semantic_checks[name]:
+                reasons.append(f"SIGNED_CHECK_MISMATCH:{name}")
+        if check.passed and not all(_artifact_is_verified(
                 store=evidence_store, artifact_id=artifact, check_name=name, source=source,
                 runtime_evidence=runtime_evidence, runtime_authority=runtime_authority)
                      for artifact in check.artifact_ids):

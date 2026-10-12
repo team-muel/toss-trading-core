@@ -19,6 +19,7 @@ from asset_management.governance import (
 from asset_management.time.clock import FrozenClock, ReplayClock
 from asset_management.validation import CanonicalD1RuntimeEvidenceRepository
 from asset_management.validation import external_attestation as attestation_module
+from asset_management.validation import feature_state_model_integrity as d1_module
 from asset_management.validation import (
     AcceptanceDecision, CheckEvidence, FeatureStateModelIntegrityGateInput,
     CanonicalD1RuntimeAuthorityVerifier, FeatureStateModelSourceRevisionVerifier,
@@ -113,7 +114,7 @@ def _repository(tmp_path, *, states=True):
     return conn, store
 
 
-def _copy_signed_runtime_registry(monkeypatch, conn):
+def _copy_signed_runtime_registry(monkeypatch, conn, *, return_signer=False):
     """Install a valid but reusable registry, without any D1 bundle attestation."""
     authority_id = "test-d1-registry-governance"
     authority_key = Ed25519PrivateKey.generate()
@@ -168,7 +169,83 @@ def _copy_signed_runtime_registry(monkeypatch, conn):
                "bound_at": published_at.isoformat()}
     conn.execute("INSERT INTO am_runtime_evidence_attestor_registry VALUES (?, ?, ?, ?)",
                  ("runtime@1", snapshot_id, published_at.isoformat(), digest(canonical(binding))))
-    return snapshot_id, snapshot_hash
+    return (snapshot_id, snapshot_hash, attestor_key) if return_signer else (snapshot_id, snapshot_hash)
+
+
+def _signed_d1_fixture(tmp_path, monkeypatch, *, failed=False, legacy=False):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    bundle = repository.record(runtime_run_id="runtime@1", store=store)
+    snapshot, registry_hash, signer = _copy_signed_runtime_registry(
+        monkeypatch, conn, return_signer=True)
+    tree = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "HEAD^{tree}"],
+                          check=True, capture_output=True, text=True).stdout.strip()
+    checks = {}
+    for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
+        artifact = store.catalog("feature-state-model-gate-evidence", {
+            "schema_version": "feature-state-model-gate-evidence@5", "check_name": name,
+            "passed": True, "code_revision": REVISION, "source_tree": tree,
+            "runtime_run_id": bundle.runtime_run_id, "runtime_code_revision": bundle.code_revision,
+            "canonical_runtime_evidence_hash": bundle.content_hash,
+            "canonical_runtime_catalog_object_id": bundle.catalog_object_id,
+            "attestor_registry_snapshot_id": snapshot,
+            "attestor_registry_content_hash": registry_hash,
+            "canonical_store_uri": "gs://canonical-fixture-evidence/d1",
+        })
+        checks[name] = CheckEvidence(not failed, (f"sha256:{artifact}",))
+    payload = d1_module._runtime_attestation_payload(
+        runtime_evidence=bundle, attestor_id="test-d1-attestor", issued_at=CUTOFF,
+        registry_snapshot_id=snapshot, registry_content_hash=registry_hash,
+        canonical_store_uri="gs://canonical-fixture-evidence/d1", semantic_checks=checks)
+    if legacy:
+        payload["schema_version"] = "canonical-d1-runtime-attestation@1"
+        del payload["semantic_checks"]
+    signature = b64encode(signer.sign(canonical(payload))).decode()
+    content_hash = digest(canonical({"payload": payload, "signature_base64": signature}))
+    conn.execute("INSERT INTO am_canonical_d1_runtime_attestation VALUES (?, ?, ?, ?, ?, ?, ?)",
+                 (bundle.runtime_run_id, content_hash, "test-d1-attestor", json.dumps(payload),
+                  signature, content_hash, CUTOFF.isoformat()))
+    return conn, store, repository, bundle, checks, tree
+
+
+def test_signed_checks_are_verified_and_cannot_be_modified(tmp_path, monkeypatch):
+    _, store, repository, bundle, checks, tree = _signed_d1_fixture(tmp_path, monkeypatch)
+    authority = CanonicalD1RuntimeAuthorityVerifier(repository).verify(
+        runtime_evidence_repository=repository, runtime_evidence=bundle)
+    assert authority is not None
+    assert authority.semantic_checks == checks
+    with pytest.raises(TypeError):
+        authority.semantic_checks[REQUIRED_FEATURE_STATE_MODEL_CHECKS[0]] = CheckEvidence(False, ("x",))
+    name = REQUIRED_FEATURE_STATE_MODEL_CHECKS[0]
+    assert d1_module._artifact_is_verified(
+        store=store, artifact_id=checks[name].artifact_ids[0], check_name=name,
+        source=(REVISION, tree), runtime_evidence=bundle, runtime_authority=authority)
+
+
+@pytest.mark.parametrize("attack", ("artifact", "passed"))
+def test_caller_cannot_replace_signed_semantic_checks(tmp_path, monkeypatch, attack):
+    _, store, repository, bundle, checks, _ = _signed_d1_fixture(
+        tmp_path, monkeypatch, failed=attack == "passed")
+    assert CanonicalD1RuntimeAuthorityVerifier(repository).verify(
+        runtime_evidence_repository=repository, runtime_evidence=bundle) is not None
+    name = REQUIRED_FEATURE_STATE_MODEL_CHECKS[0]
+    replacement = store.catalog("feature-state-model-gate-evidence", {"caller": "forged"})
+    checks = dict(checks)
+    checks[name] = CheckEvidence(True, (f"sha256:{replacement}",) if attack == "artifact"
+                                 else checks[name].artifact_ids)
+    result = evaluate_feature_state_model_integrity_gate(
+        FeatureStateModelIntegrityGateInput(NOW, "runtime@1", REVISION, REVISION, checks),
+        evidence_store=store, source_revision_verifier=FeatureStateModelSourceRevisionVerifier(ROOT),
+        runtime_evidence_repository=repository,
+        runtime_authority_verifier=CanonicalD1RuntimeAuthorityVerifier(repository))
+    assert result.decision is AcceptanceDecision.FAIL
+    assert f"SIGNED_CHECK_MISMATCH:{name}" in result.reason_codes
+
+
+def test_legacy_bundle_attestation_without_check_hashes_is_rejected(tmp_path, monkeypatch):
+    _, _, repository, bundle, _, _ = _signed_d1_fixture(tmp_path, monkeypatch, legacy=True)
+    assert CanonicalD1RuntimeAuthorityVerifier(repository).verify(
+        runtime_evidence_repository=repository, runtime_evidence=bundle) is None
 
 
 def test_records_and_replays_only_one_existing_runtime_bundle(tmp_path):

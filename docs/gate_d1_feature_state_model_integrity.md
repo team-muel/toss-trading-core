@@ -22,14 +22,21 @@ IDs. The revision must resolve to the verifier checkout's current HEAD and tree.
 The verifier also rejects staged, unstaged, and non-ignored untracked files, or an unsuccessful
 Git status read; a committed tree does not identify the executed code in a dirty checkout.
 Each `sha256:`
-artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@4` catalog record
+artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@5` catalog record
 for the named check, revision/tree, replayed canonical runtime-bundle hash/catalog ID, and the
 runtime-bound external-attestor-registry snapshot/hash. `CanonicalD1RuntimeAuthorityVerifier` verifies
 that registry against the code-bound canonical Cloud KMS authority and the runtime's persisted
 information cutoff; the registry binding must already exist no later than that cutoff. It also requires
 an independently signed, append-only D1 runtime attestation issued after that binding and no later
-than the cutoff, for the exact bundle hash/catalog ID, runtime revision, and canonical `gs://`
-immutable-store URI. A
+than the cutoff, for the exact bundle hash/catalog ID, runtime revision, canonical `gs://`
+immutable-store URI, and the exact seven semantic check results and artifact hashes. The signed
+`canonical-d1-runtime-attestation@2` payload freezes both `passed` and the sorted artifact IDs for
+each check. Gate evaluation requires exact equality to those signed checks. Local cached bytes
+are accepted only for a signed artifact hash and must still match the canonical body and digest;
+a caller cannot create new check labels under an existing bundle signature. Version-1 attestations
+without signed check hashes are rejected. Version-5 artifact bodies include `passed=true`, the
+source tree, bundle, registry and store URI, and omit the attestation hash to avoid circular hashing.
+The gate result retains the attestation identity. A
 copied registry therefore cannot authorize a synthetic local runtime. A caller-supplied label, test
 selector, mutable file, fixture-only catalog, local SQLite file, or historical result cannot produce
 PASS without that independently signed authority.
