@@ -80,7 +80,7 @@ def test_read_only_defaults_and_parameter_identity_survive_boot():
         assert runtime.config.live_trading_enabled is False
         assert runtime.config.parameter_set_id == RAW["parameter_set"]["id"]
         recorded = connection.execute("SELECT version, name, content_hash, applied_at_utc FROM schema_migration ORDER BY version").fetchall()
-        assert [row[0] for row in recorded] == list(range(1, 21))
+        assert [row[0] for row in recorded] == list(range(1, 23))
         second = boot(ROOT / "config/application.yaml", connection)
         assert second.migration_versions == ()
         assert connection.execute("SELECT version, name, content_hash, applied_at_utc FROM schema_migration ORDER BY version").fetchall() == recorded
