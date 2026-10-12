@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from asset_management.data.immutable import ImmutableDatasetStore
+from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.domain.errors import InvariantViolation
 from asset_management.governance import (
     ModelDefinition, ModelRegistry, ModelScope, ModelStatus,
@@ -63,6 +63,77 @@ def test_complete_model_contract_and_lifecycle_are_persisted(tmp_path):
 def test_incomplete_model_metadata_fails_closed(change, reason):
     with pytest.raises(InvariantViolation, match=reason):
         replace(definition(), **change)
+
+
+@pytest.mark.parametrize("model_id", ["CAPM", "MULTIFACTOR"])
+@pytest.mark.parametrize("scope,output", [
+    (ModelScope.POSITION_SIZING, "position_weights"),
+    (ModelScope.ORDER_CREATION, "order"),
+    (ModelScope.REQUIRED_RETURN, "hurdle_rate"),
+    (ModelScope.POSITION_SIZING, "required_return"),
+])
+def test_pricing_model_identity_cannot_be_redeclared_for_other_authority(model_id, scope, output):
+    with pytest.raises(InvariantViolation, match="PRICING_MODEL_AUTHORITY_CONFLICT"):
+        replace(definition(model_id), approved_scope=(scope,), outputs=(output,))
+    import jsonschema
+    schema = json.loads(__import__("pathlib").Path("schemas/model_registry.schema.json").read_text())
+    payload = definition(model_id).payload() | {"approved_scope": [scope.value], "outputs": [output]}
+    assert not jsonschema.Draft202012Validator(schema["$defs"]["model"]).is_valid(payload)
+
+
+@pytest.mark.parametrize("model_id", ["CAPM", "MULTIFACTOR"])
+def test_rehashed_pricing_snapshot_cannot_gain_sizing_authority(model_id):
+    payload = active_registry(model_id).payload()
+    payload["models"][0] |= {"approved_scope": ["POSITION_SIZING"], "outputs": ["position_weights"]}
+    payload["registry_hash"] = digest(canonical({key: value for key, value in payload.items()
+                                                if key != "registry_hash"}))
+    with pytest.raises(InvariantViolation, match="MODEL_REGISTRY_SNAPSHOT_INVALID"):
+        ModelRegistry.from_payload(payload)
+
+
+def test_generic_allocator_scope_and_legacy_pricing_identity_remain_explicit():
+    allocator = replace(definition("ALLOCATOR"), outputs=("position_weights",),
+                        approved_scope=(ModelScope.POSITION_SIZING,))
+    assert allocator.approved_scope == (ModelScope.POSITION_SIZING,)
+    legacy = active_registry().payload()
+    assert ModelRegistry.from_payload(legacy).payload() == legacy
+
+
+@pytest.mark.parametrize("model_id,scope,output", [
+    ("CUSTOM_POLICY", ModelScope.REQUIRED_RETURN, "hurdle_rate"),
+    ("ALLOCATOR", ModelScope.POSITION_SIZING, "position_weights"),
+    ("CAPM", ModelScope.REQUIRED_RETURN, "required_return"),
+    ("MULTIFACTOR", ModelScope.PRICING_BASELINE_RETURN, "pricing_baseline_return"),
+])
+def test_identity_specific_schema_rule_preserves_valid_generic_and_pricing_roles(model_id, scope, output):
+    import jsonschema
+    model = replace(definition(model_id), outputs=(output,), approved_scope=(scope,))
+    schema = json.loads(__import__("pathlib").Path("schemas/model_registry.schema.json").read_text())
+    jsonschema.Draft202012Validator(schema["$defs"]["model"]).validate(model.payload())
+
+
+@pytest.mark.parametrize("field,reason", [
+    ("inputs", "MODEL_INPUTS_INVALID"), ("outputs", "MODEL_OUTPUTS_INVALID"),
+    ("known_failure_modes", "MODEL_FAILURE_MODES_INVALID"),
+])
+def test_identifier_list_cannot_be_supplied_as_a_string(field, reason):
+    with pytest.raises(InvariantViolation, match=reason):
+        replace(definition("GENERIC"), **{field: "abc"})
+
+
+def test_validation_and_review_fields_are_dates_not_datetimes():
+    with pytest.raises(InvariantViolation, match="MODEL_DEFINITION_INVALID"):
+        replace(definition(), validation_date=NOW, review_date=NOW + timedelta(days=30))
+
+
+def test_transition_evidence_ids_cannot_be_split_from_a_string():
+    registry = ModelRegistry()
+    registry.register(definition())
+    before = registry.payload()
+    with pytest.raises(InvariantViolation, match="MODEL_TRANSITION_EVIDENCE_INVALID"):
+        registry.transition("CAPM@1", ModelStatus.VALIDATED, effective_at=NOW,
+                            reason="test", evidence_ids="abc")
+    assert registry.payload() == before
 
 
 def test_registration_cannot_skip_development_and_definition_cannot_change():
