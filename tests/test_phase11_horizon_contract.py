@@ -3,6 +3,8 @@ from decimal import Decimal
 import json
 
 import pytest
+import jsonschema
+from pathlib import Path
 
 from asset_management.domain.errors import DataQualityError, InvariantViolation
 from asset_management.domain.horizon import (
@@ -125,3 +127,30 @@ def test_payload_decoder_rejects_coercion_or_incomplete_contract(update):
     update(payload)
     with pytest.raises(InvariantViolation, match="SIGNAL_VALIDITY_PAYLOAD_INVALID"):
         SignalValidity.from_payload(payload)
+
+
+@pytest.mark.parametrize("name", ["decision_horizon", "forecast_combination",
+    "portfolio_transition", "signal_forecast_calibration", "state_snapshot"])
+@pytest.mark.parametrize("profile,half_life,valid", [
+    ("STEP", None, True), ("LINEAR", None, True), ("EXPONENTIAL", 3600, True),
+    ("EXPONENTIAL", None, False), ("EXPONENTIAL", 0, False),
+    ("STEP", 3600, False), ("LINEAR", 3600, False),
+])
+def test_all_serialized_validity_contracts_match_decay_policy(name, profile, half_life, valid):
+    schema = json.loads((Path(__file__).parents[1] / "schemas" / f"{name}.schema.json").read_text())
+    fields = set(validity().payload())
+    candidates = []
+    def visit(node):
+        if isinstance(node, dict):
+            if set(node.get("required", [])) == fields and fields <= set(node.get("properties", {})):
+                candidates.append(node)
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+    visit(schema)
+    assert len(candidates) == 1
+    payload = validity().payload() | {"decay_profile": profile, "half_life_seconds": half_life}
+    validator = jsonschema.Draft202012Validator(candidates[0])
+    assert validator.is_valid(payload) is valid

@@ -15,6 +15,9 @@ The same exact-integer rule applies to annual-return conversion, risk-free curve
 selection/alignment and typed pricing, expected-return and legacy alpha carriers.
 These checks do not rewrite historical payload hashes or grant current authority
 to legacy model outputs.
+Serialized validity schemas enforce the same decay policy: EXPONENTIAL requires
+a positive integer half-life; STEP and LINEAR require a null half-life. The rule
+also applies to embedded forecast, portfolio-transition and state validity.
 
 Every `FeatureDefinition` records `feature_id`, namespace, name, version, input fields,
 lookback, horizon, transformation, missing policy, and quality policy. Re-registering a
