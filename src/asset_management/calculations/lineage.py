@@ -199,7 +199,10 @@ class CalculationLineageGraph:
         return tuple(ordered)
 
     def verify_raw_manifests(self, store: ImmutableDatasetStore) -> None:
-        for node in self.trace():
+        # Publication contains the complete node catalog, including cached nodes
+        # outside the final estimate's trace. Verify every included raw source.
+        for node_id in sorted(self.nodes):
+            node = self.nodes[node_id]
             if node.node_type is not CalculationNodeType.RAW_DATA:
                 continue
             try:
