@@ -58,6 +58,44 @@ def _revision_and_tree(repository: Path = ROOT) -> tuple[str, str]:
     return f"git:{revision}", tree
 
 
+@pytest.mark.parametrize("override", ("repository_env", "inline_config", "global_config", "local_config"))
+def test_git_overrides_cannot_hide_dirty_executing_worktree(tmp_path, monkeypatch, override):
+    repository = tmp_path / "executing"
+    clone = tmp_path / "clean"
+    repository.mkdir()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], check=True,
+                              capture_output=True, text=True)
+    git("init", "--quiet")
+    git("config", "user.name", "test")
+    git("config", "user.email", "test@example.invalid")
+    source = repository / "source.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    git("add", "source.py")
+    git("commit", "--quiet", "-m", "source")
+    revision, _ = _revision_and_tree(repository)
+    subprocess.run(["git", "clone", "--quiet", str(repository), str(clone)],
+                   check=True, capture_output=True, text=True)
+    verifier = FeatureStateModelSourceRevisionVerifier(repository)
+    assert verifier.verify(revision) is not None
+    source.write_text("value = 2\n", encoding="utf-8")
+    assert verifier.verify(revision) is None
+    if override == "repository_env":
+        monkeypatch.setenv("GIT_DIR", str(clone / ".git"))
+        monkeypatch.setenv("GIT_WORK_TREE", str(clone))
+    elif override == "inline_config":
+        monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+        monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.worktree")
+        monkeypatch.setenv("GIT_CONFIG_VALUE_0", str(clone))
+    elif override == "global_config":
+        config = tmp_path / "override.gitconfig"
+        config.write_text(f"[core]\n worktree = {clone.as_posix()}\n", encoding="utf-8")
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+    else:
+        git("config", "core.worktree", str(clone))
+    assert verifier.verify(revision) is None
+
+
 def _check_evidence(store: ImmutableDatasetStore, *, code_revision: str,
                     source_tree: str) -> dict[str, CheckEvidence]:
     checks = {}

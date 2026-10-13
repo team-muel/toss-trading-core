@@ -26,6 +26,10 @@ subclasses, unrelated clean clones and caller-selected executables fail source v
 An installed wheel without a verifiable executing Git checkout cannot establish this source identity.
 The verifier also rejects staged, unstaged, and non-ignored untracked files, or an unsuccessful
 Git status read; a committed tree does not identify the executed code in a dirty checkout.
+Git subprocesses discard inherited `GIT_*` variables, explicitly select the executing worktree,
+and disable optional locks. Repository/worktree/config environment overrides and local
+`core.worktree` cannot redirect verification to a clean copy. Normal host configuration remains
+available for established line-ending semantics.
 Each `sha256:`
 artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@5` catalog record
 for the named check, revision/tree, replayed canonical runtime-bundle hash/catalog ID, and the

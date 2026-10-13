@@ -6,6 +6,7 @@ from binascii import Error as Base64Error
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -64,9 +65,10 @@ class FeatureStateModelSourceRevisionVerifier:
             return None
         try:
             status = subprocess.run(
-                [self.git_executable, "-C", str(self.repository_root), "status",
+                [self.git_executable, "-C", str(self.repository_root),
+                 "--work-tree", str(self.repository_root.resolve()), "status",
                  "--porcelain=v1", "--untracked-files=all"],
-                check=False, capture_output=True, text=True, timeout=5,
+                check=False, capture_output=True, text=True, timeout=5, env=self._git_environment(),
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -78,13 +80,21 @@ class FeatureStateModelSourceRevisionVerifier:
     def _rev_parse(self, revision: str) -> str | None:
         try:
             result = subprocess.run(
-                [self.git_executable, "-C", str(self.repository_root), "rev-parse", "--verify", revision],
-                check=False, capture_output=True, text=True, timeout=5,
+                [self.git_executable, "-C", str(self.repository_root),
+                 "--work-tree", str(self.repository_root.resolve()), "rev-parse", "--verify", revision],
+                check=False, capture_output=True, text=True, timeout=5, env=self._git_environment(),
             )
         except (OSError, subprocess.SubprocessError):
             return None
         value = result.stdout.strip()
         return value if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", value) else None
+
+    @staticmethod
+    def _git_environment() -> dict[str, str]:
+        environment = {key: value for key, value in os.environ.items()
+                       if not key.upper().startswith("GIT_")}
+        environment["GIT_OPTIONAL_LOCKS"] = "0"
+        return environment
 
 
 def _executing_source_identity(code_revision: str,
