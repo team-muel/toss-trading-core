@@ -11,7 +11,6 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
-import shutil
 from types import MappingProxyType
 from typing import Mapping
 
@@ -41,7 +40,7 @@ REQUIRED_FEATURE_STATE_MODEL_CHECKS = (
 _GIT_REVISION = re.compile(r"git:[0-9a-f]{40}")
 _IMMUTABLE_EVIDENCE_ID = re.compile(r"sha256:[0-9a-f]{64}")
 _EVIDENCE_CATALOG_KIND = "feature-state-model-gate-evidence"
-_D1_RUNTIME_ATTESTATION_SCHEMA = "canonical-d1-runtime-attestation@2"
+_D1_RUNTIME_ATTESTATION_SCHEMA = "canonical-d1-runtime-attestation@3"
 _CANONICAL_STORE_URI = re.compile(r"gs://[a-z0-9](?:[a-z0-9._-]{1,220}[a-z0-9])?(?:/[^\s?#]*)?")
 
 
@@ -107,9 +106,36 @@ class FeatureStateModelSourceRevisionVerifier:
         return environment
 
 
+@dataclass(frozen=True, slots=True)
+class SourceGitExecutablePin:
+    """Executable identity approved inside the independently signed attestation."""
+
+    executable_path: str
+    content_sha256: str
+
+    def __post_init__(self) -> None:
+        if (type(self.executable_path) is not str or
+                any(ord(character) < 32 for character in self.executable_path) or
+                not Path(self.executable_path).is_absolute() or
+                type(self.content_sha256) is not str or
+                _IMMUTABLE_EVIDENCE_ID.fullmatch(f"sha256:{self.content_sha256}") is None):
+            raise InvariantViolation("CANONICAL_D1_GIT_PIN_INVALID")
+
+    def verified_executable(self) -> str | None:
+        path = Path(self.executable_path)
+        try:
+            resolved = path.resolve(strict=True)
+            if (path.is_symlink() or str(resolved) != self.executable_path or
+                    not resolved.is_file() or digest(resolved.read_bytes()) != self.content_sha256):
+                return None
+            return str(resolved)
+        except OSError:
+            return None
+
+
 def _executing_source_identity(code_revision: str,
-                               requested_verifier: FeatureStateModelSourceRevisionVerifier | None
-                               ) -> tuple[str, str] | None:
+                               requested_verifier: FeatureStateModelSourceRevisionVerifier | None,
+                               *, git_pin: SourceGitExecutablePin | None = None) -> tuple[str, str] | None:
     """Bind source identity to this executing module, never a caller checkout."""
     repository_root = Path(__file__).resolve().parents[3]
     if requested_verifier is not None and (
@@ -117,7 +143,9 @@ def _executing_source_identity(code_revision: str,
             requested_verifier.repository_root.resolve() != repository_root or
             requested_verifier.git_executable != "git"):
         return None
-    git_executable = shutil.which("git")
+    if type(git_pin) is not SourceGitExecutablePin:
+        return None
+    git_executable = SourceGitExecutablePin.verified_executable(git_pin)
     if git_executable is None:
         return None
     verifier = FeatureStateModelSourceRevisionVerifier(repository_root, git_executable)
@@ -134,6 +162,7 @@ class CanonicalD1RuntimeAuthority:
     runtime_attestation_hash: str
     canonical_store_uri: str
     semantic_checks: Mapping[str, CheckEvidence]
+    source_git_pin: SourceGitExecutablePin
 
     def __post_init__(self) -> None:
         identifiers = (self.attestor_registry_snapshot_id, self.attestor_registry_content_hash,
@@ -143,6 +172,8 @@ class CanonicalD1RuntimeAuthority:
                 _CANONICAL_STORE_URI.fullmatch(self.canonical_store_uri) is None):
             raise InvariantViolation("CANONICAL_D1_RUNTIME_AUTHORITY_INVALID")
         _signed_checks_payload(self.semantic_checks)
+        if type(self.source_git_pin) is not SourceGitExecutablePin:
+            raise InvariantViolation("CANONICAL_D1_GIT_PIN_INVALID")
         object.__setattr__(self, "semantic_checks", MappingProxyType(dict(self.semantic_checks)))
 
 
@@ -176,7 +207,8 @@ def _runtime_attestation_payload(*, runtime_evidence: CanonicalD1RuntimeEvidence
                                  attestor_id: str, issued_at: datetime,
                                  registry_snapshot_id: str, registry_content_hash: str,
                                  canonical_store_uri: str,
-                                 semantic_checks: Mapping[str, CheckEvidence]) -> dict[str, object]:
+                                 semantic_checks: Mapping[str, CheckEvidence],
+                                 source_git_pin: SourceGitExecutablePin) -> dict[str, object]:
     return {
         "schema_version": _D1_RUNTIME_ATTESTATION_SCHEMA,
         "runtime_run_id": runtime_evidence.runtime_run_id,
@@ -189,6 +221,8 @@ def _runtime_attestation_payload(*, runtime_evidence: CanonicalD1RuntimeEvidence
         "attestor_registry_content_hash": registry_content_hash,
         "issued_at": issued_at.astimezone(timezone.utc).isoformat(),
         "semantic_checks": _signed_checks_payload(semantic_checks),
+        "source_git_pin": {"executable_path": source_git_pin.executable_path,
+                           "content_sha256": source_git_pin.content_sha256},
     }
 
 
@@ -247,11 +281,16 @@ class CanonicalD1RuntimeAuthorityVerifier:
             canonical_store_uri = payload.get("canonical_store_uri") if isinstance(payload, dict) else None
             semantic_checks = _parse_signed_checks(
                 payload.get("semantic_checks") if isinstance(payload, dict) else None)
+            pin_payload = payload.get("source_git_pin") if isinstance(payload, dict) else None
+            if not isinstance(pin_payload, dict) or set(pin_payload) != {"executable_path", "content_sha256"}:
+                raise InvariantViolation("CANONICAL_D1_GIT_PIN_INVALID")
+            source_git_pin = SourceGitExecutablePin(**pin_payload)
             if (not isinstance(canonical_store_uri, str) or issued_at < registry.bound_at or
                     issued_at > cutoff or payload != _runtime_attestation_payload(
                         runtime_evidence=runtime_evidence, attestor_id=str(attestor_id), issued_at=issued_at,
                         registry_snapshot_id=registry.snapshot_id, registry_content_hash=registry.content_hash,
-                        canonical_store_uri=canonical_store_uri, semantic_checks=semantic_checks) or
+                        canonical_store_uri=canonical_store_uri, semantic_checks=semantic_checks,
+                        source_git_pin=source_git_pin) or
                     str(content_hash) != digest(canonical({"payload": payload,
                                                            "signature_base64": str(signature_raw)})) or
                     str(attestation_id) != str(content_hash)):
@@ -262,7 +301,7 @@ class CanonicalD1RuntimeAuthorityVerifier:
             Ed25519PublicKey.from_public_bytes(rule[0]).verify(signature, canonical(payload))
             return CanonicalD1RuntimeAuthority(
                 registry.snapshot_id, registry.content_hash, str(attestation_id), str(content_hash),
-                canonical_store_uri, semantic_checks,
+                canonical_store_uri, semantic_checks, source_git_pin,
             )
         except (Base64Error, DataQualityError, InvariantViolation, InvalidSignature,
                 OSError, TypeError, ValueError, json.JSONDecodeError, sqlite3.DatabaseError):
@@ -360,9 +399,6 @@ def evaluate_feature_state_model_integrity_gate(
     elif (_GIT_REVISION.fullmatch(inputs.code_revision) is not None and
           inputs.code_revision != inputs.evidence_code_revision):
         reasons.append("EVIDENCE_CODE_REVISION_MISMATCH")
-    source = _executing_source_identity(inputs.code_revision, source_revision_verifier)
-    if source is None:
-        reasons.append("SOURCE_REVISION_UNVERIFIED")
     if not isinstance(evidence_store, ImmutableDatasetStore):
         reasons.append("EVIDENCE_STORE_UNVERIFIED")
     runtime_evidence = None
@@ -392,6 +428,11 @@ def evaluate_feature_state_model_integrity_gate(
             reasons.append("CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED")
     else:
         reasons.append("CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED")
+    source = (_executing_source_identity(inputs.code_revision, source_revision_verifier,
+                                         git_pin=runtime_authority.source_git_pin)
+              if runtime_authority is not None else None)
+    if source is None:
+        reasons.append("SOURCE_REVISION_UNVERIFIED")
     for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
         check = inputs.checks[name]
         if not check.passed:

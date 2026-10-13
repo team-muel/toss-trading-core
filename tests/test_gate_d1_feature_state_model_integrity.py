@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import shutil
+from types import SimpleNamespace
 
 import pytest
 
@@ -14,7 +15,10 @@ from asset_management.validation import (
     FeatureStateModelIntegrityGateInput, FeatureStateModelSourceRevisionVerifier,
     evaluate_feature_state_model_integrity_gate,
 )
-from asset_management.validation.feature_state_model_integrity import _executing_source_identity
+from asset_management.validation.feature_state_model_integrity import (
+    _executing_source_identity, SourceGitExecutablePin,
+)
+from asset_management.data.immutable import digest
 
 
 ROOT = Path(__file__).parents[1]
@@ -170,12 +174,34 @@ def test_caller_cannot_select_source_verification_authority(tmp_path, override):
 
 def test_source_identity_is_resolved_internally_from_executing_checkout():
     revision, tree = _revision_and_tree()
-    assert _executing_source_identity(revision, None) == (revision, tree)
+    executable = Path(shutil.which("git")).resolve()
+    pin = SourceGitExecutablePin(str(executable), digest(executable.read_bytes()))
+    assert _executing_source_identity(revision, None, git_pin=pin) == (revision, tree)
 
 
-def test_missing_git_cannot_establish_executing_source_identity(monkeypatch):
+def test_missing_git_pin_cannot_establish_executing_source_identity():
     revision, _ = _revision_and_tree()
-    monkeypatch.setattr(shutil, "which", lambda executable: None)
+    assert _executing_source_identity(revision, None) is None
+
+
+def test_git_pin_mismatch_is_rejected_before_execution(monkeypatch):
+    revision, _ = _revision_and_tree()
+    pin = SourceGitExecutablePin(str(Path(shutil.which("git")).resolve()), "f" * 64)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("unverified executable ran")
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    assert _executing_source_identity(revision, None, git_pin=pin) is None
+
+
+def test_path_selected_git_cannot_forge_executing_source(monkeypatch):
+    revision, _ = _revision_and_tree()
+    monkeypatch.setattr(shutil, "which", lambda executable: "/caller/git")
+    def forged_git(args, **kwargs):
+        if "rev-parse" in args:
+            output = "f" * 40 if "tree" in args[-1] else revision.removeprefix("git:")
+            return SimpleNamespace(returncode=0, stdout=output + "\n")
+        return SimpleNamespace(returncode=0, stdout="" if kwargs.get("text") else b"")
+    monkeypatch.setattr(subprocess, "run", forged_git)
     assert _executing_source_identity(revision, None) is None
 
 

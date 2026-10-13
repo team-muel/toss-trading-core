@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sqlite3
 import subprocess
+import shutil
 
 import pytest
 
@@ -172,7 +173,8 @@ def _copy_signed_runtime_registry(monkeypatch, conn, *, return_signer=False):
     return (snapshot_id, snapshot_hash, attestor_key) if return_signer else (snapshot_id, snapshot_hash)
 
 
-def _signed_d1_fixture(tmp_path, monkeypatch, *, failed=False, legacy=False):
+def _signed_d1_fixture(tmp_path, monkeypatch, *, failed=False, legacy=False, unpinned=False,
+                       tamper_pin=False):
     conn, store = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
     bundle = repository.record(runtime_run_id="runtime@1", store=store)
@@ -196,11 +198,19 @@ def _signed_d1_fixture(tmp_path, monkeypatch, *, failed=False, legacy=False):
     payload = d1_module._runtime_attestation_payload(
         runtime_evidence=bundle, attestor_id="test-d1-attestor", issued_at=CUTOFF,
         registry_snapshot_id=snapshot, registry_content_hash=registry_hash,
-        canonical_store_uri="gs://canonical-fixture-evidence/d1", semantic_checks=checks)
+        canonical_store_uri="gs://canonical-fixture-evidence/d1", semantic_checks=checks,
+        source_git_pin=d1_module.SourceGitExecutablePin(
+            str(Path(shutil.which("git")).resolve()),
+            digest(Path(shutil.which("git")).read_bytes())))
     if legacy:
         payload["schema_version"] = "canonical-d1-runtime-attestation@1"
         del payload["semantic_checks"]
+    if unpinned:
+        payload["schema_version"] = "canonical-d1-runtime-attestation@2"
+        del payload["source_git_pin"]
     signature = b64encode(signer.sign(canonical(payload))).decode()
+    if tamper_pin:
+        payload["source_git_pin"]["content_sha256"] = "f" * 64
     content_hash = digest(canonical({"payload": payload, "signature_base64": signature}))
     conn.execute("INSERT INTO am_canonical_d1_runtime_attestation VALUES (?, ?, ?, ?, ?, ?, ?)",
                  (bundle.runtime_run_id, content_hash, "test-d1-attestor", json.dumps(payload),
@@ -244,6 +254,14 @@ def test_caller_cannot_replace_signed_semantic_checks(tmp_path, monkeypatch, att
 
 def test_legacy_bundle_attestation_without_check_hashes_is_rejected(tmp_path, monkeypatch):
     _, _, repository, bundle, _, _ = _signed_d1_fixture(tmp_path, monkeypatch, legacy=True)
+    assert CanonicalD1RuntimeAuthorityVerifier(repository).verify(
+        runtime_evidence_repository=repository, runtime_evidence=bundle) is None
+
+
+@pytest.mark.parametrize("alteration", ("unpinned", "tamper_pin"))
+def test_unapproved_git_pin_cannot_establish_runtime_authority(tmp_path, monkeypatch, alteration):
+    _, _, repository, bundle, _, _ = _signed_d1_fixture(
+        tmp_path, monkeypatch, **{alteration: True})
     assert CanonicalD1RuntimeAuthorityVerifier(repository).verify(
         runtime_evidence_repository=repository, runtime_evidence=bundle) is None
 
