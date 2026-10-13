@@ -186,7 +186,8 @@ class CanonicalD1RuntimeEvidenceRepository:
         if cutoff > as_of or created > as_of or not isinstance(runtime[2], str) or _REVISION.fullmatch(runtime[2]) is None:
             raise InvariantViolation("CANONICAL_D1_RUNTIME_INVALID")
 
-        snapshot_id, binding_hash, snapshot_hash, authorized = self._model_registry(runtime_run_id)
+        snapshot_id, binding_hash, snapshot_hash, authorized = self._model_registry(
+            runtime_run_id, cutoff=cutoff)
         features = self._features(runtime_run_id, store, cutoff=cutoff,
                                   authorized_model_keys=authorized[ModelScope.FEATURE_CALCULATION])
         states = self._states(runtime_run_id, authorized_model_keys=authorized[ModelScope.STATE_INFERENCE])
@@ -338,20 +339,24 @@ class CanonicalD1RuntimeEvidenceRepository:
             raise DataQualityError("CANONICAL_D1_BRONZE_LINEAGE_MISSING")
         return sorted(result, key=lambda item: str(item["dataset_manifest_id"]))
 
-    def _model_registry(self, runtime_run_id: str) -> tuple[str, str, str, dict[ModelScope, tuple[str, ...]]]:
+    def _model_registry(self, runtime_run_id: str, *, cutoff: datetime
+                        ) -> tuple[str, str, str, dict[ModelScope, tuple[str, ...]]]:
         registry = RuntimeModelRegistryEvidenceRepository(self._conn, self._clock)
         # Each call replays the selected binding.  No caller-selected model may
         # substitute for the runtime's persisted, review-backed snapshot.
-        authorized = {scope: registry.authorized_model_keys(runtime_run_id, scope=scope)
-                      for scope in ModelScope}
         row = self._conn.execute(
-            """SELECT binding.model_registry_snapshot_id, binding.content_hash, snapshot.content_hash
+            """SELECT binding.model_registry_snapshot_id, binding.content_hash, snapshot.content_hash,
+                      binding.bound_at_utc
                FROM am_runtime_model_registry binding
                JOIN am_model_registry_snapshot snapshot
                  ON snapshot.model_registry_snapshot_id=binding.model_registry_snapshot_id
                WHERE binding.runtime_run_id=?""", (runtime_run_id,)).fetchone()
         if row is None:
             raise DataQualityError("CANONICAL_D1_MODEL_REGISTRY_MISSING")
+        if _stored_utc(row[3], "CANONICAL_D1_MODEL_REGISTRY_INVALID") > cutoff:
+            raise DataQualityError("CANONICAL_D1_MODEL_REGISTRY_NOT_POINT_IN_TIME")
+        authorized = {scope: registry.authorized_model_keys(runtime_run_id, scope=scope)
+                      for scope in ModelScope}
         return (str(row[0]), _hash(row[1], "CANONICAL_D1_MODEL_REGISTRY_INVALID"),
                 _hash(row[2], "CANONICAL_D1_MODEL_REGISTRY_INVALID"), authorized)
 

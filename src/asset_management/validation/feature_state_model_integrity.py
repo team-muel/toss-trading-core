@@ -65,7 +65,8 @@ class FeatureStateModelSourceRevisionVerifier:
             return None
         try:
             index = subprocess.run(
-                [self.git_executable, "-C", str(self.repository_root),
+                [self.git_executable, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+                 "-C", str(self.repository_root),
                  "--work-tree", str(self.repository_root.resolve()), "ls-files", "-v", "-z"],
                 check=False, capture_output=True, timeout=5, env=self._git_environment(),
             )
@@ -74,7 +75,8 @@ class FeatureStateModelSourceRevisionVerifier:
                     for entry in index.stdout.split(b"\0") if entry)):
                 return None
             status = subprocess.run(
-                [self.git_executable, "-C", str(self.repository_root),
+                [self.git_executable, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+                 "-C", str(self.repository_root),
                  "--work-tree", str(self.repository_root.resolve()), "status",
                  "--porcelain=v1", "--untracked-files=all"],
                 check=False, capture_output=True, text=True, timeout=5, env=self._git_environment(),
@@ -89,7 +91,8 @@ class FeatureStateModelSourceRevisionVerifier:
     def _rev_parse(self, revision: str) -> str | None:
         try:
             result = subprocess.run(
-                [self.git_executable, "-C", str(self.repository_root),
+                [self.git_executable, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+                 "-C", str(self.repository_root),
                  "--work-tree", str(self.repository_root.resolve()), "rev-parse", "--verify", revision],
                 check=False, capture_output=True, text=True, timeout=5, env=self._git_environment(),
             )

@@ -63,7 +63,7 @@ def _registry() -> ModelRegistry:
     return registry
 
 
-def _bind_registry(conn):
+def _bind_registry(conn, *, bound_at=CUTOFF):
     clock = ReplayClock(CUTOFF - timedelta(seconds=5))
     evidence = RuntimeModelRegistryEvidenceRepository(conn, clock)
     registry = _registry()
@@ -74,11 +74,11 @@ def _bind_registry(conn):
                 owner=registry.models[transition.model_key].owner, evidence={"fixture": "review"})
     clock.advance_to(CUTOFF - timedelta(seconds=1))
     snapshot = evidence.publish_snapshot(registry)
-    clock.advance_to(CUTOFF)
+    clock.advance_to(bound_at)
     evidence.bind_runtime_run("runtime@1", snapshot)
 
 
-def _repository(tmp_path, *, states=True):
+def _repository(tmp_path, *, states=True, bound_at=CUTOFF):
     conn = sqlite3.connect(":memory:")
     Migrator(conn, FrozenClock(NOW)).migrate(load_migration_catalog(ROOT / "schemas"))
     conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
@@ -111,7 +111,7 @@ def _repository(tmp_path, *, states=True):
         expectation_payload, expectation_hash = _hashed({"forecast_values": {"ETF": "0.02"}})
         conn.execute("INSERT INTO am_expectation_run VALUES (?, ?, ?, ?, ?)",
                      ("expectation@1", "pricing@1", "expectation@1", expectation_payload, expectation_hash))
-    _bind_registry(conn)
+    _bind_registry(conn, bound_at=bound_at)
     return conn, store
 
 
@@ -276,6 +276,15 @@ def test_records_and_replays_only_one_existing_runtime_bundle(tmp_path):
     assert replayed == recorded
     assert store.layout.resolve("catalog", f"canonical-d1-runtime-evidence/{recorded.catalog_object_id}.json").is_file()
     assert conn.execute("SELECT runtime_run_id FROM am_canonical_d1_runtime_evidence").fetchone() == ("runtime@1",)
+
+
+@pytest.mark.parametrize("delay", (timedelta(microseconds=1), timedelta(minutes=1)))
+def test_model_registry_binding_after_cutoff_is_not_d1_authority(tmp_path, delay):
+    conn, store = _repository(tmp_path, bound_at=CUTOFF + delay)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    with pytest.raises(DataQualityError, match="CANONICAL_D1_MODEL_REGISTRY_NOT_POINT_IN_TIME"):
+        repository.record(runtime_run_id="runtime@1", store=store)
+    assert conn.execute("SELECT count(*) FROM am_canonical_d1_runtime_evidence").fetchone()[0] == 0
 
 
 def test_fixture_runtime_bundle_cannot_pass_without_external_canonical_authority(tmp_path):

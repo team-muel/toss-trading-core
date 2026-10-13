@@ -33,6 +33,8 @@ available for established line-ending semantics.
 Tracked files marked `assume-unchanged` or `skip-worktree` make source identity unverifiable,
 even when their current bytes appear unchanged. The verifier reads index flags without changing
 them before trusting status; callers must provide an index that checks all tracked source changes.
+Every verification command disables `core.fsmonitor` and `core.untrackedCache`, so configured
+filesystem-monitor callbacks cannot report a dirty tracked file as unchanged.
 Each `sha256:`
 artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@5` catalog record
 for the named check, revision/tree, replayed canonical runtime-bundle hash/catalog ID, and the
@@ -77,6 +79,8 @@ gate does not enable trading and `live_trading_enabled` remains `false`.
 can record or replay only one already-persisted `runtime_run_id`, its immutable manifest-to-Bronze
 lineage available no later than that run's information cutoff, Feature/State/calculation hashes,
 and review-backed runtime model-registry binding.  They
+require the binding timestamp to be no later than that run's information cutoff, including when
+the runtime as-of time is later; a hindsight model selection cannot enter the source bundle. They
 return `BLOCKED` for missing, ambiguous, non-PIT, or unreplayable sources and never emit a D1 PASS.
 The seven semantic checks still require their own real canonical runtime evidence; a test fixture,
 synthetic input, catalog bundle, or historical GitHub result is not acceptance evidence.

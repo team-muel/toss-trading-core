@@ -122,6 +122,28 @@ def test_index_flags_cannot_hide_source_changes(tmp_path, flag, modified):
     assert verifier.verify(revision) is None
 
 
+def test_fsmonitor_hook_cannot_hide_modified_source(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], check=True,
+                              capture_output=True, text=True)
+    git("init", "--quiet")
+    source = repository / "source.py"
+    source.write_bytes(b"value = 1\n")
+    git("add", "source.py")
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "source")
+    revision, _ = _revision_and_tree(repository)
+    hook = tmp_path / "fsmonitor.sh"
+    hook.write_bytes(b"#!/bin/sh\nprintf 'test-token\\0'\n")
+    hook.chmod(0o755)
+    git("config", "core.fsmonitor", hook.as_posix())
+    git("config", "core.fsmonitorHookVersion", "2")
+    assert git("status", "--porcelain=v1").stdout == ""
+    source.write_bytes(b"value = 2\n")
+    assert FeatureStateModelSourceRevisionVerifier(repository).verify(revision) is None
+
+
 def _check_evidence(store: ImmutableDatasetStore, *, code_revision: str,
                     source_tree: str) -> dict[str, CheckEvidence]:
     checks = {}
