@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import subprocess
 import shutil
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -142,6 +143,52 @@ def test_fsmonitor_hook_cannot_hide_modified_source(tmp_path):
     assert git("status", "--porcelain=v1").stdout == ""
     source.write_bytes(b"value = 2\n")
     assert FeatureStateModelSourceRevisionVerifier(repository).verify(revision) is None
+
+
+def test_restored_mtime_and_minimal_stat_cannot_hide_modified_bytes(tmp_path):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], check=True,
+                              capture_output=True, text=True)
+    git("init", "--quiet")
+    source = repository / "source.py"
+    source.write_bytes(b"value = 1\n")
+    git("add", "source.py")
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "source")
+    git("config", "core.trustctime", "false")
+    git("config", "core.checkStat", "minimal")
+    revision, _ = _revision_and_tree(repository)
+    git("status", "--porcelain=v1")
+    original = source.stat()
+    source.write_bytes(b"value = 2\n")
+    os.utime(source, ns=(original.st_atime_ns, original.st_mtime_ns))
+    assert git("status", "--porcelain=v1").stdout == ""
+    assert FeatureStateModelSourceRevisionVerifier(repository).verify(revision) is None
+
+
+@pytest.mark.parametrize("case", ("crlf", "clean_filter"))
+def test_tracked_byte_comparison_preserves_text_and_rejects_filtered_changes(tmp_path, case):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], check=True,
+                              capture_output=True, text=True)
+    git("init", "--quiet")
+    source = repository / "source.py"
+    attributes = b"source.py text eol=lf\n" if case == "crlf" else b"source.py filter=masked\n"
+    (repository / ".gitattributes").write_bytes(attributes)
+    source.write_bytes(b"value = 1\r\n" if case == "crlf" else b"value = 1\n")
+    git("add", ".gitattributes", "source.py")
+    git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "source")
+    revision, _ = _revision_and_tree(repository)
+    verifier = FeatureStateModelSourceRevisionVerifier(repository)
+    assert verifier.verify(revision) is not None
+    if case == "clean_filter":
+        git("config", "filter.masked.clean", "printf 'value = 1\\n'")
+        source.write_bytes(b"value = 2\n")
+        assert git("status", "--porcelain=v1").stdout == ""
+        assert verifier.verify(revision) is None
 
 
 def _check_evidence(store: ImmutableDatasetStore, *, code_revision: str,

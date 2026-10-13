@@ -35,6 +35,10 @@ even when their current bytes appear unchanged. The verifier reads index flags w
 them before trusting status; callers must provide an index that checks all tracked source changes.
 Every verification command disables `core.fsmonitor` and `core.untrackedCache`, so configured
 filesystem-monitor callbacks cannot report a dirty tracked file as unchanged.
+The verifier also reads every tracked regular file and compares its Git blob hash with the
+committed tree, independent of cached stat data and clean filters. Only UTF-8 text CRLF-to-LF
+checkout normalization is allowed; substantive changes, missing files, symlinks, gitlinks and
+unreadable bytes make source identity unverifiable.
 Each `sha256:`
 artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@5` catalog record
 for the named check, revision/tree, replayed canonical runtime-bundle hash/catalog ID, and the

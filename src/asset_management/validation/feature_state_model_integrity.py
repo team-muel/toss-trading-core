@@ -5,6 +5,7 @@ from base64 import b64decode
 from binascii import Error as Base64Error
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha1
 import json
 import os
 from pathlib import Path
@@ -85,6 +86,8 @@ class FeatureStateModelSourceRevisionVerifier:
             return None
         if status.returncode != 0 or status.stdout:
             return None
+        if not self._tracked_bytes_match(commit):
+            return None
         source_tree = self._rev_parse(f"{commit}^{{tree}}")
         return (code_revision, source_tree) if source_tree is not None else None
 
@@ -100,6 +103,44 @@ class FeatureStateModelSourceRevisionVerifier:
             return None
         value = result.stdout.strip()
         return value if result.returncode == 0 and re.fullmatch(r"[0-9a-f]{40}", value) else None
+
+    def _tracked_bytes_match(self, commit: str) -> bool:
+        try:
+            result = subprocess.run(
+                [self.git_executable, "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
+                 "-C", str(self.repository_root), "--work-tree", str(self.repository_root.resolve()),
+                 "ls-tree", "-r", "-z", "--full-tree", commit],
+                check=False, capture_output=True, timeout=5, env=self._git_environment())
+            if result.returncode != 0:
+                return False
+            root = self.repository_root.resolve()
+            for entry in result.stdout.split(b"\0"):
+                if not entry:
+                    continue
+                header, name = entry.split(b"\t", 1)
+                mode, kind, expected = header.split(b" ")
+                if mode not in {b"100644", b"100755"} or kind != b"blob":
+                    return False
+                path = root / os.fsdecode(name)
+                if path.is_symlink() or root not in path.resolve().parents:
+                    return False
+                content = path.read_bytes()
+                if self._blob_hash(content) == expected:
+                    continue
+                # Git text checkouts can represent committed LF as CRLF.
+                # No arbitrary clean filter or stat cache may supply bytes.
+                if b"\0" in content or b"\r\n" not in content:
+                    return False
+                content.decode("utf-8")
+                if self._blob_hash(content.replace(b"\r\n", b"\n")) != expected:
+                    return False
+            return True
+        except (OSError, ValueError, UnicodeError, subprocess.SubprocessError):
+            return False
+
+    @staticmethod
+    def _blob_hash(content: bytes) -> bytes:
+        return sha1(b"blob " + str(len(content)).encode("ascii") + b"\0" + content).hexdigest().encode("ascii")
 
     @staticmethod
     def _git_environment() -> dict[str, str]:
