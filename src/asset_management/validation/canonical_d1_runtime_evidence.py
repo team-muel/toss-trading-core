@@ -26,7 +26,7 @@ _REVISION = re.compile(r"git:[0-9a-f]{40}")
 def _trusted_immutable_store(store: object) -> ImmutableDatasetStore:
     """Copy plain store configuration into a fresh concrete reader."""
     if (type(store) is not ImmutableDatasetStore or
-            set(vars(store)) != {"layout", "secrets", "credentials_classified"} or
+            set(store.__dict__) != {"layout", "secrets", "credentials_classified"} or
             type(store.layout) is not DataLakeLayout or
             type(store.layout.root) is not type(Path()) or
             type(store.secrets) is not tuple or
