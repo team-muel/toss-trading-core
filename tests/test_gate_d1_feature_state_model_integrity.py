@@ -154,6 +154,10 @@ def test_restored_mtime_and_minimal_stat_cannot_hide_modified_bytes(tmp_path):
     git("init", "--quiet")
     source = repository / "source.py"
     source.write_bytes(b"value = 1\n")
+    # Keep the cached file mtime older than the index write, avoiding Git's
+    # separate racy-index protection on fast Linux runners.
+    old_timestamp = 1_700_000_000_000_000_000
+    os.utime(source, ns=(old_timestamp, old_timestamp))
     git("add", "source.py")
     git("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "--quiet", "-m", "source")
     git("config", "core.trustctime", "false")
