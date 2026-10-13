@@ -30,6 +30,9 @@ Git subprocesses discard inherited `GIT_*` variables, explicitly select the exec
 and disable optional locks. Repository/worktree/config environment overrides and local
 `core.worktree` cannot redirect verification to a clean copy. Normal host configuration remains
 available for established line-ending semantics.
+Tracked files marked `assume-unchanged` or `skip-worktree` make source identity unverifiable,
+even when their current bytes appear unchanged. The verifier reads index flags without changing
+them before trusting status; callers must provide an index that checks all tracked source changes.
 Each `sha256:`
 artifact must be the exact canonical bytes of a `feature-state-model-gate-evidence@5` catalog record
 for the named check, revision/tree, replayed canonical runtime-bundle hash/catalog ID, and the
@@ -48,6 +51,9 @@ source tree, bundle, registry and store URI, and omit the attestation hash to av
 The gate result retains the attestation identity. A
 caller-provided subclass of the runtime authority verifier is rejected; the gate invokes the exact
 concrete verifier implementation rather than dispatching to a caller override. A
+runtime evidence repository must also have the exact concrete type; replay and cutoff verification
+invoke the concrete repository implementation, preventing caller subclass callbacks from hiding
+missing or drifted bundle evidence. A
 copied registry therefore cannot authorize a synthetic local runtime. A caller-supplied label, test
 selector, mutable file, fixture-only catalog, local SQLite file, or historical result cannot produce
 PASS without that independently signed authority.

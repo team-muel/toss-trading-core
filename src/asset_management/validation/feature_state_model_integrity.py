@@ -64,6 +64,15 @@ class FeatureStateModelSourceRevisionVerifier:
                 self._rev_parse("HEAD^{commit}") != commit):
             return None
         try:
+            index = subprocess.run(
+                [self.git_executable, "-C", str(self.repository_root),
+                 "--work-tree", str(self.repository_root.resolve()), "ls-files", "-v", "-z"],
+                check=False, capture_output=True, timeout=5, env=self._git_environment(),
+            )
+            if (index.returncode != 0 or any(
+                    entry[:1] == b"S" or entry[:1].islower()
+                    for entry in index.stdout.split(b"\0") if entry)):
+                return None
             status = subprocess.run(
                 [self.git_executable, "-C", str(self.repository_root),
                  "--work-tree", str(self.repository_root.resolve()), "status",
@@ -195,16 +204,18 @@ class CanonicalD1RuntimeAuthorityVerifier:
     runtime_evidence_repository: CanonicalD1RuntimeEvidenceRepository
 
     def __post_init__(self) -> None:
-        if not isinstance(self.runtime_evidence_repository, CanonicalD1RuntimeEvidenceRepository):
+        if type(self.runtime_evidence_repository) is not CanonicalD1RuntimeEvidenceRepository:
             raise InvariantViolation("CANONICAL_D1_RUNTIME_AUTHORITY_VERIFIER_INVALID")
 
     def verify(self, *, runtime_evidence_repository: CanonicalD1RuntimeEvidenceRepository,
                runtime_evidence: CanonicalD1RuntimeEvidence) -> CanonicalD1RuntimeAuthority | None:
-        if (runtime_evidence_repository is not self.runtime_evidence_repository or
+        if (type(runtime_evidence_repository) is not CanonicalD1RuntimeEvidenceRepository or
+                runtime_evidence_repository is not self.runtime_evidence_repository or
                 not isinstance(runtime_evidence, CanonicalD1RuntimeEvidence)):
             return None
         try:
-            cutoff = runtime_evidence_repository.runtime_information_cutoff(
+            cutoff = CanonicalD1RuntimeEvidenceRepository.runtime_information_cutoff(
+                runtime_evidence_repository,
                 runtime_run_id=runtime_evidence.runtime_run_id,
                 code_revision=runtime_evidence.code_revision,
             )
@@ -351,11 +362,12 @@ def evaluate_feature_state_model_integrity_gate(
         reasons.append("EVIDENCE_STORE_UNVERIFIED")
     runtime_evidence = None
     runtime_authority = None
-    if not isinstance(runtime_evidence_repository, CanonicalD1RuntimeEvidenceRepository):
+    if type(runtime_evidence_repository) is not CanonicalD1RuntimeEvidenceRepository:
         reasons.append("RUNTIME_EVIDENCE_REPOSITORY_UNVERIFIED")
     elif isinstance(evidence_store, ImmutableDatasetStore):
         try:
-            runtime_evidence = runtime_evidence_repository.replay(
+            runtime_evidence = CanonicalD1RuntimeEvidenceRepository.replay(
+                runtime_evidence_repository,
                 runtime_run_id=inputs.runtime_run_id, store=evidence_store)
         except Exception:
             reasons.append("RUNTIME_EVIDENCE_UNVERIFIED")
@@ -364,8 +376,8 @@ def evaluate_feature_state_model_integrity_gate(
                 reasons.append("RUNTIME_EVIDENCE_CODE_REVISION_MISMATCH")
     if type(runtime_authority_verifier) is not CanonicalD1RuntimeAuthorityVerifier:
         reasons.append("CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED")
-    elif runtime_evidence is not None and isinstance(
-            runtime_evidence_repository, CanonicalD1RuntimeEvidenceRepository):
+    elif (runtime_evidence is not None and
+          type(runtime_evidence_repository) is CanonicalD1RuntimeEvidenceRepository):
         runtime_authority = CanonicalD1RuntimeAuthorityVerifier.verify(
             runtime_authority_verifier,
             runtime_evidence_repository=runtime_evidence_repository,

@@ -308,6 +308,32 @@ def test_caller_authority_verifier_subclass_cannot_skip_signature_verification(t
     assert "CANONICAL_RUNTIME_AUTHORITY_UNVERIFIED" in result.reason_codes
 
 
+def test_caller_repository_subclass_cannot_skip_runtime_replay(tmp_path):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    repository.record(runtime_run_id="runtime@1", store=store)
+    class CallerRepository(CanonicalD1RuntimeEvidenceRepository):
+        def replay(self, **kwargs):
+            raise AssertionError("caller-supplied replay was executed")
+    caller = CallerRepository(conn, FrozenClock(NOW))
+    checks = {name: CheckEvidence(True, ("sha256:" + "a" * 64,))
+              for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS}
+    result = evaluate_feature_state_model_integrity_gate(
+        FeatureStateModelIntegrityGateInput(NOW, "runtime@1", REVISION, REVISION, checks),
+        evidence_store=store, runtime_evidence_repository=caller,
+        runtime_authority_verifier=CanonicalD1RuntimeAuthorityVerifier(repository))
+    assert result.decision is AcceptanceDecision.FAIL
+    assert "RUNTIME_EVIDENCE_REPOSITORY_UNVERIFIED" in result.reason_codes
+
+
+def test_authority_verifier_rejects_runtime_repository_subclasses(tmp_path):
+    conn, _ = _repository(tmp_path)
+    class CallerRepository(CanonicalD1RuntimeEvidenceRepository):
+        pass
+    with pytest.raises(InvariantViolation, match="CANONICAL_D1_RUNTIME_AUTHORITY_VERIFIER_INVALID"):
+        CanonicalD1RuntimeAuthorityVerifier(CallerRepository(conn, FrozenClock(NOW)))
+
+
 def test_copied_signed_registry_cannot_authorize_a_local_runtime_bundle(tmp_path, monkeypatch):
     conn, store = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
