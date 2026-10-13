@@ -54,6 +54,9 @@ concrete verifier implementation rather than dispatching to a caller override. A
 runtime evidence repository must also have the exact concrete type; replay and cutoff verification
 invoke the concrete repository implementation, preventing caller subclass callbacks from hiding
 missing or drifted bundle evidence. A
+store must have the exact concrete type and its original data fields and concrete layout/path
+types. The boundary copies plain configuration into a fresh concrete reader; subclass or
+instance callbacks cannot replace manifest, raw-body or recursive lineage verification. A
 copied registry therefore cannot authorize a synthetic local runtime. A caller-supplied label, test
 selector, mutable file, fixture-only catalog, local SQLite file, or historical result cannot produce
 PASS without that independently signed authority.

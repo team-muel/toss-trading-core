@@ -334,6 +334,28 @@ def test_authority_verifier_rejects_runtime_repository_subclasses(tmp_path):
         CanonicalD1RuntimeAuthorityVerifier(CallerRepository(conn, FrozenClock(NOW)))
 
 
+@pytest.mark.parametrize("override", ("subclass", "instance"))
+def test_overridden_store_cannot_hide_missing_raw_manifest(tmp_path, override):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    repository.record(runtime_run_id="runtime@1", store=store)
+    manifest_id = conn.execute("SELECT dataset_manifest_id FROM am_feature_run").fetchone()[0]
+    cached = store.read(manifest_id)
+    store.layout.resolve("catalog", f"manifests/{manifest_id}.json").unlink()
+    with pytest.raises(DataQualityError, match="CANONICAL_D1_MANIFEST_UNVERIFIED"):
+        repository.replay(runtime_run_id="runtime@1", store=store)
+    if override == "subclass":
+        class CallerStore(ImmutableDatasetStore):
+            def read(self, identifier):
+                return cached
+        caller = CallerStore(store.layout.root)
+    else:
+        caller = store
+        caller.read = lambda identifier: cached
+    with pytest.raises(InvariantViolation, match="CANONICAL_D1_STORE_UNVERIFIED"):
+        repository.replay(runtime_run_id="runtime@1", store=caller)
+
+
 def test_copied_signed_registry_cannot_authorize_a_local_runtime_bundle(tmp_path, monkeypatch):
     conn, store = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))

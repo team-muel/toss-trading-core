@@ -22,6 +22,7 @@ from asset_management.domain.errors import DataQualityError, InvariantViolation
 from .account_truth import AcceptanceDecision, CheckEvidence
 from .canonical_d1_runtime_evidence import (
     CanonicalD1RuntimeEvidence, CanonicalD1RuntimeEvidenceRepository,
+    _trusted_immutable_store,
 )
 from .external_attestation import require_runtime_attestor_registry
 
@@ -348,6 +349,10 @@ def evaluate_feature_state_model_integrity_gate(
         ) -> FeatureStateModelIntegrityGateResult:
     """Fail closed unless D1 evidence is immutable and bound to current source."""
     reasons: list[str] = []
+    try:
+        evidence_store = _trusted_immutable_store(evidence_store)
+    except InvariantViolation:
+        evidence_store = None
     if _GIT_REVISION.fullmatch(inputs.code_revision) is None:
         reasons.append("CODE_REVISION_UNVERIFIED")
     if _GIT_REVISION.fullmatch(inputs.evidence_code_revision) is None:

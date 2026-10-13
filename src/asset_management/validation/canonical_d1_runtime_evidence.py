@@ -12,6 +12,8 @@ import re
 import sqlite3
 
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
+from asset_management.data.layout import DataLakeLayout
+from pathlib import Path
 from asset_management.domain.errors import DataQualityError, InvariantViolation
 from asset_management.governance import ModelScope, RuntimeModelRegistryEvidenceRepository
 from asset_management.time.clock import Clock
@@ -19,6 +21,20 @@ from asset_management.time.clock import Clock
 
 _HASH = re.compile(r"[0-9a-f]{64}")
 _REVISION = re.compile(r"git:[0-9a-f]{40}")
+
+
+def _trusted_immutable_store(store: object) -> ImmutableDatasetStore:
+    """Copy plain store configuration into a fresh concrete reader."""
+    if (type(store) is not ImmutableDatasetStore or
+            set(vars(store)) != {"layout", "secrets", "credentials_classified"} or
+            type(store.layout) is not DataLakeLayout or
+            type(store.layout.root) is not type(Path()) or
+            type(store.secrets) is not tuple or
+            any(type(value) is not str for value in store.secrets) or
+            type(store.credentials_classified) is not bool):
+        raise InvariantViolation("CANONICAL_D1_STORE_UNVERIFIED")
+    return ImmutableDatasetStore(store.layout.root, secrets=store.secrets,
+                                 credentials_classified=store.credentials_classified)
 
 
 def _hash(value: object, reason: str) -> str:
@@ -84,6 +100,7 @@ class CanonicalD1RuntimeEvidenceRepository:
         return self._conn
 
     def record(self, *, runtime_run_id: str, store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
+        store = _trusted_immutable_store(store)
         result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, verify_catalog=False)
         recorded_at = self._recorded_at()
         serialized = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -113,6 +130,7 @@ class CanonicalD1RuntimeEvidenceRepository:
         return result
 
     def replay(self, *, runtime_run_id: str, store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
+        store = _trusted_immutable_store(store)
         if not isinstance(runtime_run_id, str) or not runtime_run_id.strip():
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_INVALID")
         row = self._conn.execute(
@@ -291,7 +309,7 @@ class CanonicalD1RuntimeEvidenceRepository:
                 return
             seen.add(identifier)
             try:
-                manifest, _ = store.read(identifier)
+                manifest, _ = ImmutableDatasetStore.read(store, identifier)
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 raise DataQualityError("CANONICAL_D1_MANIFEST_UNVERIFIED") from exc
             row = self._conn.execute(
