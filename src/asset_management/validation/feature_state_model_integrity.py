@@ -162,6 +162,13 @@ class FeatureStateModelSourceRevisionVerifier:
                 if (len(data) < 16 or data[:4] != MAGIC_NUMBER or
                         int.from_bytes(data[4:8], "little") not in (0, 1, 3)):
                     return False
+                if int.from_bytes(data[4:8], "little") == 0:
+                    # CPython rejects stale timestamp caches and recompiles
+                    # source. Only a loadable cache can substitute its code.
+                    if (int.from_bytes(data[8:12], "little") !=
+                            (int(source.stat().st_mtime) & 0xFFFFFFFF) or
+                            int.from_bytes(data[12:16], "little") != (len(content) & 0xFFFFFFFF)):
+                        continue
                 loaded = marshal.loads(data[16:])
                 if (type(loaded) is not CodeType or
                         Path(loaded.co_filename).resolve() != source.resolve()):

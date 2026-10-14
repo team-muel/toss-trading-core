@@ -147,3 +147,6 @@ Timestamp or unchecked-hash headers never substitute for this comparison. Unsupp
 legacy `.pyc`/`.pyo`, symlinked, malformed, or mismatched caches fail closed. Matching ordinary
 caches remain usable; this check does not claim to attest arbitrary already-loaded process code
 or external interpreter/dependency authority.
+Timestamp caches whose header size or mtime fails CPython's source validation are not executable
+through its source loader and are skipped; it recompiles the verified source instead. A valid
+timestamp cache and every hash-based cache still require the concrete code-object comparison.

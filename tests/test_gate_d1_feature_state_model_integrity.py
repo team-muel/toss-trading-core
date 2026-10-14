@@ -65,10 +65,35 @@ def test_python_cache_comparison_checks_each_optimization(tmp_path, optimization
     import py_compile
     source = tmp_path / "source.py"
     source.write_bytes(b"value = -0.0\n")
+    stamp = 1_700_000_000_000_000_000
+    os.utime(source, ns=(stamp, stamp))
     py_compile.compile(str(source), doraise=True, optimize=optimization)
     assert FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
     source.write_bytes(b"value = +0.0\n")
+    os.utime(source, ns=(stamp, stamp))
     assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+
+
+@pytest.mark.parametrize("stale_field", ("mtime", "size"))
+def test_timestamp_stale_cache_cannot_execute_and_does_not_block_verified_source(tmp_path, stale_field):
+    import importlib.util
+    import py_compile
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 9\n")
+    stamp = 1_700_000_000_000_000_000
+    os.utime(source, ns=(stamp, stamp))
+    cache = Path(py_compile.compile(str(source), doraise=True))
+    data = bytearray(cache.read_bytes())
+    offset = 8 if stale_field == "mtime" else 12
+    data[offset:offset + 4] = (int.from_bytes(data[offset:offset + 4], "little") + 1).to_bytes(4, "little")
+    cache.write_bytes(data)
+    source.write_bytes(b"value = 1\n")
+    os.utime(source, ns=(stamp, stamp))
+    assert FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+    spec = importlib.util.spec_from_file_location("stale_cache_probe", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.value == 1
 
 
 @pytest.mark.parametrize("invalid", ("magic", "payload", "legacy"))
