@@ -77,9 +77,11 @@ def toss_trading_imports(path: Path, *, source_cache_verification: bool = False)
         elif isinstance(node, ast.ImportFrom) and node.module:
             if node.module == "toss_trading" or node.module.startswith("toss_trading."):
                 imports.add(node.module)
-            cache_utilities = (source_cache_verification and node.module == "importlib.util" and
-                               all(alias.name in {"MAGIC_NUMBER", "cache_from_source"} and
-                                   alias.asname is None for alias in node.names))
+            cache_names = {"importlib.util": {"MAGIC_NUMBER", "cache_from_source"},
+                           "importlib.machinery": {"EXTENSION_SUFFIXES"}}
+            cache_utilities = (source_cache_verification and node.module in cache_names and
+                               all(alias.name in cache_names[node.module] and alias.asname is None
+                                   for alias in node.names))
             if node.module.split(".", 1)[0] in _DYNAMIC_IMPORT_MODULES and not cache_utilities:
                 dynamic_import = True
             if node.module == "sys":

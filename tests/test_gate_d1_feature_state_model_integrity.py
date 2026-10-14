@@ -8,6 +8,7 @@ import os
 from types import SimpleNamespace
 
 import pytest
+from importlib.machinery import EXTENSION_SUFFIXES
 
 from asset_management.data.immutable import ImmutableDatasetStore
 from asset_management.domain.errors import InvariantViolation
@@ -23,6 +24,30 @@ from asset_management.data.immutable import digest
 
 
 ROOT = Path(__file__).parents[1]
+
+
+@pytest.mark.parametrize("suffix", EXTENSION_SUFFIXES)
+def test_ignored_native_extension_cannot_shadow_tracked_python(tmp_path, suffix):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], check=True,
+                              capture_output=True, text=True)
+    git("init", "--quiet")
+    git("config", "user.name", "test")
+    git("config", "user.email", "test@example.invalid")
+    source = repository / "source.py"
+    source.write_bytes(b"value = 1\n")
+    git("add", ".")
+    git("commit", "--quiet", "-m", "source")
+    revision, tree = _revision_and_tree(repository)
+    verifier = FeatureStateModelSourceRevisionVerifier(repository)
+    assert verifier.verify(revision) == (revision, tree)
+    native = source.with_name(source.stem + suffix)
+    (repository / ".git/info/exclude").write_text(native.name + "\n", encoding="utf-8")
+    native.write_bytes(b"untrusted native-module candidate")
+    assert not git("status", "--porcelain=v1", "--untracked-files=all").stdout
+    assert verifier.verify(revision) is None
 
 
 @pytest.mark.parametrize("malicious", (False, True))
@@ -149,13 +174,13 @@ def test_unsupported_or_malformed_python_cache_fails_closed(tmp_path, invalid):
 
 
 @pytest.mark.parametrize("alteration", ("module_stack", "module_qualname", "nested_stack",
-                                        "nested_filename", "nested_qualname"))
+                                        "nested_filename", "nested_qualname", "nested_cellvars"))
 def test_cache_code_metadata_matches_fresh_compilation_recursively(tmp_path, alteration):
     import marshal
     import py_compile
     from types import CodeType
     source = tmp_path / "source.py"
-    source.write_bytes(b"def f():\n return 1\n")
+    source.write_bytes(b"def f(x):\n return x + 1\n")
     cache = Path(py_compile.compile(str(source), doraise=True))
     data = cache.read_bytes()
     loaded = marshal.loads(data[16:])
@@ -169,6 +194,8 @@ def test_cache_code_metadata_matches_fresh_compilation_recursively(tmp_path, alt
             changed_child = child.replace(co_stacksize=child.co_stacksize + 1)
         elif alteration == "nested_filename":
             changed_child = child.replace(co_filename="unverified.py")
+        elif alteration == "nested_cellvars":
+            changed_child = child.replace(co_cellvars=("x",))
         else:
             changed_child = child.replace(co_qualname="unverified")
         changed = loaded.replace(co_consts=tuple(changed_child if value is child else value

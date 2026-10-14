@@ -156,3 +156,9 @@ active cache; fresh comparison compilation uses the interpreter's actual optimiz
 Comparison also checks stack size, qualified name and source filename explicitly, recursively for
 nested code constants. Python code-object equality omits these fields and cannot alone prove that
 cached compilation metadata matches the verified source.
+The comparison enumerates argument/local counts, flags, instruction bytes, names, variable names,
+filename/name/qualified name, first line, line/exception tables, free variables and cell variables
+at every nested code level. Normal code equality additionally preserves typed-constant distinctions.
+Same-basename files with the executing interpreter's native extension suffixes are unsupported
+Python-source shadows and are rejected, even when local Git excludes hide them. The source verifier
+only reads the suffix list; dynamic extension loaders remain forbidden by the legacy guard.

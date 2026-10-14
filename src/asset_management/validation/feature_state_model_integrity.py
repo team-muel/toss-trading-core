@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from hashlib import sha1
 import json
 from importlib.util import MAGIC_NUMBER, cache_from_source
+from importlib.machinery import EXTENSION_SUFFIXES
 import marshal
 import os
 from pathlib import Path
@@ -150,6 +151,10 @@ class FeatureStateModelSourceRevisionVerifier:
     def _python_caches_match(source: Path, content: bytes) -> bool:
         """Validate executable CPython caches independently of timestamp headers."""
         try:
+            for suffix in EXTENSION_SUFFIXES:
+                candidate = source.with_name(source.stem + suffix)
+                if candidate.exists() or candidate.is_symlink():
+                    return False
             if source.with_suffix(".pyc").exists() or source.with_suffix(".pyo").exists():
                 return False
             seen: set[Path] = set()
@@ -187,9 +192,14 @@ class FeatureStateModelSourceRevisionVerifier:
 
     @staticmethod
     def _compiled_code_matches(loaded: CodeType, expected: CodeType) -> bool:
-        if (loaded != expected or loaded.co_stacksize != expected.co_stacksize or
-                loaded.co_filename != expected.co_filename or
-                loaded.co_qualname != expected.co_qualname):
+        def metadata(code: CodeType) -> tuple[object, ...]:
+            return (code.co_argcount, code.co_posonlyargcount, code.co_kwonlyargcount,
+                    code.co_nlocals, code.co_stacksize, code.co_flags, code.co_code,
+                    code.co_names, code.co_varnames, code.co_filename, code.co_name,
+                    code.co_qualname, code.co_firstlineno, code.co_linetable,
+                    code.co_exceptiontable, code.co_freevars, code.co_cellvars)
+
+        if loaded != expected or metadata(loaded) != metadata(expected):
             return False
         return all(type(wanted) is CodeType and
                    FeatureStateModelSourceRevisionVerifier._compiled_code_matches(actual, wanted)
