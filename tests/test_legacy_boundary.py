@@ -81,6 +81,32 @@ def test_canonical_import_scanner_rejects_dynamic_legacy_imports(tmp_path, sourc
     ]
 
 
+@pytest.mark.parametrize("path", ("validation/feature_state_model_integrity.py", "ledger/forbidden.py"))
+def test_cache_verification_utilities_are_scoped_to_reviewed_source_boundary(tmp_path, path):
+    source = tmp_path / "src/asset_management" / path
+    source.parent.mkdir(parents=True)
+    source.write_text("from importlib.util import MAGIC_NUMBER, cache_from_source\n"
+                      "expected = compile(content, filename, 'exec', dont_inherit=True, optimize=0)\n",
+                      encoding="utf-8")
+    expected = [] if path.startswith("validation/") else [f"src/asset_management/{path}:dynamic-import"]
+    assert check.boundary_import_violations(tmp_path, {}) == expected
+
+
+@pytest.mark.parametrize("source_text", (
+    "from importlib.util import spec_from_file_location\n",
+    "from importlib.util import cache_from_source as loader\n",
+    "import importlib.util\n",
+    "compiler = compile\n",
+    "exec(compile(content, filename, 'exec'))\n",
+))
+def test_cache_verifier_exception_cannot_load_or_execute_code(tmp_path, source_text):
+    source = tmp_path / "src/asset_management/validation/feature_state_model_integrity.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(source_text, encoding="utf-8")
+    assert check.boundary_import_violations(tmp_path, {}) == [
+        "src/asset_management/validation/feature_state_model_integrity.py:dynamic-import"]
+
+
 def test_canonical_import_scanner_allows_only_the_explicit_adapter(tmp_path):
     source = tmp_path / "src/asset_management/broker/toss_read.py"
     source.parent.mkdir(parents=True)

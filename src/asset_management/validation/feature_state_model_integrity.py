@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha1
 import json
+from importlib.util import MAGIC_NUMBER, cache_from_source
+import marshal
 import os
 from pathlib import Path
 import re
 import sqlite3
 import subprocess
-from types import MappingProxyType
+from types import CodeType, MappingProxyType
 from typing import Mapping
 
 from cryptography.exceptions import InvalidSignature
@@ -125,6 +127,8 @@ class FeatureStateModelSourceRevisionVerifier:
                 if path.is_symlink() or root not in path.resolve().parents:
                     return False
                 content = path.read_bytes()
+                if path.suffix == ".py" and not self._python_caches_match(path, content):
+                    return False
                 if self._blob_hash(content) == expected:
                     continue
                 # Git text checkouts can represent committed LF as CRLF.
@@ -141,6 +145,34 @@ class FeatureStateModelSourceRevisionVerifier:
     @staticmethod
     def _blob_hash(content: bytes) -> bytes:
         return sha1(b"blob " + str(len(content)).encode("ascii") + b"\0" + content).hexdigest().encode("ascii")
+
+    @staticmethod
+    def _python_caches_match(source: Path, content: bytes) -> bool:
+        """Validate executable CPython caches independently of timestamp headers."""
+        try:
+            if source.with_suffix(".pyc").exists() or source.with_suffix(".pyo").exists():
+                return False
+            for optimization in ("", "1", "2"):
+                cache = Path(cache_from_source(str(source), optimization=optimization))
+                if not cache.exists():
+                    continue
+                if cache.is_symlink() or not cache.is_file():
+                    return False
+                data = cache.read_bytes()
+                if (len(data) < 16 or data[:4] != MAGIC_NUMBER or
+                        int.from_bytes(data[4:8], "little") not in (0, 1, 3)):
+                    return False
+                loaded = marshal.loads(data[16:])
+                if (type(loaded) is not CodeType or
+                        Path(loaded.co_filename).resolve() != source.resolve()):
+                    return False
+                expected = compile(content, loaded.co_filename, "exec", dont_inherit=True,
+                                   optimize=int(optimization or "0"))
+                if loaded != expected:
+                    return False
+            return True
+        except (OSError, EOFError, TypeError, ValueError, SyntaxError):
+            return False
 
     @staticmethod
     def _git_environment() -> dict[str, str]:

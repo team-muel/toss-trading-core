@@ -419,6 +419,35 @@ def test_cross_thread_database_connection_is_rejected():
         conn.close()
 
 
+@pytest.mark.parametrize("location", ("main", "temp"))
+def test_unexpected_evidence_insert_trigger_cannot_publish_or_mutate_sources(tmp_path, location):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    conn.execute(f"CREATE {'TEMP ' if location == 'temp' else ''}TRIGGER caller_mutation "
+                 "BEFORE INSERT ON am_canonical_d1_runtime_evidence BEGIN "
+                 "INSERT INTO am_feature_run SELECT 'feature@2', runtime_run_id, dataset_manifest_id, "
+                 "feature_version, payload_json, content_hash FROM am_feature_run WHERE feature_run_id='feature@1'; END")
+    before = conn.execute("SELECT * FROM am_feature_run").fetchall()
+    with pytest.raises(InvariantViolation, match="CANONICAL_D1_EVIDENCE_TRIGGERS_INVALID"):
+        repository.record(runtime_run_id="runtime@1", store=store)
+    assert conn.execute("SELECT * FROM am_feature_run").fetchall() == before
+    assert conn.execute("SELECT count(*) FROM am_canonical_d1_runtime_evidence").fetchone()[0] == 0
+    assert not store.layout.resolve("catalog", "canonical-d1-runtime-evidence").exists()
+
+
+@pytest.mark.parametrize("tamper", ("missing", "changed"))
+def test_record_requires_exact_append_only_evidence_triggers(tmp_path, tamper):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    conn.execute("DROP TRIGGER am_canonical_d1_runtime_evidence_no_update")
+    if tamper == "changed":
+        conn.execute("CREATE TRIGGER am_canonical_d1_runtime_evidence_no_update "
+                     "BEFORE UPDATE ON am_canonical_d1_runtime_evidence BEGIN SELECT 1; END")
+    with pytest.raises(InvariantViolation, match="CANONICAL_D1_EVIDENCE_TRIGGERS_INVALID"):
+        repository.record(runtime_run_id="runtime@1", store=store)
+    assert not store.layout.resolve("catalog", "canonical-d1-runtime-evidence").exists()
+
+
 @pytest.mark.parametrize("kind", ("trace", "authorizer", "progress"))
 def test_record_disables_connection_callbacks_before_any_sql(tmp_path, kind):
     conn, store = _repository(tmp_path)

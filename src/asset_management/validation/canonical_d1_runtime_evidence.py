@@ -148,8 +148,27 @@ class CanonicalD1RuntimeEvidenceRepository:
             raise InvariantViolation("CANONICAL_D1_RECORD_TRANSACTION_ACTIVE")
         with self._conn:
             sqlite3.Connection.execute(self._conn, "BEGIN IMMEDIATE")
+            self._require_evidence_triggers()
             return self._record_locked(runtime_run_id=runtime_run_id, store=store,
                                        recorded_at=recorded_at)
+
+    def _require_evidence_triggers(self) -> None:
+        """Only migration 21's abort-only append guards may target this write."""
+        rows = sqlite3.Connection.execute(self._conn,
+            "SELECT name, sql FROM sqlite_master WHERE type='trigger' "
+            "AND tbl_name='am_canonical_d1_runtime_evidence' UNION ALL "
+            "SELECT name, sql FROM sqlite_temp_master WHERE type='trigger' "
+            "AND tbl_name='am_canonical_d1_runtime_evidence'").fetchall()
+        expected = {
+            f"am_canonical_d1_runtime_evidence_no_{operation.lower()}":
+                f"CREATE TRIGGER am_canonical_d1_runtime_evidence_no_{operation.lower()} "
+                f"BEFORE {operation} ON am_canonical_d1_runtime_evidence BEGIN "
+                "SELECT RAISE(ABORT, 'canonical D1 runtime evidence is append-only'); END"
+            for operation in ("UPDATE", "DELETE")
+        }
+        if (len(rows) != len(expected) or any(type(name) is not str or type(sql) is not str or
+                expected.get(name) != " ".join(sql.split()) for name, sql in rows)):
+            raise InvariantViolation("CANONICAL_D1_EVIDENCE_TRIGGERS_INVALID")
 
     def _record_locked(self, *, runtime_run_id: str,
                        store: ImmutableDatasetStore, recorded_at: str) -> CanonicalD1RuntimeEvidence:

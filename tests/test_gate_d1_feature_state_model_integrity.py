@@ -25,6 +25,68 @@ from asset_management.data.immutable import digest
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.parametrize("malicious", (False, True))
+def test_ignored_timestamp_valid_bytecode_must_match_tracked_source(tmp_path, malicious):
+    import importlib.util
+    import py_compile
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], check=True,
+                              capture_output=True, text=True)
+    git("init", "--quiet")
+    git("config", "user.name", "test")
+    git("config", "user.email", "test@example.invalid")
+    (repository / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+    source = repository / "source.py"
+    source.write_bytes(b"value = 1\n")
+    stamp = 1_700_000_000_000_000_000
+    os.utime(source, ns=(stamp, stamp))
+    git("add", ".")
+    git("commit", "--quiet", "-m", "source")
+    revision, tree = _revision_and_tree(repository)
+    if malicious:
+        source.write_bytes(b"value = 9\n")
+        os.utime(source, ns=(stamp, stamp))
+    py_compile.compile(str(source), doraise=True)
+    source.write_bytes(b"value = 1\n")
+    os.utime(source, ns=(stamp, stamp))
+    spec = importlib.util.spec_from_file_location("bytecode_probe", source)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert module.value == (9 if malicious else 1)
+    assert not git("status", "--porcelain=v1", "--untracked-files=all").stdout
+    result = FeatureStateModelSourceRevisionVerifier(repository).verify(revision)
+    assert result == (None if malicious else (revision, tree))
+
+
+@pytest.mark.parametrize("optimization", (0, 1, 2))
+def test_python_cache_comparison_checks_each_optimization(tmp_path, optimization):
+    import py_compile
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = -0.0\n")
+    py_compile.compile(str(source), doraise=True, optimize=optimization)
+    assert FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+    source.write_bytes(b"value = +0.0\n")
+    assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+
+
+@pytest.mark.parametrize("invalid", ("magic", "payload", "legacy"))
+def test_unsupported_or_malformed_python_cache_fails_closed(tmp_path, invalid):
+    import py_compile
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 1\n")
+    cache = Path(py_compile.compile(str(source), doraise=True))
+    data = cache.read_bytes()
+    if invalid == "magic":
+        cache.write_bytes(b"BAD!" + data[4:])
+    elif invalid == "payload":
+        cache.write_bytes(data[:16] + b"invalid marshal payload")
+    else:
+        source.with_suffix(".pyc").write_bytes(data)
+    assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+
+
 def test_gate_input_subclass_is_rejected_before_identifier_reads():
     class CallerInput(FeatureStateModelIntegrityGateInput):
         def __getattribute__(self, name):

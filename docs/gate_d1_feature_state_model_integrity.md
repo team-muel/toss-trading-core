@@ -134,3 +134,16 @@ The D1 repository requires a dedicated SQLite connection and owns its callback c
 trace, authorizer and progress callbacks are disabled with concrete SQLite methods before any
 validation SQL, including after a clock callback. SQLite callback policies on a shared connection
 are unsupported; persisted model/attestor authority and governance checks remain authoritative.
+
+Within its write reservation and before assembly/publication, recording verifies main and TEMP
+triggers targeting the evidence table. Only migration 21's exact abort-only UPDATE/DELETE guards
+are accepted. Missing, changed, duplicated, or additional triggers fail closed before catalog
+publication; an INSERT trigger cannot mutate source rows between assembly and evidence insertion.
+
+Tracked Python sources also verify the current interpreter's normal and optimized CPython cache
+paths (including its configured cache prefix). Cache magic/header and source filename must match;
+the loaded code object must equal fresh compilation of the verified source at that optimization.
+Timestamp or unchecked-hash headers never substitute for this comparison. Unsupported adjacent
+legacy `.pyc`/`.pyo`, symlinked, malformed, or mismatched caches fail closed. Matching ordinary
+caches remain usable; this check does not claim to attest arbitrary already-loaded process code
+or external interpreter/dependency authority.
