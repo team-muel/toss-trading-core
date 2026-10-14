@@ -116,3 +116,11 @@ thread sharing the same handle from bypassing the database reservation or commit
 Git subprocesses also remove dynamic-loader injection/search variables (`LD_*`, `DYLD_*`,
 `GLIBC_*`, `LIBPATH`, `SHLIB_PATH`, `GCONV_PATH`) alongside inherited Git overrides. Hash pinning
 does not authorize caller-controlled loader code inside the executable.
+
+Every public database entry point rechecks the connection's creator-thread guard, including after
+timestamp callbacks; frozen attributes alone are not accepted as proof of connection identity.
+Recording obtains and validates its timestamp before beginning source assembly and the write
+transaction. Caller transactions are checked both before and after that callback and remain
+caller-owned. Gate check values require exact `CheckEvidence`, boolean status and nonempty immutable
+tuples of plain artifact identifiers at construction and evaluation. Signed equality compares
+validated concrete fields; caller-defined equality and empty artifact lists cannot authorize PASS.

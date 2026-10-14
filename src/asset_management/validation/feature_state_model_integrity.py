@@ -222,9 +222,24 @@ class CanonicalD1RuntimeAuthority:
         object.__setattr__(self, "semantic_checks", MappingProxyType(dict(self.semantic_checks)))
 
 
+def _check_is_concrete(check: object) -> bool:
+    return (type(check) is CheckEvidence and type(check.passed) is bool and
+            type(check.artifact_ids) is tuple and bool(check.artifact_ids) and
+            all(type(artifact) is str and bool(artifact.strip()) for artifact in check.artifact_ids) and
+            len(set(check.artifact_ids)) == len(check.artifact_ids))
+
+
+def _validated_input_checks(checks: Mapping[str, CheckEvidence]) -> dict[str, CheckEvidence]:
+    snapshot = dict(checks)
+    if (set(snapshot) != set(REQUIRED_FEATURE_STATE_MODEL_CHECKS) or
+            any(not _check_is_concrete(check) for check in snapshot.values())):
+        raise InvariantViolation("FEATURE_STATE_MODEL_GATE_CHECK_VALUE_INVALID")
+    return snapshot
+
+
 def _signed_checks_payload(checks: Mapping[str, CheckEvidence]) -> dict[str, object]:
     if (not isinstance(checks, Mapping) or set(checks) != set(REQUIRED_FEATURE_STATE_MODEL_CHECKS)
-            or any(not isinstance(check, CheckEvidence) or
+            or any(not _check_is_concrete(check) or
                    any(_IMMUTABLE_EVIDENCE_ID.fullmatch(artifact) is None
                        for artifact in check.artifact_ids) for check in checks.values())):
         raise InvariantViolation("CANONICAL_D1_SEMANTIC_CHECKS_INVALID")
@@ -370,7 +385,7 @@ class FeatureStateModelIntegrityGateInput:
                 set(self.checks) != set(REQUIRED_FEATURE_STATE_MODEL_CHECKS)):
             raise InvariantViolation("FEATURE_STATE_MODEL_GATE_CHECK_SET_INVALID")
         object.__setattr__(self, "evaluated_at", self.evaluated_at.astimezone(timezone.utc))
-        object.__setattr__(self, "checks", MappingProxyType(dict(self.checks)))
+        object.__setattr__(self, "checks", MappingProxyType(_validated_input_checks(self.checks)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -432,6 +447,7 @@ def evaluate_feature_state_model_integrity_gate(
         runtime_authority_verifier: CanonicalD1RuntimeAuthorityVerifier | None = None,
         ) -> FeatureStateModelIntegrityGateResult:
     """Fail closed unless D1 evidence is immutable and bound to current source."""
+    checks = _validated_input_checks(inputs.checks)
     reasons: list[str] = []
     try:
         evidence_store = _trusted_immutable_store(evidence_store)
@@ -479,11 +495,13 @@ def evaluate_feature_state_model_integrity_gate(
     if source is None:
         reasons.append("SOURCE_REVISION_UNVERIFIED")
     for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS:
-        check = inputs.checks[name]
+        check = checks[name]
         if not check.passed:
             reasons.append(f"CHECK_FAILED:{name}")
         else:
-            if runtime_authority is None or check != runtime_authority.semantic_checks[name]:
+            signed = runtime_authority.semantic_checks[name] if runtime_authority is not None else None
+            if (signed is None or not _check_is_concrete(signed) or
+                    check.passed is not signed.passed or check.artifact_ids != signed.artifact_ids):
                 reasons.append(f"SIGNED_CHECK_MISMATCH:{name}")
         if check.passed and not all(_artifact_is_verified(
                 store=evidence_store, artifact_id=artifact, check_name=name, source=source,
@@ -492,7 +510,7 @@ def evaluate_feature_state_model_integrity_gate(
             reasons.append(f"EVIDENCE_ARTIFACT_UNVERIFIED:{name}")
     reasons_tuple = tuple(reasons)
     decision = AcceptanceDecision.FAIL if reasons_tuple else AcceptanceDecision.PASS
-    artifacts = tuple(sorted({artifact for check in inputs.checks.values()
+    artifacts = tuple(sorted({artifact for check in checks.values()
                               for artifact in check.artifact_ids}))
     payload = {
         "decision": decision.value,

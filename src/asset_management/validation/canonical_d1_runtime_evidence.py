@@ -98,7 +98,6 @@ class CanonicalD1RuntimeEvidenceRepository:
         object.__setattr__(self, "_conn", conn)
         object.__setattr__(self, "_clock", clock)
         self._validate_connection()
-        self._require_thread_affinity()
         sqlite3.Connection.execute(conn, "PRAGMA foreign_keys=ON")
 
     def _require_thread_affinity(self) -> None:
@@ -127,6 +126,7 @@ class CanonicalD1RuntimeEvidenceRepository:
                 (self._conn.row_factory is not None and self._conn.row_factory is not sqlite3.Row) or
                 self._conn.text_factory is not str):
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID")
+        self._require_thread_affinity()
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -139,14 +139,18 @@ class CanonicalD1RuntimeEvidenceRepository:
         store = _trusted_immutable_store(store)
         if self._conn.in_transaction:
             raise InvariantViolation("CANONICAL_D1_RECORD_TRANSACTION_ACTIVE")
+        recorded_at = self._recorded_at()
+        self._validate_connection()
+        if self._conn.in_transaction:
+            raise InvariantViolation("CANONICAL_D1_RECORD_TRANSACTION_ACTIVE")
         with self._conn:
             sqlite3.Connection.execute(self._conn, "BEGIN IMMEDIATE")
-            return self._record_locked(runtime_run_id=runtime_run_id, store=store)
+            return self._record_locked(runtime_run_id=runtime_run_id, store=store,
+                                       recorded_at=recorded_at)
 
     def _record_locked(self, *, runtime_run_id: str,
-                       store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
+                       store: ImmutableDatasetStore, recorded_at: str) -> CanonicalD1RuntimeEvidence:
         result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, verify_catalog=False)
-        recorded_at = self._recorded_at()
         serialized = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         existing = sqlite3.Connection.execute(self._conn,
             """SELECT model_registry_snapshot_id, model_registry_binding_hash, catalog_object_id,

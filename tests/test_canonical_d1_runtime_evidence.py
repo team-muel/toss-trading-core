@@ -419,6 +419,50 @@ def test_cross_thread_database_connection_is_rejected():
         conn.close()
 
 
+def test_replaced_shared_connection_is_revalidated(tmp_path):
+    conn, _ = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    replacement = sqlite3.connect(":memory:", check_same_thread=False)
+    try:
+        object.__setattr__(repository, "_conn", replacement)
+        with pytest.raises(InvariantViolation, match="CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID"):
+            _ = repository.connection
+    finally:
+        replacement.close()
+
+
+def test_record_calls_clock_before_source_assembly_and_write_lock(tmp_path):
+    conn, store = _repository(tmp_path)
+    phases = []
+    class ReentrantClock:
+        def now_utc(self):
+            phases.append(conn.in_transaction)
+            conn.commit()
+            return NOW
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, ReentrantClock())
+    recorded = repository.record(runtime_run_id="runtime@1", store=store)
+    assert phases == [False]
+    assert repository.replay(runtime_run_id="runtime@1", store=store) == recorded
+
+
+def test_clock_source_mutation_is_seen_before_assembly_and_cannot_publish(tmp_path):
+    conn, store = _repository(tmp_path)
+    class MutatingClock:
+        def now_utc(self):
+            conn.commit()
+            payload, content_hash = _hashed({"feature_values": {"ETF": "2"}})
+            manifest = conn.execute("SELECT dataset_manifest_id FROM am_feature_run").fetchone()[0]
+            conn.execute("INSERT INTO am_feature_run VALUES (?, ?, ?, ?, ?, ?)",
+                         ("feature@2", "runtime@1", manifest, "feature@1", payload, content_hash))
+            conn.commit()
+            return NOW
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, MutatingClock())
+    with pytest.raises(DataQualityError, match="CANONICAL_D1_STATE_COVERAGE_MISSING"):
+        repository.record(runtime_run_id="runtime@1", store=store)
+    assert conn.execute("SELECT count(*) FROM am_canonical_d1_runtime_evidence").fetchone()[0] == 0
+    assert not store.layout.resolve("catalog", "canonical-d1-runtime-evidence").exists()
+
+
 def test_repository_database_handle_cannot_be_replaced(tmp_path):
     conn, _ = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))

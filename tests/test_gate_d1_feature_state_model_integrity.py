@@ -25,6 +25,32 @@ from asset_management.data.immutable import digest
 ROOT = Path(__file__).parents[1]
 
 
+def test_duck_typed_check_equality_cannot_replace_concrete_evidence():
+    class CallerCheck:
+        passed = True
+        artifact_ids = ()
+        def __eq__(self, other):
+            raise AssertionError("caller equality executed")
+    checks = {name: CallerCheck() for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS}
+    with pytest.raises(InvariantViolation, match="FEATURE_STATE_MODEL_GATE_CHECK_VALUE_INVALID"):
+        FeatureStateModelIntegrityGateInput(datetime(2026, 9, 4, tzinfo=timezone.utc),
+                                           "runtime@1", "git:" + "a" * 40,
+                                           "git:" + "a" * 40, checks)
+
+
+@pytest.mark.parametrize("field,value", (("passed", 1), ("artifact_ids", ()),
+                                       ("artifact_ids", ["sha256:" + "a" * 64])))
+def test_concrete_check_fields_are_revalidated_at_evaluation(field, value):
+    checks = {name: CheckEvidence(True, ("sha256:" + "a" * 64,))
+              for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS}
+    inputs = FeatureStateModelIntegrityGateInput(datetime(2026, 9, 4, tzinfo=timezone.utc),
+                                                "runtime@1", "git:" + "a" * 40,
+                                                "git:" + "a" * 40, checks)
+    object.__setattr__(checks[REQUIRED_FEATURE_STATE_MODEL_CHECKS[0]], field, value)
+    with pytest.raises(InvariantViolation, match="FEATURE_STATE_MODEL_GATE_CHECK_VALUE_INVALID"):
+        evaluate_feature_state_model_integrity_gate(inputs)
+
+
 @pytest.mark.parametrize("name", ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
                                   "DYLD_LIBRARY_PATH", "GLIBC_TUNABLES", "LIBPATH", "SHLIB_PATH",
                                   "GCONV_PATH", "ld_preload"))
