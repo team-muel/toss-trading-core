@@ -66,6 +66,10 @@ concrete verifier implementation rather than dispatching to a caller override. A
 runtime evidence repository must also have the exact concrete type; replay and cutoff verification
 invoke the concrete repository implementation, preventing caller subclass callbacks from hiding
 missing or drifted bundle evidence. A
+repository has a frozen database handle and accepts only the exact SQLite connection type,
+standard row conversion and string decoding. Public record/replay/cutoff reads revalidate these
+settings and use concrete SQLite dispatch, preventing connection replacement or custom result
+callbacks from fabricating persisted evidence. A
 store must have the exact concrete type and its original data fields and concrete layout/path
 types. The boundary copies plain configuration into a fresh concrete reader; subclass or
 instance callbacks cannot replace manifest, raw-body or recursive lineage verification. A

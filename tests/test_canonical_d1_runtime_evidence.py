@@ -1,5 +1,5 @@
 from base64 import b64encode
-from dataclasses import replace
+from dataclasses import replace, FrozenInstanceError
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 import json
@@ -359,6 +359,39 @@ def test_authority_verifier_rejects_runtime_repository_subclasses(tmp_path):
         pass
     with pytest.raises(InvariantViolation, match="CANONICAL_D1_RUNTIME_AUTHORITY_VERIFIER_INVALID"):
         CanonicalD1RuntimeAuthorityVerifier(CallerRepository(conn, FrozenClock(NOW)))
+
+
+def test_database_connection_subclass_is_rejected_before_dispatch():
+    class CallerConnection(sqlite3.Connection):
+        def execute(self, *args, **kwargs):
+            raise AssertionError("caller-controlled database dispatch")
+    conn = sqlite3.connect(":memory:", factory=CallerConnection)
+    try:
+        with pytest.raises(InvariantViolation, match="CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID"):
+            CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    finally:
+        conn.close()
+
+
+def test_repository_database_handle_cannot_be_replaced(tmp_path):
+    conn, _ = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    replacement = sqlite3.connect(":memory:")
+    try:
+        with pytest.raises(FrozenInstanceError):
+            repository._conn = replacement
+        assert repository.connection is conn
+    finally:
+        replacement.close()
+
+
+@pytest.mark.parametrize("factory", ("row_factory", "text_factory"))
+def test_caller_database_conversion_callbacks_are_rejected(tmp_path, factory):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    setattr(conn, factory, lambda *args: "caller-controlled")
+    with pytest.raises(InvariantViolation, match="CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID"):
+        repository.replay(runtime_run_id="runtime@1", store=store)
 
 
 @pytest.mark.parametrize("override", ("subclass", "instance"))

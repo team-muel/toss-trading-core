@@ -84,27 +84,40 @@ class CanonicalD1RuntimeEvidence:
             _hash(value, "CANONICAL_D1_EVIDENCE_INVALID")
 
 
+@dataclass(frozen=True, slots=True, init=False)
 class CanonicalD1RuntimeEvidenceRepository:
     """Bind D1 sources from one existing run; absence, ambiguity, and drift fail closed."""
 
+    _conn: sqlite3.Connection
+    _clock: Clock
+
     def __init__(self, conn: sqlite3.Connection, clock: Clock) -> None:
-        if not isinstance(conn, sqlite3.Connection) or not hasattr(clock, "now_utc"):
+        if type(conn) is not sqlite3.Connection or not hasattr(clock, "now_utc"):
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID")
-        self._conn = conn
-        self._clock = clock
-        self._conn.execute("PRAGMA foreign_keys=ON")
+        object.__setattr__(self, "_conn", conn)
+        object.__setattr__(self, "_clock", clock)
+        self._validate_connection()
+        sqlite3.Connection.execute(conn, "PRAGMA foreign_keys=ON")
+
+    def _validate_connection(self) -> None:
+        if (type(self._conn) is not sqlite3.Connection or
+                (self._conn.row_factory is not None and self._conn.row_factory is not sqlite3.Row) or
+                self._conn.text_factory is not str):
+            raise InvariantViolation("CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID")
 
     @property
     def connection(self) -> sqlite3.Connection:
         """The persisted source connection for verification-only companion boundaries."""
+        self._validate_connection()
         return self._conn
 
     def record(self, *, runtime_run_id: str, store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
+        self._validate_connection()
         store = _trusted_immutable_store(store)
         result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, verify_catalog=False)
         recorded_at = self._recorded_at()
         serialized = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        existing = self._conn.execute(
+        existing = sqlite3.Connection.execute(self._conn,
             """SELECT model_registry_snapshot_id, model_registry_binding_hash, catalog_object_id,
                       payload_json, content_hash FROM am_canonical_d1_runtime_evidence
                WHERE runtime_run_id=?""", (runtime_run_id,)).fetchone()
@@ -118,7 +131,7 @@ class CanonicalD1RuntimeEvidenceRepository:
         if store.catalog("canonical-d1-runtime-evidence", body) != result.catalog_object_id:
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_CATALOG_INVALID")
         with self._conn:
-            self._conn.execute(
+            sqlite3.Connection.execute(self._conn,
                 """INSERT INTO am_canonical_d1_runtime_evidence
                    (runtime_run_id, model_registry_snapshot_id, model_registry_binding_hash,
                     catalog_object_id, payload_json, content_hash, recorded_at_utc)
@@ -130,10 +143,11 @@ class CanonicalD1RuntimeEvidenceRepository:
         return result
 
     def replay(self, *, runtime_run_id: str, store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
+        self._validate_connection()
         store = _trusted_immutable_store(store)
         if not isinstance(runtime_run_id, str) or not runtime_run_id.strip():
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_INVALID")
-        row = self._conn.execute(
+        row = sqlite3.Connection.execute(self._conn,
             "SELECT payload_json, content_hash, catalog_object_id FROM am_canonical_d1_runtime_evidence "
             "WHERE runtime_run_id=?", (runtime_run_id,)).fetchone()
         if row is None:
@@ -157,10 +171,11 @@ class CanonicalD1RuntimeEvidenceRepository:
         to select a runtime-bound external authority; callers cannot nominate a
         later cutoff to make an attestation appear valid.
         """
+        self._validate_connection()
         if (not isinstance(runtime_run_id, str) or not runtime_run_id.strip() or
                 not isinstance(code_revision, str) or _REVISION.fullmatch(code_revision) is None):
             raise InvariantViolation("CANONICAL_D1_RUNTIME_INVALID")
-        row = self._conn.execute(
+        row = sqlite3.Connection.execute(self._conn,
             "SELECT as_of_utc, information_cutoff_utc, code_revision FROM am_runtime_run "
             "WHERE runtime_run_id=?", (runtime_run_id,)).fetchone()
         if row is None:
@@ -175,7 +190,7 @@ class CanonicalD1RuntimeEvidenceRepository:
                   verify_catalog: bool) -> tuple[CanonicalD1RuntimeEvidence, dict[str, object]]:
         if not isinstance(runtime_run_id, str) or not runtime_run_id.strip() or not isinstance(store, ImmutableDatasetStore):
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_INVALID")
-        runtime = self._conn.execute(
+        runtime = sqlite3.Connection.execute(self._conn,
             "SELECT as_of_utc, information_cutoff_utc, code_revision, created_at_utc "
             "FROM am_runtime_run WHERE runtime_run_id=?", (runtime_run_id,)).fetchone()
         if runtime is None:
@@ -233,7 +248,7 @@ class CanonicalD1RuntimeEvidenceRepository:
 
     def _features(self, runtime_run_id: str, store: ImmutableDatasetStore, *,
                   cutoff: datetime, authorized_model_keys: tuple[str, ...]) -> list[dict[str, object]]:
-        rows = self._conn.execute(
+        rows = sqlite3.Connection.execute(self._conn,
             """SELECT feature.feature_run_id, feature.dataset_manifest_id, feature.feature_version,
                       feature.payload_json, feature.content_hash
                FROM am_feature_run feature WHERE feature.runtime_run_id=?
@@ -252,7 +267,7 @@ class CanonicalD1RuntimeEvidenceRepository:
         return result
 
     def _states(self, runtime_run_id: str, *, authorized_model_keys: tuple[str, ...]) -> list[dict[str, object]]:
-        rows = self._conn.execute(
+        rows = sqlite3.Connection.execute(self._conn,
             """SELECT state.state_run_id, state.feature_run_id, state.state_version,
                       state.payload_json, state.content_hash
                FROM am_state_run state JOIN am_feature_run feature USING(feature_run_id)
@@ -271,7 +286,7 @@ class CanonicalD1RuntimeEvidenceRepository:
 
     def _calculations(self, runtime_run_id: str, *, pricing_model_keys: tuple[str, ...],
                       expectation_model_keys: tuple[str, ...]) -> list[dict[str, object]]:
-        rows = self._conn.execute(
+        rows = sqlite3.Connection.execute(self._conn,
             """SELECT pricing.pricing_run_id, pricing.state_run_id, pricing.pricing_version,
                       pricing.payload_json, pricing.content_hash, expectation.expectation_run_id,
                       expectation.expectation_version, expectation.payload_json, expectation.content_hash
@@ -313,7 +328,7 @@ class CanonicalD1RuntimeEvidenceRepository:
                 manifest, _ = ImmutableDatasetStore.read(store, identifier)
             except (OSError, ValueError, json.JSONDecodeError) as exc:
                 raise DataQualityError("CANONICAL_D1_MANIFEST_UNVERIFIED") from exc
-            row = self._conn.execute(
+            row = sqlite3.Connection.execute(self._conn,
                 """SELECT manifest.content_hash, manifest.layer, manifest.dataset_name,
                           manifest.observed_at_utc, manifest.received_at_utc
                    FROM am_dataset_manifest manifest JOIN am_ingestion_run ingestion USING(ingestion_run_id)
@@ -344,7 +359,7 @@ class CanonicalD1RuntimeEvidenceRepository:
         registry = RuntimeModelRegistryEvidenceRepository(self._conn, self._clock)
         # Each call replays the selected binding.  No caller-selected model may
         # substitute for the runtime's persisted, review-backed snapshot.
-        row = self._conn.execute(
+        row = sqlite3.Connection.execute(self._conn,
             """SELECT binding.model_registry_snapshot_id, binding.content_hash, snapshot.content_hash,
                       binding.bound_at_utc
                FROM am_runtime_model_registry binding
