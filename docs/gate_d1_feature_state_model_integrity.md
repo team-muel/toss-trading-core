@@ -153,3 +153,6 @@ timestamp cache and every hash-based cache still require the concrete code-objec
 The active interpreter cache path is queried with its default optimization setting as well as
 normal/opt-1/opt-2 paths. Repeated `-O` levels above two therefore cannot introduce an unchecked
 active cache; fresh comparison compilation uses the interpreter's actual optimization setting.
+Comparison also checks stack size, qualified name and source filename explicitly, recursively for
+nested code constants. Python code-object equality omits these fields and cannot alone prove that
+cached compilation metadata matches the verified source.

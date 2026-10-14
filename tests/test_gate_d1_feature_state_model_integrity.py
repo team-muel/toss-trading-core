@@ -148,6 +148,36 @@ def test_unsupported_or_malformed_python_cache_fails_closed(tmp_path, invalid):
     assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
 
 
+@pytest.mark.parametrize("alteration", ("module_stack", "module_qualname", "nested_stack",
+                                        "nested_filename", "nested_qualname"))
+def test_cache_code_metadata_matches_fresh_compilation_recursively(tmp_path, alteration):
+    import marshal
+    import py_compile
+    from types import CodeType
+    source = tmp_path / "source.py"
+    source.write_bytes(b"def f():\n return 1\n")
+    cache = Path(py_compile.compile(str(source), doraise=True))
+    data = cache.read_bytes()
+    loaded = marshal.loads(data[16:])
+    if alteration == "module_stack":
+        changed = loaded.replace(co_stacksize=loaded.co_stacksize + 1)
+    elif alteration == "module_qualname":
+        changed = loaded.replace(co_qualname="unverified")
+    else:
+        child = next(value for value in loaded.co_consts if type(value) is CodeType)
+        if alteration == "nested_stack":
+            changed_child = child.replace(co_stacksize=child.co_stacksize + 1)
+        elif alteration == "nested_filename":
+            changed_child = child.replace(co_filename="unverified.py")
+        else:
+            changed_child = child.replace(co_qualname="unverified")
+        changed = loaded.replace(co_consts=tuple(changed_child if value is child else value
+                                                 for value in loaded.co_consts))
+    assert changed == loaded  # Built-in equality omits these compilation fields.
+    cache.write_bytes(data[:16] + marshal.dumps(changed))
+    assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+
+
 def test_gate_input_subclass_is_rejected_before_identifier_reads():
     class CallerInput(FeatureStateModelIntegrityGateInput):
         def __getattribute__(self, name):

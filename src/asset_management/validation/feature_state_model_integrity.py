@@ -179,11 +179,22 @@ class FeatureStateModelSourceRevisionVerifier:
                     return False
                 expected = compile(content, loaded.co_filename, "exec", dont_inherit=True,
                                    optimize=compile_optimization)
-                if loaded != expected:
+                if not FeatureStateModelSourceRevisionVerifier._compiled_code_matches(loaded, expected):
                     return False
             return True
         except (OSError, EOFError, TypeError, ValueError, SyntaxError):
             return False
+
+    @staticmethod
+    def _compiled_code_matches(loaded: CodeType, expected: CodeType) -> bool:
+        if (loaded != expected or loaded.co_stacksize != expected.co_stacksize or
+                loaded.co_filename != expected.co_filename or
+                loaded.co_qualname != expected.co_qualname):
+            return False
+        return all(type(wanted) is CodeType and
+                   FeatureStateModelSourceRevisionVerifier._compiled_code_matches(actual, wanted)
+                   for actual, wanted in zip(loaded.co_consts, expected.co_consts)
+                   if type(actual) is CodeType)
 
     @staticmethod
     def _git_environment() -> dict[str, str]:
