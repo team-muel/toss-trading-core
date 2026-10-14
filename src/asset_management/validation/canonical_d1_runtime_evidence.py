@@ -17,7 +17,7 @@ from asset_management.data.layout import DataLakeLayout
 from pathlib import Path
 from asset_management.domain.errors import DataQualityError, InvariantViolation
 from asset_management.governance import ModelScope, RuntimeModelRegistryEvidenceRepository
-from asset_management.time.clock import Clock
+from asset_management.time.clock import Clock, FrozenClock
 
 
 _HASH = re.compile(r"[0-9a-f]{64}")
@@ -390,7 +390,7 @@ class CanonicalD1RuntimeEvidenceRepository:
 
     def _model_registry(self, runtime_run_id: str, *, cutoff: datetime
                         ) -> tuple[str, str, str, dict[ModelScope, tuple[str, ...]]]:
-        registry = RuntimeModelRegistryEvidenceRepository(self._conn, self._clock)
+        registry = RuntimeModelRegistryEvidenceRepository(self._conn, FrozenClock(cutoff))
         # Each call replays the selected binding.  No caller-selected model may
         # substitute for the runtime's persisted, review-backed snapshot.
         row = sqlite3.Connection.execute(self._conn,

@@ -445,6 +445,18 @@ def test_record_calls_clock_before_source_assembly_and_write_lock(tmp_path):
     assert repository.replay(runtime_run_id="runtime@1", store=store) == recorded
 
 
+def test_source_registry_replay_does_not_read_caller_clock_inside_transaction(tmp_path):
+    conn, store = _repository(tmp_path)
+    class CallbackClock:
+        @property
+        def now_utc(self):
+            assert not conn.in_transaction, "caller clock inspected in protected transaction"
+            return lambda: NOW
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, CallbackClock())
+    recorded = repository.record(runtime_run_id="runtime@1", store=store)
+    assert repository.replay(runtime_run_id="runtime@1", store=store) == recorded
+
+
 def test_clock_source_mutation_is_seen_before_assembly_and_cannot_publish(tmp_path):
     conn, store = _repository(tmp_path)
     class MutatingClock:

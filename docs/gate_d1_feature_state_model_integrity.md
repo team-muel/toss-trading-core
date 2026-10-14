@@ -124,3 +124,5 @@ transaction. Caller transactions are checked both before and after that callback
 caller-owned. Gate check values require exact `CheckEvidence`, boolean status and nonempty immutable
 tuples of plain artifact identifiers at construction and evaluation. Signed equality compares
 validated concrete fields; caller-defined equality and empty artifact lists cannot authorize PASS.
+Read-only model-registry verification receives a concrete frozen clock at the persisted runtime
+cutoff; constructing that verifier inside assembly does not inspect caller clock properties.
