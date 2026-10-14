@@ -234,7 +234,7 @@ def _validated_input_checks(checks: Mapping[str, CheckEvidence]) -> dict[str, Ch
     if (set(snapshot) != set(REQUIRED_FEATURE_STATE_MODEL_CHECKS) or
             any(not _check_is_concrete(check) for check in snapshot.values())):
         raise InvariantViolation("FEATURE_STATE_MODEL_GATE_CHECK_VALUE_INVALID")
-    return snapshot
+    return {name: CheckEvidence(check.passed, check.artifact_ids) for name, check in snapshot.items()}
 
 
 def _signed_checks_payload(checks: Mapping[str, CheckEvidence]) -> dict[str, object]:
@@ -447,6 +447,17 @@ def evaluate_feature_state_model_integrity_gate(
         runtime_authority_verifier: CanonicalD1RuntimeAuthorityVerifier | None = None,
         ) -> FeatureStateModelIntegrityGateResult:
     """Fail closed unless D1 evidence is immutable and bound to current source."""
+    if type(inputs) is not FeatureStateModelIntegrityGateInput:
+        raise InvariantViolation("FEATURE_STATE_MODEL_GATE_INPUT_INVALID")
+    evaluated_at, runtime_run_id, code_revision, evidence_code_revision, supplied_checks = (
+        inputs.evaluated_at, inputs.runtime_run_id, inputs.code_revision,
+        inputs.evidence_code_revision, inputs.checks)
+    if (type(evaluated_at) is not datetime or
+            any(type(value) is not str for value in
+                (runtime_run_id, code_revision, evidence_code_revision))):
+        raise InvariantViolation("FEATURE_STATE_MODEL_GATE_INPUT_INVALID")
+    inputs = FeatureStateModelIntegrityGateInput(
+        evaluated_at, runtime_run_id, code_revision, evidence_code_revision, supplied_checks)
     checks = _validated_input_checks(inputs.checks)
     reasons: list[str] = []
     try:

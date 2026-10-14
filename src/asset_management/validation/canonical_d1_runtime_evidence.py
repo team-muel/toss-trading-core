@@ -126,6 +126,9 @@ class CanonicalD1RuntimeEvidenceRepository:
                 (self._conn.row_factory is not None and self._conn.row_factory is not sqlite3.Row) or
                 self._conn.text_factory is not str):
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID")
+        sqlite3.Connection.set_trace_callback(self._conn, None)
+        sqlite3.Connection.set_authorizer(self._conn, None)
+        sqlite3.Connection.set_progress_handler(self._conn, None, 0)
         self._require_thread_affinity()
 
     @property

@@ -25,6 +25,38 @@ from asset_management.data.immutable import digest
 ROOT = Path(__file__).parents[1]
 
 
+def test_gate_input_subclass_is_rejected_before_identifier_reads():
+    class CallerInput(FeatureStateModelIntegrityGateInput):
+        def __getattribute__(self, name):
+            if name == "runtime_run_id":
+                return "unverified-runtime"
+            return super().__getattribute__(name)
+    checks = {name: CheckEvidence(True, ("sha256:" + "a" * 64,))
+              for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS}
+    inputs = CallerInput(datetime(2026, 9, 4, tzinfo=timezone.utc), "runtime@1",
+                         "git:" + "a" * 40, "git:" + "a" * 40, checks)
+    with pytest.raises(InvariantViolation, match="FEATURE_STATE_MODEL_GATE_INPUT_INVALID"):
+        evaluate_feature_state_model_integrity_gate(inputs)
+
+
+def test_gate_result_uses_entry_snapshot_after_original_input_mutation(monkeypatch):
+    import asset_management.validation.feature_state_model_integrity as module
+    checks = {name: CheckEvidence(True, ("sha256:" + "a" * 64,))
+              for name in REQUIRED_FEATURE_STATE_MODEL_CHECKS}
+    inputs = FeatureStateModelIntegrityGateInput(datetime(2026, 9, 4, tzinfo=timezone.utc),
+                                                "runtime@1", "git:" + "a" * 40,
+                                                "git:" + "a" * 40, checks)
+    def mutate_original(store):
+        object.__setattr__(inputs, "runtime_run_id", "unverified-runtime")
+        object.__setattr__(inputs.checks[REQUIRED_FEATURE_STATE_MODEL_CHECKS[0]], "artifact_ids", ())
+        raise InvariantViolation("CANONICAL_D1_STORE_UNVERIFIED")
+    monkeypatch.setattr(module, "_trusted_immutable_store", mutate_original)
+    result = evaluate_feature_state_model_integrity_gate(inputs)
+    assert result.runtime_run_id == "runtime@1"
+    assert result.evidence_artifact_ids == ("sha256:" + "a" * 64,)
+    assert result.decision is AcceptanceDecision.FAIL
+
+
 def test_duck_typed_check_equality_cannot_replace_concrete_evidence():
     class CallerCheck:
         passed = True
@@ -46,7 +78,7 @@ def test_concrete_check_fields_are_revalidated_at_evaluation(field, value):
     inputs = FeatureStateModelIntegrityGateInput(datetime(2026, 9, 4, tzinfo=timezone.utc),
                                                 "runtime@1", "git:" + "a" * 40,
                                                 "git:" + "a" * 40, checks)
-    object.__setattr__(checks[REQUIRED_FEATURE_STATE_MODEL_CHECKS[0]], field, value)
+    object.__setattr__(inputs.checks[REQUIRED_FEATURE_STATE_MODEL_CHECKS[0]], field, value)
     with pytest.raises(InvariantViolation, match="FEATURE_STATE_MODEL_GATE_CHECK_VALUE_INVALID"):
         evaluate_feature_state_model_integrity_gate(inputs)
 

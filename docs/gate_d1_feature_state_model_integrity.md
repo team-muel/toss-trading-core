@@ -126,3 +126,11 @@ tuples of plain artifact identifiers at construction and evaluation. Signed equa
 validated concrete fields; caller-defined equality and empty artifact lists cannot authorize PASS.
 Read-only model-registry verification receives a concrete frozen clock at the persisted runtime
 cutoff; constructing that verifier inside assembly does not inspect caller clock properties.
+
+Gate evaluation accepts only the exact input type and copies primitive identifiers, evaluation time,
+and concrete check values into a private entry snapshot. Verification and result hashing consume
+that same snapshot; later changes to the caller's objects cannot rebind the result to another run.
+The D1 repository requires a dedicated SQLite connection and owns its callback configuration:
+trace, authorizer and progress callbacks are disabled with concrete SQLite methods before any
+validation SQL, including after a clock callback. SQLite callback policies on a shared connection
+are unsupported; persisted model/attestor authority and governance checks remain authoritative.

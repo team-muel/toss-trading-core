@@ -419,6 +419,25 @@ def test_cross_thread_database_connection_is_rejected():
         conn.close()
 
 
+@pytest.mark.parametrize("kind", ("trace", "authorizer", "progress"))
+def test_record_disables_connection_callbacks_before_any_sql(tmp_path, kind):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    called = []
+    def callback(*args):
+        called.append(conn.in_transaction)
+        return 0
+    if kind == "trace":
+        conn.set_trace_callback(callback)
+    elif kind == "authorizer":
+        conn.set_authorizer(callback)
+    else:
+        conn.set_progress_handler(callback, 1)
+    recorded = repository.record(runtime_run_id="runtime@1", store=store)
+    assert not called
+    assert repository.replay(runtime_run_id="runtime@1", store=store) == recorded
+
+
 def test_replaced_shared_connection_is_revalidated(tmp_path):
     conn, _ = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
