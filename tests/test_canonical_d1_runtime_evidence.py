@@ -278,6 +278,43 @@ def test_records_and_replays_only_one_existing_runtime_bundle(tmp_path):
     assert conn.execute("SELECT runtime_run_id FROM am_canonical_d1_runtime_evidence").fetchone() == ("runtime@1",)
 
 
+def test_record_holds_database_write_lock_before_assembly_and_publication(tmp_path, monkeypatch):
+    original, store = _repository(tmp_path)
+    database = tmp_path / "runtime.sqlite"
+    conn = sqlite3.connect(database)
+    original.backup(conn)
+    original.close()
+    assembled = CanonicalD1RuntimeEvidenceRepository._assemble
+    catalog = ImmutableDatasetStore.catalog
+    phases = []
+    def assert_write_lock(phase):
+        contender = sqlite3.connect(database, timeout=0)
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="locked"):
+                contender.execute("BEGIN IMMEDIATE")
+            phases.append(phase)
+        finally:
+            contender.rollback()
+            contender.close()
+    def locked_assembly(self, **kwargs):
+        assert_write_lock("assembly")
+        return assembled(self, **kwargs)
+    def locked_publication(self, kind, body):
+        if kind == "canonical-d1-runtime-evidence":
+            assert_write_lock("publication")
+        return catalog(self, kind, body)
+    monkeypatch.setattr(CanonicalD1RuntimeEvidenceRepository, "_assemble", locked_assembly)
+    monkeypatch.setattr(ImmutableDatasetStore, "catalog", locked_publication)
+    try:
+        CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW)).record(
+            runtime_run_id="runtime@1", store=store)
+        assert phases == ["assembly", "publication"]
+        assert not conn.in_transaction
+        assert conn.execute("SELECT count(*) FROM am_canonical_d1_runtime_evidence").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize("delay", (timedelta(microseconds=1), timedelta(minutes=1)))
 def test_model_registry_binding_after_cutoff_is_not_d1_authority(tmp_path, delay):
     conn, store = _repository(tmp_path, bound_at=CUTOFF + delay)
@@ -465,6 +502,7 @@ def test_incomplete_sibling_pricing_run_cannot_be_hidden(tmp_path, operation):
     payload, content_hash = _hashed({"pricing_outputs": {"ETF": "0.03"}})
     conn.execute("INSERT INTO am_pricing_run VALUES (?, ?, ?, ?, ?)",
                  ("pricing@2", "state@1", "pricing@1", payload, content_hash))
+    conn.commit()
     before = conn.execute("SELECT * FROM am_canonical_d1_runtime_evidence").fetchall()
     with pytest.raises(DataQualityError, match="CANONICAL_D1_EXPECTATION_COVERAGE_MISSING"):
         getattr(repository, operation)(runtime_run_id="runtime@1", store=store)
@@ -479,6 +517,7 @@ def test_complete_sibling_pricing_runs_remain_replayable(tmp_path):
     payload, content_hash = _hashed({"forecast_values": {"ETF": "0.04"}})
     conn.execute("INSERT INTO am_expectation_run VALUES (?, ?, ?, ?, ?)",
                  ("expectation@2", "pricing@2", "expectation@1", payload, content_hash))
+    conn.commit()
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
     recorded = repository.record(runtime_run_id="runtime@1", store=store)
     assert repository.replay(runtime_run_id="runtime@1", store=store) == recorded
@@ -500,6 +539,7 @@ def test_conflicting_record_retry_does_not_publish_a_second_catalog(tmp_path):
     payload, content_hash = _hashed({"forecast_values": {"ETF": "0.04"}})
     conn.execute("INSERT INTO am_expectation_run VALUES (?, ?, ?, ?, ?)",
                  ("expectation@2", "pricing@2", "expectation@1", payload, content_hash))
+    conn.commit()
     for _ in range(2):
         with pytest.raises(InvariantViolation, match="CANONICAL_D1_EVIDENCE_CONFLICT"):
             repository.record(runtime_run_id="runtime@1", store=store)
@@ -524,6 +564,7 @@ def test_manifest_received_after_cutoff_is_rejected_as_non_pit_evidence(tmp_path
     conn.execute("DROP TRIGGER am_manifest_no_update")
     conn.execute("UPDATE am_dataset_manifest SET received_at_utc=?", (NOW.isoformat(),))
 
+    conn.commit()
     with pytest.raises(DataQualityError, match="CANONICAL_D1_MANIFEST_NOT_POINT_IN_TIME"):
         repository.record(runtime_run_id="runtime@1", store=store)
 
@@ -535,6 +576,7 @@ def test_orphan_feature_or_state_cannot_be_hidden_by_a_valid_chain(tmp_path):
     manifest_id = conn.execute("SELECT dataset_manifest_id FROM am_feature_run WHERE feature_run_id='feature@1'").fetchone()[0]
     conn.execute("INSERT INTO am_feature_run VALUES (?, ?, ?, ?, ?, ?)",
                  ("feature@2", "runtime@1", manifest_id, "feature@1", payload, content_hash))
+    conn.commit()
     with pytest.raises(DataQualityError, match="CANONICAL_D1_STATE_COVERAGE_MISSING"):
         repository.record(runtime_run_id="runtime@1", store=store)
 
@@ -543,12 +585,14 @@ def test_orphan_feature_or_state_cannot_be_hidden_by_a_valid_chain(tmp_path):
     payload, content_hash = _hashed({"state": "STRESSED"})
     conn.execute("INSERT INTO am_state_run VALUES (?, ?, ?, ?, ?)",
                  ("state@2", "feature@1", "state@1", payload, content_hash))
+    conn.commit()
     with pytest.raises(DataQualityError, match="CANONICAL_D1_CALCULATION_COVERAGE_MISSING"):
         repository.record(runtime_run_id="runtime@1", store=store)
 
 
 def test_replay_only_fails_if_the_catalog_object_was_removed_instead_of_republishing(tmp_path):
     conn, store = _repository(tmp_path)
+    conn.commit()
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
     recorded = repository.record(runtime_run_id="runtime@1", store=store)
     catalog = store.layout.resolve("catalog", f"canonical-d1-runtime-evidence/{recorded.catalog_object_id}.json")
@@ -556,3 +600,17 @@ def test_replay_only_fails_if_the_catalog_object_was_removed_instead_of_republis
 
     with pytest.raises(DataQualityError, match="CANONICAL_D1_EVIDENCE_CATALOG_MISSING"):
         repository.replay(runtime_run_id="runtime@1", store=store)
+
+
+def test_record_rejects_caller_transaction_without_committing_or_rolling_back(tmp_path):
+    conn, store = _repository(tmp_path)
+    repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    conn.execute("BEGIN")
+    with pytest.raises(InvariantViolation, match="CANONICAL_D1_RECORD_TRANSACTION_ACTIVE"):
+        repository.record(runtime_run_id="runtime@1", store=store)
+    assert conn.in_transaction
+    assert conn.execute("SELECT count(*) FROM am_canonical_d1_runtime_evidence").fetchone()[0] == 0
+    assert not store.layout.resolve("catalog", "canonical-d1-runtime-evidence").exists()
+    conn.rollback()
+    assert repository.record(runtime_run_id="runtime@1", store=store) == repository.replay(
+        runtime_run_id="runtime@1", store=store)

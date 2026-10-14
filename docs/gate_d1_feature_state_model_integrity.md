@@ -100,3 +100,11 @@ reject the missing coverage before publishing or changing the bundle.
 Recording assembles and compares an existing runtime binding before publishing a catalog object.
 A conflicting retry leaves both the existing evidence row and catalog bytes unchanged; an identical
 retry verifies the existing catalog rather than repairing or replacing it.
+
+Recording owns a `BEGIN IMMEDIATE` transaction, acquired before assembling sources and retained
+through binding comparison, catalog publication, and evidence-row insertion. Concurrent source
+writers and recorders therefore cannot change the selected sources during publication. A caller
+transaction is rejected before publication and remains under caller ownership; commit source
+records before recording. Lock acquisition failure publishes nothing. Content-addressed catalog
+and SQLite storage do not constitute a cross-store atomic transaction; an interrupted insertion
+can still require recovery of an unreferenced catalog object.

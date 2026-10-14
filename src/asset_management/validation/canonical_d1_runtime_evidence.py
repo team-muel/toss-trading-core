@@ -114,6 +114,14 @@ class CanonicalD1RuntimeEvidenceRepository:
     def record(self, *, runtime_run_id: str, store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
         self._validate_connection()
         store = _trusted_immutable_store(store)
+        if self._conn.in_transaction:
+            raise InvariantViolation("CANONICAL_D1_RECORD_TRANSACTION_ACTIVE")
+        with self._conn:
+            sqlite3.Connection.execute(self._conn, "BEGIN IMMEDIATE")
+            return self._record_locked(runtime_run_id=runtime_run_id, store=store)
+
+    def _record_locked(self, *, runtime_run_id: str,
+                       store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
         result, body = self._assemble(runtime_run_id=runtime_run_id, store=store, verify_catalog=False)
         recorded_at = self._recorded_at()
         serialized = json.dumps(body, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -130,16 +138,15 @@ class CanonicalD1RuntimeEvidenceRepository:
             return result
         if store.catalog("canonical-d1-runtime-evidence", body) != result.catalog_object_id:
             raise InvariantViolation("CANONICAL_D1_EVIDENCE_CATALOG_INVALID")
-        with self._conn:
-            sqlite3.Connection.execute(self._conn,
-                """INSERT INTO am_canonical_d1_runtime_evidence
+        sqlite3.Connection.execute(self._conn,
+            """INSERT INTO am_canonical_d1_runtime_evidence
                    (runtime_run_id, model_registry_snapshot_id, model_registry_binding_hash,
                     catalog_object_id, payload_json, content_hash, recorded_at_utc)
                    VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (runtime_run_id, result.model_registry_snapshot_id,
+            (runtime_run_id, result.model_registry_snapshot_id,
                  result.model_registry_binding_hash, result.catalog_object_id, serialized,
                  result.content_hash, recorded_at),
-            )
+        )
         return result
 
     def replay(self, *, runtime_run_id: str, store: ImmutableDatasetStore) -> CanonicalD1RuntimeEvidence:
