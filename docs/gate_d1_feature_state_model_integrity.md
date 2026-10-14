@@ -150,3 +150,6 @@ or external interpreter/dependency authority.
 Timestamp caches whose header size or mtime fails CPython's source validation are not executable
 through its source loader and are skipped; it recompiles the verified source instead. A valid
 timestamp cache and every hash-based cache still require the concrete code-object comparison.
+The active interpreter cache path is queried with its default optimization setting as well as
+normal/opt-1/opt-2 paths. Repeated `-O` levels above two therefore cannot introduce an unchecked
+active cache; fresh comparison compilation uses the interpreter's actual optimization setting.

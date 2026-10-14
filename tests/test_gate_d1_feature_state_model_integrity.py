@@ -74,6 +74,42 @@ def test_python_cache_comparison_checks_each_optimization(tmp_path, optimization
     assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
 
 
+@pytest.mark.parametrize("level", (3, 5))
+@pytest.mark.parametrize("malicious", (False, True))
+def test_active_high_optimization_cache_is_verified_in_executing_process(tmp_path, level, malicious):
+    import importlib.util
+    import py_compile
+    import sys
+    source = tmp_path / "source.py"
+    stamp = 1_700_000_000_000_000_000
+    source.write_bytes(b"value = 9\n" if malicious else b"value = 1\n")
+    os.utime(source, ns=(stamp, stamp))
+    compiled = Path(py_compile.compile(str(source), doraise=True, optimize=2))
+    compiled.replace(importlib.util.cache_from_source(str(source), optimization=str(level)))
+    source.write_bytes(b"value = 1\n")
+    os.utime(source, ns=(stamp, stamp))
+    program = """
+import importlib.util, sys
+from pathlib import Path
+from asset_management.validation.feature_state_model_integrity import FeatureStateModelSourceRevisionVerifier
+source = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location('high_optimization_probe', source)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+if module.value != int(sys.argv[2]):
+    raise RuntimeError('active optimization cache was not executed')
+verified = FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+if verified != (sys.argv[3] == 'true'):
+    raise RuntimeError('active optimization cache verification mismatch')
+print('ACTIVE_CACHE_VERIFIED')
+"""
+    result = subprocess.run([sys.executable, "-" + "O" * level, "-c", program, str(source),
+                             "9" if malicious else "1", "false" if malicious else "true"],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "ACTIVE_CACHE_VERIFIED" in result.stdout
+
+
 @pytest.mark.parametrize("stale_field", ("mtime", "size"))
 def test_timestamp_stale_cache_cannot_execute_and_does_not_block_verified_source(tmp_path, stale_field):
     import importlib.util

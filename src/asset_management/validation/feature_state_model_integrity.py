@@ -152,8 +152,12 @@ class FeatureStateModelSourceRevisionVerifier:
         try:
             if source.with_suffix(".pyc").exists() or source.with_suffix(".pyo").exists():
                 return False
-            for optimization in ("", "1", "2"):
+            seen: set[Path] = set()
+            for optimization, compile_optimization in (("", 0), ("1", 1), ("2", 2), (None, -1)):
                 cache = Path(cache_from_source(str(source), optimization=optimization))
+                if cache in seen:
+                    continue
+                seen.add(cache)
                 if not cache.exists():
                     continue
                 if cache.is_symlink() or not cache.is_file():
@@ -174,7 +178,7 @@ class FeatureStateModelSourceRevisionVerifier:
                         Path(loaded.co_filename).resolve() != source.resolve()):
                     return False
                 expected = compile(content, loaded.co_filename, "exec", dont_inherit=True,
-                                   optimize=int(optimization or "0"))
+                                   optimize=compile_optimization)
                 if loaded != expected:
                     return False
             return True
