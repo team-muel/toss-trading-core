@@ -145,7 +145,8 @@ class FeatureStateModelSourceRevisionVerifier:
     @staticmethod
     def _git_environment() -> dict[str, str]:
         environment = {key: value for key, value in os.environ.items()
-                       if not key.upper().startswith("GIT_")}
+                       if not key.upper().startswith(("GIT_", "LD_", "DYLD_", "GLIBC_"))
+                       and key.upper() not in {"LIBPATH", "SHLIB_PATH", "GCONV_PATH"}}
         environment["GIT_OPTIONAL_LOCKS"] = "0"
         return environment
 

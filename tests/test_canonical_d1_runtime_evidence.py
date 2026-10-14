@@ -410,6 +410,15 @@ def test_database_connection_subclass_is_rejected_before_dispatch():
         conn.close()
 
 
+def test_cross_thread_database_connection_is_rejected():
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    try:
+        with pytest.raises(InvariantViolation, match="CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID"):
+            CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))
+    finally:
+        conn.close()
+
+
 def test_repository_database_handle_cannot_be_replaced(tmp_path):
     conn, _ = _repository(tmp_path)
     repository = CanonicalD1RuntimeEvidenceRepository(conn, FrozenClock(NOW))

@@ -108,3 +108,11 @@ transaction is rejected before publication and remains under caller ownership; c
 records before recording. Lock acquisition failure publishes nothing. Content-addressed catalog
 and SQLite storage do not constitute a cross-store atomic transaction; an interrupted insertion
 can still require recovery of an unreferenced catalog object.
+
+SQLite connections must enforce their built-in creator-thread guard. Construction probes that
+guard with a read-only constant query from another thread and rejects shared-thread connections;
+the guard cannot subsequently be disabled on the accepted connection. This prevents another
+thread sharing the same handle from bypassing the database reservation or committing its work.
+Git subprocesses also remove dynamic-loader injection/search variables (`LD_*`, `DYLD_*`,
+`GLIBC_*`, `LIBPATH`, `SHLIB_PATH`, `GCONV_PATH`) alongside inherited Git overrides. Hash pinning
+does not authorize caller-controlled loader code inside the executable.

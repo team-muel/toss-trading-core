@@ -25,6 +25,14 @@ from asset_management.data.immutable import digest
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.parametrize("name", ("LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "DYLD_INSERT_LIBRARIES",
+                                  "DYLD_LIBRARY_PATH", "GLIBC_TUNABLES", "LIBPATH", "SHLIB_PATH",
+                                  "GCONV_PATH", "ld_preload"))
+def test_git_child_environment_excludes_loader_injection(monkeypatch, name):
+    monkeypatch.setenv(name, "caller-controlled-loader-input")
+    assert name not in FeatureStateModelSourceRevisionVerifier._git_environment()
+
+
 @pytest.mark.parametrize("change", ("unstaged", "staged", "untracked"))
 def test_dirty_checkout_cannot_verify_committed_source(tmp_path, change):
     repository = tmp_path / "repository"

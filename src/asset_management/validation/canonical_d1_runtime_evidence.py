@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import json
 import re
 import sqlite3
+from threading import Thread
 
 from asset_management.data.immutable import ImmutableDatasetStore, canonical, digest
 from asset_management.data.layout import DataLakeLayout
@@ -97,7 +98,29 @@ class CanonicalD1RuntimeEvidenceRepository:
         object.__setattr__(self, "_conn", conn)
         object.__setattr__(self, "_clock", clock)
         self._validate_connection()
+        self._require_thread_affinity()
         sqlite3.Connection.execute(conn, "PRAGMA foreign_keys=ON")
+
+    def _require_thread_affinity(self) -> None:
+        """Verify SQLite's immutable thread guard without trusting caller labels."""
+        sqlite3.Connection.execute(self._conn, "SELECT 1").fetchone()
+        guarded: list[bool] = []
+
+        def probe() -> None:
+            try:
+                sqlite3.Connection.execute(self._conn, "SELECT 1").fetchone()
+            except sqlite3.ProgrammingError as exc:
+                guarded.append("SQLite objects created in a thread" in str(exc))
+            except sqlite3.Error:
+                guarded.append(False)
+            else:
+                guarded.append(False)
+
+        worker = Thread(target=probe)
+        worker.start()
+        worker.join()
+        if guarded != [True]:
+            raise InvariantViolation("CANONICAL_D1_EVIDENCE_REPOSITORY_INVALID")
 
     def _validate_connection(self) -> None:
         if (type(self._conn) is not sqlite3.Connection or
