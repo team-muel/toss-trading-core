@@ -26,6 +26,52 @@ from asset_management.data.immutable import digest
 ROOT = Path(__file__).parents[1]
 
 
+def test_replaced_public_cache_path_helper_cannot_hide_executable_cache(tmp_path):
+    import importlib.util
+    import py_compile
+    import sys
+    source = tmp_path / "source.py"
+    stamp = 1_700_000_000_000_000_000
+    source.write_bytes(b"value = 9\n")
+    os.utime(source, ns=(stamp, stamp))
+    py_compile.compile(str(source), doraise=True)
+    source.write_bytes(b"value = 1\n")
+    os.utime(source, ns=(stamp, stamp))
+    program = """
+import importlib.util, sys
+from pathlib import Path
+source=Path(sys.argv[1])
+importlib.util.cache_from_source=lambda *args,**kwargs: str(source.parent/'absent.pyc')
+from asset_management.validation.feature_state_model_integrity import FeatureStateModelSourceRevisionVerifier
+spec=importlib.util.spec_from_file_location('cache_path_probe',source)
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+if module.value!=9:raise RuntimeError('real executable cache not selected')
+if FeatureStateModelSourceRevisionVerifier._python_caches_match(source,source.read_bytes()):
+    raise RuntimeError('hidden executable cache accepted')
+print('CACHE_PATH_SUBSTITUTION_REJECTED')
+"""
+    result = subprocess.run([sys.executable, "-c", program, str(source)], capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "CACHE_PATH_SUBSTITUTION_REJECTED" in result.stdout
+
+
+@pytest.mark.parametrize("optimization", (None, "", "1", "2", "3", "5"))
+@pytest.mark.parametrize("prefix_kind", ("none", "absolute", "relative"))
+@pytest.mark.parametrize("relative", (False, True))
+def test_cache_path_derivation_matches_cpython(tmp_path, monkeypatch, optimization, prefix_kind, relative):
+    import importlib.util
+    import sys
+    monkeypatch.chdir(tmp_path)
+    prefix = None if prefix_kind == "none" else (
+        str(tmp_path / "cache-root") if prefix_kind == "absolute" else "cache-root")
+    monkeypatch.setattr(sys, "pycache_prefix", prefix)
+    source = Path("nested/source.py") if relative else tmp_path / "nested/source.py"
+    expected = Path(importlib.util.cache_from_source(str(source), optimization=optimization))
+    assert FeatureStateModelSourceRevisionVerifier._python_cache_path(source, optimization) == expected
+
+
 def test_public_extension_suffix_list_mutation_cannot_disable_native_check(tmp_path):
     import importlib.machinery
     source = tmp_path / "source.py"

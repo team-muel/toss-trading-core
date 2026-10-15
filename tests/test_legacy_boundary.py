@@ -85,8 +85,9 @@ def test_canonical_import_scanner_rejects_dynamic_legacy_imports(tmp_path, sourc
 def test_cache_verification_utilities_are_scoped_to_reviewed_source_boundary(tmp_path, path):
     source = tmp_path / "src/asset_management" / path
     source.parent.mkdir(parents=True)
-    source.write_text("from importlib.util import MAGIC_NUMBER, cache_from_source\n"
+    source.write_text("from importlib.util import MAGIC_NUMBER\n"
                       "from _imp import extension_suffixes\n"
+                      "import sys\nmetadata = (sys.implementation.cache_tag, sys.flags.optimize, sys.pycache_prefix)\n"
                       "expected = compile(content, filename, 'exec', dont_inherit=True, optimize=0)\n",
                       encoding="utf-8")
     expected = [] if path.startswith("validation/") else [f"src/asset_management/{path}:dynamic-import"]
@@ -95,6 +96,7 @@ def test_cache_verification_utilities_are_scoped_to_reviewed_source_boundary(tmp
 
 @pytest.mark.parametrize("source_text", (
     "from importlib.util import spec_from_file_location\n",
+    "from importlib.util import cache_from_source\n",
     "from importlib.machinery import ExtensionFileLoader\n",
     "from importlib.machinery import EXTENSION_SUFFIXES as loader\n",
     "from importlib.machinery import EXTENSION_SUFFIXES\n",

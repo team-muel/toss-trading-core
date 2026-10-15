@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha1
 import json
-from importlib.util import MAGIC_NUMBER, cache_from_source
+from importlib.util import MAGIC_NUMBER
 from _imp import extension_suffixes
 import marshal
 import os
@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
+import sys
 from types import CodeType, MappingProxyType
 from typing import Mapping
 
@@ -177,7 +178,7 @@ class FeatureStateModelSourceRevisionVerifier:
                 return False
             seen: set[Path] = set()
             for optimization, compile_optimization in (("", 0), ("1", 1), ("2", 2), (None, -1)):
-                cache = Path(cache_from_source(str(source), optimization=optimization))
+                cache = FeatureStateModelSourceRevisionVerifier._python_cache_path(source, optimization)
                 if cache in seen:
                     continue
                 seen.add(cache)
@@ -207,6 +208,26 @@ class FeatureStateModelSourceRevisionVerifier:
             return True
         except (OSError, EOFError, TypeError, ValueError, SyntaxError):
             return False
+
+    @staticmethod
+    def _python_cache_path(source: Path, optimization: str | None) -> Path:
+        """Derive CPython's path without invoking replaceable import helpers."""
+        tag, active_level, prefix = sys.implementation.cache_tag, sys.flags.optimize, sys.pycache_prefix
+        if (type(tag) is not str or re.fullmatch(r"[A-Za-z0-9_-]+", tag) is None or
+                type(active_level) is not int or active_level < 0 or
+                (prefix is not None and type(prefix) is not str)):
+            raise ValueError("unverified interpreter cache metadata")
+        level = (str(active_level) if active_level else "") if optimization is None else optimization
+        if type(level) is not str or (level and not level.isalnum()):
+            raise ValueError("unverified interpreter optimization")
+        filename = source.stem + "." + tag + (".opt-" + level if level else "") + ".pyc"
+        if prefix is None:
+            return source.parent / "__pycache__" / filename
+        head = str(source.parent.absolute())
+        separators = os.sep + (os.altsep or "")
+        if len(head) > 1 and head[1] == ":" and head[0] not in separators:
+            head = head[2:]
+        return Path(prefix) / head.lstrip(separators) / filename
 
     @staticmethod
     def _compiled_code_matches(loaded: CodeType, expected: CodeType) -> bool:

@@ -68,8 +68,8 @@ def toss_trading_imports(path: Path, *, source_cache_verification: bool = False)
                 for alias in node.names
             ):
                 dynamic_import = True
-            # The sole canonical `sys` use is `sys.prefix`, used to find a
-            # packaged provider-contract file.  A local alias could otherwise
+            # Canonical `sys` metadata is restricted to prefix and the reviewed
+            # source verifier's cache metadata. A local alias could otherwise
             # hide `sys.modules` or import machinery from this structural
             # check, so it is not a reviewed form.
             if any(alias.name == "sys" and alias.asname for alias in node.names):
@@ -77,7 +77,7 @@ def toss_trading_imports(path: Path, *, source_cache_verification: bool = False)
         elif isinstance(node, ast.ImportFrom) and node.module:
             if node.module == "toss_trading" or node.module.startswith("toss_trading."):
                 imports.add(node.module)
-            cache_names = {"importlib.util": {"MAGIC_NUMBER", "cache_from_source"},
+            cache_names = {"importlib.util": {"MAGIC_NUMBER"},
                            "_imp": {"extension_suffixes"}}
             cache_utilities = (source_cache_verification and node.module in cache_names and
                                all(alias.name in cache_names[node.module] and alias.asname is None
@@ -101,7 +101,8 @@ def toss_trading_imports(path: Path, *, source_cache_verification: bool = False)
             isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name)
             and node.value.id == "sys"
-            and node.attr != "prefix"
+            and node.attr not in ({"prefix", "implementation", "flags", "pycache_prefix"}
+                                  if source_cache_verification else {"prefix"})
         ):
             dynamic_import = True
         elif (

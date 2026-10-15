@@ -169,3 +169,8 @@ cannot disable the scan, including when it was modified before this module's imp
 Bootstrap capture requires the getter's concrete CPython builtin function type and interpreter
 module/name. Capture never invokes a substituted Python callable, even if its names are spoofed;
 capture instead yields an invalid empty snapshot and source verification declines authority.
+Cache paths are derived directly from the executing interpreter's plain cache tag, optimization
+level and cache prefix with CPython's source-path/drive rules. The verifier never invokes the
+replaceable public `cache_from_source` helper; default/prefixed, absolute/relative and optimized
+paths are checked against CPython in regression tests. Only these `sys` data fields are allowed
+in this verifier; aliases, module tables and import machinery remain forbidden.
