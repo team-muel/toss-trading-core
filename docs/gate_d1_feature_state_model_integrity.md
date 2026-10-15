@@ -174,3 +174,8 @@ level and cache prefix with CPython's source-path/drive rules. The verifier neve
 replaceable public `cache_from_source` helper; default/prefixed, absolute/relative and optimized
 paths are checked against CPython in regression tests. Only these `sys` data fields are allowed
 in this verifier; aliases, module tables and import machinery remain forbidden.
+The module pins interpreter cache metadata and flags/implementation object identities before its
+project/third-party imports. Later changes to tag, optimization, prefix or those objects decline
+source authority, rather than scanning a substituted location. Source verification requires
+trusted initialization of this module before caller-controlled research code; it cannot recover
+or attest an arbitrary already-compromised process's execution history from current files.

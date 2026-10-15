@@ -26,6 +26,74 @@ from asset_management.data.immutable import digest
 ROOT = Path(__file__).parents[1]
 
 
+@pytest.mark.parametrize("mutation", ("prefix", "tag", "flags", "implementation"))
+def test_cache_metadata_changes_after_import_decline_source_authority(tmp_path, monkeypatch, mutation):
+    import sys
+    from types import SimpleNamespace
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 1\n")
+    assert FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+    if mutation == "prefix":
+        monkeypatch.setattr(sys, "pycache_prefix", str(tmp_path / "absent"))
+    elif mutation == "tag":
+        monkeypatch.setattr(sys.implementation, "cache_tag", "different-tag")
+    elif mutation == "flags":
+        monkeypatch.setattr(sys, "flags", SimpleNamespace(optimize=sys.flags.optimize))
+    else:
+        monkeypatch.setattr(sys, "implementation", SimpleNamespace(cache_tag=sys.implementation.cache_tag))
+    assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+
+
+def test_loaded_mismatched_cache_cannot_be_hidden_by_later_prefix_change(tmp_path):
+    import py_compile
+    import sys
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 9\n")
+    stamp = 1_700_000_000_000_000_000
+    os.utime(source, ns=(stamp, stamp))
+    py_compile.compile(str(source), doraise=True)
+    source.write_bytes(b"value = 1\n")
+    os.utime(source, ns=(stamp, stamp))
+    program = """
+import importlib.util, sys
+from pathlib import Path
+from asset_management.validation.feature_state_model_integrity import FeatureStateModelSourceRevisionVerifier as V
+source=Path(sys.argv[1])
+spec=importlib.util.spec_from_file_location('metadata_probe',source)
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+if module.value!=9:raise RuntimeError('mismatched cache was not executed')
+sys.pycache_prefix=str(source.parent/'absent-prefix')
+if V._python_caches_match(source,source.read_bytes()):raise RuntimeError('hidden loaded cache accepted')
+print('METADATA_REDIRECTION_REJECTED')
+"""
+    result = subprocess.run([sys.executable, "-c", program, str(source)], capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "METADATA_REDIRECTION_REJECTED" in result.stdout
+
+
+def test_unchanged_startup_cache_prefix_remains_supported(tmp_path):
+    import sys
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 1\n")
+    program = """
+import importlib.util, sys
+from pathlib import Path
+from asset_management.validation.feature_state_model_integrity import FeatureStateModelSourceRevisionVerifier as V
+source=Path(sys.argv[1])
+spec=importlib.util.spec_from_file_location('prefix_probe',source)
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+if not V._python_caches_match(source,source.read_bytes()):raise RuntimeError('startup prefix rejected')
+print('STARTUP_PREFIX_VERIFIED')
+"""
+    result = subprocess.run([sys.executable, "-X", f"pycache_prefix={tmp_path / 'cache-prefix'}",
+                             "-c", program, str(source)], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "STARTUP_PREFIX_VERIFIED" in result.stdout
+
+
 def test_replaced_public_cache_path_helper_cannot_hide_executable_cache(tmp_path):
     import importlib.util
     import py_compile

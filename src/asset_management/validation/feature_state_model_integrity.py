@@ -30,6 +30,9 @@ def _capture_source_extension_suffixes() -> tuple[str, ...]:
 
 
 _SOURCE_EXTENSION_SUFFIXES = _capture_source_extension_suffixes()
+_SOURCE_SYS_IMPLEMENTATION = sys.implementation
+_SOURCE_SYS_FLAGS = sys.flags
+_SOURCE_CACHE_METADATA = (sys.implementation.cache_tag, sys.flags.optimize, sys.pycache_prefix)
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -164,6 +167,13 @@ class FeatureStateModelSourceRevisionVerifier:
     def _python_caches_match(source: Path, content: bytes) -> bool:
         """Validate executable CPython caches independently of timestamp headers."""
         try:
+            if sys.implementation is not _SOURCE_SYS_IMPLEMENTATION or sys.flags is not _SOURCE_SYS_FLAGS:
+                return False
+            metadata = (sys.implementation.cache_tag, sys.flags.optimize, sys.pycache_prefix)
+            if (type(metadata[0]) is not str or type(metadata[1]) is not int or
+                    (metadata[2] is not None and type(metadata[2]) is not str) or
+                    metadata != _SOURCE_CACHE_METADATA):
+                return False
             suffixes = _SOURCE_EXTENSION_SUFFIXES
             if (type(suffixes) is not tuple or not suffixes or
                     any(type(suffix) is not str or not suffix.startswith(".") or
