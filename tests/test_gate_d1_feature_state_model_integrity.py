@@ -40,6 +40,30 @@ def test_public_extension_suffix_list_mutation_cannot_disable_native_check(tmp_p
         suffixes[:] = saved
 
 
+def test_suffix_snapshot_uses_interpreter_data_when_public_list_was_already_cleared(tmp_path):
+    import sys
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 1\n")
+    source.with_name(source.stem + EXTENSION_SUFFIXES[0]).write_bytes(b"untrusted native candidate")
+    program = """
+import importlib.machinery, sys
+from pathlib import Path
+from _imp import extension_suffixes
+importlib.machinery.EXTENSION_SUFFIXES.clear()
+from asset_management.validation import feature_state_model_integrity as module
+source = Path(sys.argv[1])
+if module._SOURCE_EXTENSION_SUFFIXES != tuple(extension_suffixes()):
+    raise RuntimeError('snapshot did not capture interpreter data')
+if module.FeatureStateModelSourceRevisionVerifier._python_caches_match(source,source.read_bytes()):
+    raise RuntimeError('native shadow accepted')
+print('EARLY_SUFFIX_SNAPSHOT_VERIFIED')
+"""
+    result = subprocess.run([sys.executable, "-c", program, str(source)], capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "EARLY_SUFFIX_SNAPSHOT_VERIFIED" in result.stdout
+
+
 @pytest.mark.parametrize("invalid", ((), [], ("invalid",), (".pyd", ".pyd")))
 def test_invalid_private_extension_suffix_snapshot_fails_closed(tmp_path, monkeypatch, invalid):
     import asset_management.validation.feature_state_model_integrity as module
