@@ -26,6 +26,29 @@ from asset_management.data.immutable import digest
 ROOT = Path(__file__).parents[1]
 
 
+def test_public_extension_suffix_list_mutation_cannot_disable_native_check(tmp_path):
+    import importlib.machinery
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 1\n")
+    suffixes = importlib.machinery.EXTENSION_SUFFIXES
+    saved = list(suffixes)
+    source.with_name(source.stem + saved[0]).write_bytes(b"untrusted native candidate")
+    try:
+        suffixes.clear()
+        assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+    finally:
+        suffixes[:] = saved
+
+
+@pytest.mark.parametrize("invalid", ((), [], ("invalid",), (".pyd", ".pyd")))
+def test_invalid_private_extension_suffix_snapshot_fails_closed(tmp_path, monkeypatch, invalid):
+    import asset_management.validation.feature_state_model_integrity as module
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 1\n")
+    monkeypatch.setattr(module, "_SOURCE_EXTENSION_SUFFIXES", invalid, raising=False)
+    assert not FeatureStateModelSourceRevisionVerifier._python_caches_match(source, source.read_bytes())
+
+
 @pytest.mark.parametrize("suffix", EXTENSION_SUFFIXES)
 def test_ignored_native_extension_cannot_shadow_tracked_python(tmp_path, suffix):
     repository = tmp_path / "repository"

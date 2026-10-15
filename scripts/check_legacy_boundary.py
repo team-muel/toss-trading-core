@@ -14,7 +14,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY_PATH = Path("config/legacy_boundary_inventory.json")
-_DYNAMIC_IMPORT_MODULES = {"builtins", "importlib", "pkgutil", "runpy", "zipimport"}
+_DYNAMIC_IMPORT_MODULES = {"_imp", "builtins", "importlib", "pkgutil", "runpy", "zipimport"}
 _DYNAMIC_IMPORT_NAMES = {
     "__builtins__",
     "__import__",
@@ -78,7 +78,7 @@ def toss_trading_imports(path: Path, *, source_cache_verification: bool = False)
             if node.module == "toss_trading" or node.module.startswith("toss_trading."):
                 imports.add(node.module)
             cache_names = {"importlib.util": {"MAGIC_NUMBER", "cache_from_source"},
-                           "importlib.machinery": {"EXTENSION_SUFFIXES"}}
+                           "_imp": {"extension_suffixes"}}
             cache_utilities = (source_cache_verification and node.module in cache_names and
                                all(alias.name in cache_names[node.module] and alias.asname is None
                                    for alias in node.names))

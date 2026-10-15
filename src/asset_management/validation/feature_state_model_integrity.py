@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from hashlib import sha1
 import json
 from importlib.util import MAGIC_NUMBER, cache_from_source
-from importlib.machinery import EXTENSION_SUFFIXES
+from _imp import extension_suffixes
 import marshal
 import os
 from pathlib import Path
@@ -17,6 +17,10 @@ import sqlite3
 import subprocess
 from types import CodeType, MappingProxyType
 from typing import Mapping
+
+# Capture the interpreter's own suffix data before third-party/project imports.
+# importlib.machinery exposes a mutable public list, not an authority snapshot.
+_SOURCE_EXTENSION_SUFFIXES = tuple(extension_suffixes())
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -151,7 +155,13 @@ class FeatureStateModelSourceRevisionVerifier:
     def _python_caches_match(source: Path, content: bytes) -> bool:
         """Validate executable CPython caches independently of timestamp headers."""
         try:
-            for suffix in EXTENSION_SUFFIXES:
+            suffixes = _SOURCE_EXTENSION_SUFFIXES
+            if (type(suffixes) is not tuple or not suffixes or
+                    any(type(suffix) is not str or not suffix.startswith(".") or
+                        "/" in suffix or "\\" in suffix for suffix in suffixes) or
+                    len(set(suffixes)) != len(suffixes)):
+                return False
+            for suffix in suffixes:
                 candidate = source.with_name(source.stem + suffix)
                 if candidate.exists() or candidate.is_symlink():
                     return False

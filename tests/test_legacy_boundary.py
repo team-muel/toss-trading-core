@@ -86,7 +86,7 @@ def test_cache_verification_utilities_are_scoped_to_reviewed_source_boundary(tmp
     source = tmp_path / "src/asset_management" / path
     source.parent.mkdir(parents=True)
     source.write_text("from importlib.util import MAGIC_NUMBER, cache_from_source\n"
-                      "from importlib.machinery import EXTENSION_SUFFIXES\n"
+                      "from _imp import extension_suffixes\n"
                       "expected = compile(content, filename, 'exec', dont_inherit=True, optimize=0)\n",
                       encoding="utf-8")
     expected = [] if path.startswith("validation/") else [f"src/asset_management/{path}:dynamic-import"]
@@ -97,6 +97,10 @@ def test_cache_verification_utilities_are_scoped_to_reviewed_source_boundary(tmp
     "from importlib.util import spec_from_file_location\n",
     "from importlib.machinery import ExtensionFileLoader\n",
     "from importlib.machinery import EXTENSION_SUFFIXES as loader\n",
+    "from importlib.machinery import EXTENSION_SUFFIXES\n",
+    "import _imp\n",
+    "from _imp import create_dynamic\n",
+    "from _imp import extension_suffixes as loader\n",
     "from importlib.util import cache_from_source as loader\n",
     "import importlib.util\n",
     "compiler = compile\n",

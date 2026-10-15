@@ -162,3 +162,7 @@ at every nested code level. Normal code equality additionally preserves typed-co
 Same-basename files with the executing interpreter's native extension suffixes are unsupported
 Python-source shadows and are rejected, even when local Git excludes hide them. The source verifier
 only reads the suffix list; dynamic extension loaders remain forbidden by the legacy guard.
+Suffix data is captured directly from CPython's non-loading getter into a private immutable tuple
+before this module imports project/third-party code. Empty, non-tuple, duplicate, or malformed
+snapshot values fail closed. Clearing the public `importlib.machinery.EXTENSION_SUFFIXES` list
+cannot disable the scan, including when it was modified before this module's import.
