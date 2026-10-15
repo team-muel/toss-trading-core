@@ -20,7 +20,15 @@ from typing import Mapping
 
 # Capture the interpreter's own suffix data before third-party/project imports.
 # importlib.machinery exposes a mutable public list, not an authority snapshot.
-_SOURCE_EXTENSION_SUFFIXES = tuple(extension_suffixes())
+def _capture_source_extension_suffixes() -> tuple[str, ...]:
+    getter = extension_suffixes
+    if (type(getter) is not type([].append) or getter.__module__ != "_imp" or
+            getter.__name__ != "extension_suffixes"):
+        return ()
+    return tuple(getter())
+
+
+_SOURCE_EXTENSION_SUFFIXES = _capture_source_extension_suffixes()
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey

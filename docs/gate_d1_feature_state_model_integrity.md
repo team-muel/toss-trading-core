@@ -166,3 +166,6 @@ Suffix data is captured directly from CPython's non-loading getter into a privat
 before this module imports project/third-party code. Empty, non-tuple, duplicate, or malformed
 snapshot values fail closed. Clearing the public `importlib.machinery.EXTENSION_SUFFIXES` list
 cannot disable the scan, including when it was modified before this module's import.
+Bootstrap capture requires the getter's concrete CPython builtin function type and interpreter
+module/name. Capture never invokes a substituted Python callable, even if its names are spoofed;
+capture instead yields an invalid empty snapshot and source verification declines authority.

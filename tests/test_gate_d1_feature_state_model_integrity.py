@@ -64,6 +64,40 @@ print('EARLY_SUFFIX_SNAPSHOT_VERIFIED')
     assert "EARLY_SUFFIX_SNAPSHOT_VERIFIED" in result.stdout
 
 
+@pytest.mark.parametrize("spoof_names", (False, True))
+def test_replaced_suffix_getter_is_not_called_or_trusted_at_bootstrap(tmp_path, spoof_names):
+    import sys
+    source = tmp_path / "source.py"
+    source.write_bytes(b"value = 1\n")
+    source.with_name(source.stem + EXTENSION_SUFFIXES[0]).write_bytes(b"untrusted native candidate")
+    program = """
+import _imp, sys
+from pathlib import Path
+called = []
+def replacement():
+    called.append(sys._getframe(1).f_globals.get('__name__'))
+    return ('.bogus',)
+if sys.argv[2] == 'true':
+    replacement.__name__ = 'extension_suffixes'
+    replacement.__module__ = '_imp'
+_imp.extension_suffixes = replacement
+from asset_management.validation import feature_state_model_integrity as module
+source = Path(sys.argv[1])
+if module.__name__ in called:
+    raise RuntimeError('capture invoked untrusted getter')
+if module._SOURCE_EXTENSION_SUFFIXES != ():
+    raise RuntimeError('replaced getter produced authority snapshot')
+if module.FeatureStateModelSourceRevisionVerifier._python_caches_match(source,source.read_bytes()):
+    raise RuntimeError('native shadow accepted')
+print('REPLACED_GETTER_REJECTED')
+"""
+    result = subprocess.run([sys.executable, "-c", program, str(source),
+                             "true" if spoof_names else "false"], capture_output=True,
+                            text=True, timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert "REPLACED_GETTER_REJECTED" in result.stdout
+
+
 @pytest.mark.parametrize("invalid", ((), [], ("invalid",), (".pyd", ".pyd")))
 def test_invalid_private_extension_suffix_snapshot_fails_closed(tmp_path, monkeypatch, invalid):
     import asset_management.validation.feature_state_model_integrity as module
