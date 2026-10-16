@@ -37,6 +37,13 @@ converted to zero.  Expression-level `ts_decay_linear` remains a separate
 time-series operator and therefore runs before the cross-sectional position
 transform.
 
+Position decay computes normalized linear coefficients before multiplying base
+weights, avoiding an overflowing weighted numerator when the mean is finite.
+Any non-finite decayed result is rejected before publishing positions, including
+runs without attached return metrics. This numerical change can alter floating
+rounding at the last bits; bind new outputs to their new code revision. Keep
+historical immutable receipts intact and do not claim cross-revision hash identity.
+
 Every historical result records the canonical expression and hash, settings,
 effective time, source signal time, information cutoff, dataset manifest IDs,
 effective and signal-universe versions, point-in-time neutralization groups,

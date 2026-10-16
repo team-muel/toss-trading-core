@@ -151,9 +151,11 @@ def _decayed_weights(
         result[instrument_id] = (
             None
             if any(value is None for value in values)
-            else sum((index + 1) * float(value) for index, value in enumerate(values))
-            / denominator
+            else sum(((index + 1) / denominator) * float(value)
+                     for index, value in enumerate(values))
         )
+        if result[instrument_id] is not None and not isfinite(result[instrument_id]):
+            raise ValueError("decayed position weights must be finite")
     return result
 
 
