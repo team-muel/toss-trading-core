@@ -81,6 +81,31 @@ from existing rules cannot detect an omitted rule or path.
 
 ## CI rollout and evidence
 
+### Independent review evidence (AMA-172)
+
+CI success and an implementer's self-review do not establish independent semantic approval.
+Use a separate review context and record its reviewer identity, exact reviewed head SHA,
+scope, findings and disposition links on the PR and finite Linear issue. A review request,
+acknowledgement or running status is not a completed review; a completed review with findings
+is not a no-findings approval. Revalidate affected review evidence whenever the head changes.
+
+Follow the repository's AGENTS.md review order. Examine correctness, authority/fail-closed
+boundaries, PIT/lineage, replay/recovery, secrets and negative paths even when all tests pass.
+Fix material findings or explicitly document their disposition and supporting contract;
+do not merge unresolved correctness, security, data-integrity or governance findings.
+An unsupported scenario or external prerequisite must remain visible as a limitation,
+and a scope disposition must not be described as an independent no-findings review.
+
+For a review outage, inventory affected PRs from actual outage/review records, including
+records before the tracking issue was created. Prioritize open PRs, then merged material
+changes. Record exact-head independent evidence or a justified exemption for each candidate.
+Missing bot comments alone do not prove that no separate review occurred; check linked
+review provenance. Keep self-review and any historically authorized fallback identified as
+such. Review merged changes at their merged source head; link defects to targeted remediation
+without rewriting history or inferring current operational acceptance from historical CI.
+
+### CI evidence
+
 The existing `test` matrix runs registry validation and pytest regressions for
 push, pull_request and merge_group (and the existing schedule). Required names,
 action pins, permissions, wheel smoke and trading safety checks remain intact.
