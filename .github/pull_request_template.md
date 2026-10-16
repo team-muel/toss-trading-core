@@ -15,6 +15,7 @@
 - Tests/commands and results; distinguish local from GitHub CI:
 - Negative-path, migration/replay or wheel evidence applicable to this change:
 - Review/findings disposition at the current head SHA:
+- Independent review context/reviewer, exact reviewed SHA and completed-result link:
 - Remaining limitations or external/runtime acceptance:
 
 ## Safety and rollback
