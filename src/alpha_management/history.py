@@ -163,6 +163,7 @@ def simulate_history(
     settings: AlphaSimulationSettings,
     *,
     forward_returns: Mapping[str, Mapping[datetime, float | None]] | None = None,
+    evaluated_scores: Sequence[Mapping[str, float | None]] | None = None,
 ) -> HistorySimulationResult:
     """Evaluate delay and decay over explicitly ordered trading sessions.
 
@@ -177,6 +178,21 @@ def simulate_history(
     if effective_times != sorted(effective_times) or len(set(effective_times)) != len(effective_times):
         raise ValueError("sessions must be strictly increasing by effective time")
 
+    if evaluated_scores is not None:
+        if len(evaluated_scores) != len(sessions):
+            raise ValueError("evaluated score timeline must match sessions")
+        frozen_scores = []
+        for session, scores in zip(sessions, evaluated_scores):
+            if not isinstance(scores, Mapping) or set(scores) != set(session.instrument_ids):
+                raise ValueError("evaluated scores must cover the session instrument axis")
+            normalized = {}
+            for instrument_id, value in scores.items():
+                if value is not None and (type(value) not in (int, float) or not isfinite(value)):
+                    raise ValueError("evaluated scores must be finite numeric values or unavailable")
+                normalized[instrument_id] = None if value is None else float(value)
+            frozen_scores.append(normalized)
+        evaluated_scores = tuple(frozen_scores)
+
     points: list[HistoryPoint] = []
     base_history: list[dict[str, float | None]] = []
     for index, effective_session in enumerate(sessions):
@@ -188,7 +204,8 @@ def simulate_history(
             source = None
         else:
             source = sessions[source_index]
-            raw = _last_cross_section(expression, source, source.instrument_ids)
+            raw = (_last_cross_section(expression, source, source.instrument_ids)
+                   if evaluated_scores is None else dict(evaluated_scores[source_index]))
             available_raw = {
                 instrument_id: float(value)
                 for instrument_id, value in raw.items()
