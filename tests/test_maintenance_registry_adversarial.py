@@ -63,6 +63,19 @@ class MaintenanceAdversarialTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(expected <= set(check.classify(REGISTRY, [path])["umbrellas"]))
 
+    def test_d1_runtime_evidence_requires_source_and_authority_review(self):
+        for path in (
+            "src/asset_management/validation/canonical_d1_runtime_evidence.py",
+            "src/asset_management/cli/canonical_d1_runtime_evidence.py",
+        ):
+            with self.subTest(path=path):
+                result = check.classify(REGISTRY, [path])
+                self.assertEqual(result["unmapped"], [])
+                required = {"AMA-136", "AMA-138", "AMA-139", "AMA-143", "AMA-145", "AMA-146"}
+                if "/cli/" in path:
+                    required.add("AMA-144")
+                self.assertTrue(required <= set(result["umbrellas"]))
+
     def test_rule_order_and_surface_order_do_not_change_results(self):
         shuffled = copy.deepcopy(REGISTRY)
         shuffled["surfaces"].reverse()

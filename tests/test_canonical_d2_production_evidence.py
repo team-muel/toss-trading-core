@@ -40,7 +40,8 @@ ROOT = Path(__file__).parents[1]
 D = Decimal
 
 
-def _attestor(monkeypatch, conn, bound_at):
+def _attestor(monkeypatch, conn, bound_at, *, published_at=None):
+    published_at = bound_at if published_at is None else published_at
     authority_id = "test-registry-governance"
     authority_key = Ed25519PrivateKey.generate()
     authority_der = authority_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
@@ -58,7 +59,7 @@ def _attestor(monkeypatch, conn, bound_at):
     snapshot_id = digest(canonical(payload))
     authorization = attestation_module.registry_authorization_payload(
         authority_id=authority_id, snapshot_id=snapshot_id, registry_hash=snapshot_id,
-        published_at=bound_at)
+        published_at=published_at)
     authority_signature_bytes = authority_key.sign(canonical(authorization))
     authority_signature = b64encode(authority_signature_bytes).decode()
     authorization_hash = digest(canonical({"payload": authorization,
@@ -69,16 +70,16 @@ def _attestor(monkeypatch, conn, bound_at):
             authorization_payload_sha256=digest(canonical(authorization)),
             signature_sha256=sha256(authority_signature_bytes).hexdigest(),
             verification_evidence_sha256=digest(canonical({"test": "verification-evidence"})),
-            published_at_utc=bound_at.isoformat(), attestor_id="test-attestor",
+            published_at_utc=published_at.isoformat(), attestor_id="test-attestor",
             attestor_public_key_base64=payload["attestors"][0]["public_key_base64"],
             attestor_effective_from_utc="2020-01-01T00:00:00+00:00",
             attestor_effective_to_utc=None)),
     ))
-    snapshot_hash = digest(canonical({"registry": payload, "published_at": bound_at.isoformat(),
+    snapshot_hash = digest(canonical({"registry": payload, "published_at": published_at.isoformat(),
                                       "registry_authorization_hash": authorization_hash}))
     conn.execute("INSERT INTO am_evidence_attestor_registry_snapshot VALUES (?, ?, ?, ?, ?, ?, ?)",
                  (snapshot_id, json.dumps(payload, sort_keys=True, separators=(",", ":")), snapshot_hash,
-                  bound_at.isoformat(), authority_id,
+                  published_at.isoformat(), authority_id,
                   json.dumps(authorization, sort_keys=True, separators=(",", ":")), authority_signature))
     runtime = conn.execute(
         "SELECT as_of_utc, information_cutoff_utc, code_revision, created_at_utc "
@@ -403,6 +404,22 @@ def test_self_signed_attestor_registry_is_not_a_trust_root():
     with pytest.raises(DataQualityError, match="CANONICAL_D2_ATTESTOR_REGISTRY_AUTHORITY_UNTRUSTED"):
         attestation_module.require_runtime_attestor_registry(
             conn=conn, runtime_run_id="forged-run", cutoff=now)
+
+
+def test_attestor_registry_bound_after_runtime_cutoff_is_rejected(monkeypatch):
+    now = datetime(2026, 9, 12, 12, tzinfo=timezone.utc)
+    cutoff = now - timedelta(minutes=10)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", now.isoformat(), cutoff.isoformat(), "git:canonical",
+                  (now - timedelta(minutes=20)).isoformat()))
+    _attestor(monkeypatch, conn, now - timedelta(minutes=5),
+              published_at=now - timedelta(minutes=15))
+
+    with pytest.raises(InvariantViolation, match="CANONICAL_D2_ATTESTOR_REGISTRY_INVALID"):
+        attestation_module.require_runtime_attestor_registry(
+            conn=conn, runtime_run_id="canonical-run@1", cutoff=cutoff)
 
 
 def test_registered_kms_public_material_is_bound_to_owner_signed_authorization_evidence():

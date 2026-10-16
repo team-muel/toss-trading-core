@@ -14,7 +14,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY_PATH = Path("config/legacy_boundary_inventory.json")
-_DYNAMIC_IMPORT_MODULES = {"builtins", "importlib", "pkgutil", "runpy", "zipimport"}
+_DYNAMIC_IMPORT_MODULES = {"_imp", "builtins", "importlib", "pkgutil", "runpy", "zipimport"}
 _DYNAMIC_IMPORT_NAMES = {
     "__builtins__",
     "__import__",
@@ -48,8 +48,9 @@ def relative_paths(root: Path, pattern: str) -> set[str]:
     }
 
 
-def toss_trading_imports(path: Path) -> tuple[set[str], bool]:
+def toss_trading_imports(path: Path, *, source_cache_verification: bool = False) -> tuple[set[str], bool]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
     imports: set[str] = set()
     dynamic_import = False
     for node in ast.walk(tree):
@@ -67,8 +68,8 @@ def toss_trading_imports(path: Path) -> tuple[set[str], bool]:
                 for alias in node.names
             ):
                 dynamic_import = True
-            # The sole canonical `sys` use is `sys.prefix`, used to find a
-            # packaged provider-contract file.  A local alias could otherwise
+            # Canonical `sys` metadata is restricted to prefix and the reviewed
+            # source verifier's cache metadata. A local alias could otherwise
             # hide `sys.modules` or import machinery from this structural
             # check, so it is not a reviewed form.
             if any(alias.name == "sys" and alias.asname for alias in node.names):
@@ -76,19 +77,32 @@ def toss_trading_imports(path: Path) -> tuple[set[str], bool]:
         elif isinstance(node, ast.ImportFrom) and node.module:
             if node.module == "toss_trading" or node.module.startswith("toss_trading."):
                 imports.add(node.module)
-            if node.module.split(".", 1)[0] in _DYNAMIC_IMPORT_MODULES:
+            cache_names = {"importlib.util": {"MAGIC_NUMBER"},
+                           "_imp": {"extension_suffixes"}}
+            cache_utilities = (source_cache_verification and node.module in cache_names and
+                               all(alias.name in cache_names[node.module] and alias.asname is None
+                                   for alias in node.names))
+            if node.module.split(".", 1)[0] in _DYNAMIC_IMPORT_MODULES and not cache_utilities:
                 dynamic_import = True
             if node.module == "sys":
                 dynamic_import = True
         elif isinstance(node, ast.Name) and node.id in _DYNAMIC_IMPORT_NAMES:
-            dynamic_import = True
+            parent = parents.get(node)
+            # The reviewed source boundary compiles verified bytes solely for
+            # code-object comparison. Import/exec machinery and compiler aliases
+            # remain forbidden, including in this module.
+            comparison_compile = (source_cache_verification and node.id == "compile" and
+                                  isinstance(parent, ast.Call) and parent.func is node)
+            if not comparison_compile:
+                dynamic_import = True
         elif isinstance(node, ast.Attribute) and node.attr in _DYNAMIC_IMPORT_ATTRIBUTES:
             dynamic_import = True
         elif (
             isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name)
             and node.value.id == "sys"
-            and node.attr != "prefix"
+            and node.attr not in ({"prefix", "implementation", "flags", "pycache_prefix"}
+                                  if source_cache_verification else {"prefix"})
         ):
             dynamic_import = True
         elif (
@@ -131,7 +145,9 @@ def boundary_import_violations(
     violations: list[str] = []
     for path in sorted((root / "src/asset_management").glob("**/*.py")):
         relative = path.relative_to(root).as_posix()
-        imports, dynamic_import = toss_trading_imports(path)
+        imports, dynamic_import = toss_trading_imports(
+            path, source_cache_verification=(relative ==
+                "src/asset_management/validation/feature_state_model_integrity.py"))
         allowed_targets = allowlist.get(relative, set())
         for target in sorted(imports - allowed_targets):
             violations.append(f"{relative}:{target}")
