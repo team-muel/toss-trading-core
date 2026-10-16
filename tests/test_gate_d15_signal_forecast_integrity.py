@@ -258,6 +258,30 @@ def test_real_non_head_commit_cannot_permit_m4(tmp_path):
     assert not result.permits_m4_execution
 
 
+@pytest.mark.parametrize("revision", ("beea069", "pytest:historical-source"))
+def test_unverified_failure_report_remains_schema_valid(revision):
+    from jsonschema import Draft202012Validator
+
+    inputs = SignalForecastIntegrityGateInput(
+        datetime(2026, 9, 6, tzinfo=timezone.utc), revision, revision,
+        {name: CheckEvidence(True, ("pytest:historical-check",))
+         for name in REQUIRED_SIGNAL_FORECAST_CHECKS},
+    )
+    result = evaluate_signal_forecast_integrity_gate(inputs)
+    assert result.decision is AcceptanceDecision.FAIL
+    assert not result.permits_m4_execution
+    report = json.loads(json.dumps(asdict(result)))
+    schema = json.loads((ROOT / "schemas/signal_forecast_integrity_acceptance.schema.json").read_text())
+    validator = Draft202012Validator(schema)
+    validator.validate(report)
+    assert report["code_revision"] == revision
+    assert report["evidence_artifact_ids"] == ["pytest:historical-check"]
+    # Retaining rejected inputs in FAIL cannot make them valid PASS evidence.
+    report["decision"] = "PASS"
+    report["reason_codes"] = []
+    assert list(validator.iter_errors(report))
+
+
 def test_historical_record_is_not_current_acceptance_authority(tmp_path):
     recorded = json.loads((ROOT / "docs/evidence/gate_d15_signal_forecast_integrity_2026-09-06.json").read_text())
     schema = json.loads((ROOT / "schemas/signal_forecast_integrity_acceptance.schema.json").read_text())

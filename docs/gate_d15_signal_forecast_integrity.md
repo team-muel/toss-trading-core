@@ -23,7 +23,14 @@ ImmutableDatasetStore에서 exact bytes, content address, check name, evidence s
 다시 대조한다. 또한 read-only Git source verifier가 trusted checkout의 current `HEAD`가 exact
 commit과 그 tree object를 실제로 resolve해야 하며, catalog record의 tree identity도 일치해야 한다.
 과거 commit은 동일 repository에 남아 있어도 current acceptance authority가 아니다. 단순히 SHA
-모양의 문자열을 제공하거나 store에 self-attested marker를 쓰는 것으로는 PASS가 될 수 없다.
+모양의 문자열이나 store의 self-attested marker는 실제 semantic/OOS 승인 근거가 아니다.
+현재 Draft 구현에는 marker-only PASS, caller-selected source authority, dirty checkout 관련
+P1 지적이 미해결로 남아 있다. 이 문서의 목표 계약이나 기존 positive test를 현재 canonical
+acceptance 보장으로 취급하지 않는다. PR #106은 Draft와 Merge Queue 미진입을 유지한다.
+
+FAIL 보고서는 거부한 short revision과 `pytest:` artifact 문자열을 진단 metadata로 보존할
+수 있다. 결과 schema는 이 FAIL envelope의 저장·재생을 허용하고, `PASS`에만 exact Git 및
+content-address 형식을 강제한다. FAIL metadata의 보존은 해당 입력의 증거 승인이 아니다.
 `docs/evidence/gate_d15_signal_forecast_integrity_2026-09-06.json`은 이 stronger contract보다
 앞선 historical record이며, 현재 M4 promotion authority가 아니다. 이 gate는 주문을 생성하거나
 `live_trading_enabled=false` 설정을 변경하지 않는다.
