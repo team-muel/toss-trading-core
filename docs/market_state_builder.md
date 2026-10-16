@@ -168,9 +168,12 @@ The builder cannot:
 - issue a RiskGovernor approval;
 - create an order or broker-write authority.
 
-The existing temporary regime helper is outside this builder and is scheduled for removal
-from generic State in AMA-177. State-side operational/risk-multiplier responsibilities are
-reviewed separately in AMA-179.
+AMA-177 removes generic regime derivation from State construction. New canonical State
+snapshots no longer derive EXPANSION/CONTRACTION/TRANSITION, and AMA-180 removes the
+legacy `regime_label` field entirely from State v3. The State-side `risk_multiplier`
+remains only an operational/quality scalar with no external authority-bearing consumer;
+regime uncertainty enters risk policy only through the typed AMA-179 adapter and the
+existing RiskGovernor.
 
 ## Completion meaning
 

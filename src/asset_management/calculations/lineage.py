@@ -199,7 +199,10 @@ class CalculationLineageGraph:
         return tuple(ordered)
 
     def verify_raw_manifests(self, store: ImmutableDatasetStore) -> None:
-        for node in self.trace():
+        # Publication contains the complete node catalog, including cached nodes
+        # outside the final estimate's trace. Verify every included raw source.
+        for node_id in sorted(self.nodes):
+            node = self.nodes[node_id]
             if node.node_type is not CalculationNodeType.RAW_DATA:
                 continue
             try:
@@ -207,7 +210,7 @@ class CalculationLineageGraph:
             except (FileNotFoundError, ValueError) as exc:
                 raise DataQualityError("CALCULATION_RAW_MANIFEST_UNVERIFIED") from exc
             if (manifest.layer != "bronze" or manifest.content_sha256 != node.output_hash or
-                    _jsonable(body) != node.output_value):
+                    _jsonable(body) != _jsonable(node.output_value)):
                 raise DataQualityError("CALCULATION_RAW_MANIFEST_CONFLICT")
 
     def payload(self) -> dict[str, object]:

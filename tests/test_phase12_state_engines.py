@@ -94,10 +94,10 @@ def components(names, *, state_type=StateType.MARKET, confidence="0.9",
     return result
 
 
-def build(engine, values, *, derive_regime=False, code_revision="git:abcdef0"):
+def build(engine, values, *, code_revision="git:abcdef0"):
     return engine.build(
         as_of=NOW, information_cutoff=CUTOFF, components=values, policy=POLICY,
-        code_revision=code_revision, derive_regime=derive_regime,
+        code_revision=code_revision,
     )
 
 
@@ -116,22 +116,24 @@ def test_four_state_engines_are_separate_and_preserve_all_components():
     assert len(ids) == 4
 
 
-def test_market_state_stays_continuous_and_regime_requires_declared_centered_semantics():
+def test_market_state_stays_continuous_without_generic_regime_inference():
     values = {"growth": Decimal("0.4"), "inflation": Decimal("-0.2"),
               "credit": Decimal("0.6"), "trend": Decimal("0.8"),
               "volatility": Decimal("-0.1")}
     raw_components = components(MARKET_COMPONENTS, values=values)
-    state = build(MarketStateEngine(), raw_components)
-    assert state.regime_label is None
-    assert state.components["growth"].value == Decimal("0.4")
-    with pytest.raises(DataQualityError, match="REGIME_NORMALIZATION_REQUIRED"):
-        build(MarketStateEngine(), raw_components, derive_regime=True)
+    engine = MarketStateEngine()
+    state = build(engine, raw_components)
 
-    standardized = components(
-        MARKET_COMPONENTS, values=values, normalization=StateNormalization.Z_SCORE)
-    labelled = build(MarketStateEngine(), standardized, derive_regime=True)
-    assert labelled.regime_label == "EXPANSION"
-    assert len(labelled.components) == 9
+    assert "regime_label" not in state.payload()
+    assert state.components["growth"].value == Decimal("0.4")
+    assert len(state.components) == 9
+    assert not hasattr(engine, "_derive_regime")
+
+
+def test_legacy_regime_label_is_absent_from_canonical_state_snapshot():
+    state = build(MarketStateEngine(), components(MARKET_COMPONENTS))
+    assert "regime_label" not in state.payload()
+    assert not hasattr(state, "regime_label")
 
 
 def test_feature_snapshot_and_manifest_stay_atomically_bound_to_component():
@@ -245,7 +247,7 @@ def test_stale_or_invalid_component_blocks_new_trades():
 def test_common_fields_preserve_pit_and_feature_lineage():
     state = build(CompanyStateEngine(), components(
         COMPANY_COMPONENTS, state_type=StateType.COMPANY))
-    assert state.schema_version == "state-snapshot-v2"
+    assert state.schema_version == "state-snapshot-v3"
     assert state.as_of == NOW.isoformat()
     assert state.information_cutoff == CUTOFF.isoformat()
     assert state.confidence == "0.9" and state.quality_status is QualityStatus.VALID
@@ -271,7 +273,7 @@ def test_state_snapshot_is_deterministic_and_semantic_metadata_changes_identity(
     assert repository.publish(first) == repository.publish(second) == first.state_id
     path = tmp_path / "catalog" / "state-snapshots" / f"{first.state_id}.json"
     payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "state-snapshot-v2"
+    assert payload["schema_version"] == "state-snapshot-v3"
     assert payload["information_cutoff"] == CUTOFF.isoformat()
     assert payload["components"]["growth"]["normalization"] == "RAW"
     assert payload["input_data_manifest_ids"] == list(first.input_data_manifest_ids)
@@ -337,14 +339,11 @@ def test_component_id_and_normalization_contracts_fail_closed():
         build(SystemStateEngine(), system)
 
 
-def test_incomplete_components_and_regime_misuse_fail_closed():
+def test_incomplete_components_and_categorical_market_values_fail_closed():
     with pytest.raises(DataQualityError, match="STATE_COMPONENTS_INCOMPLETE"):
         MarketStateEngine().build(
             as_of=NOW, information_cutoff=CUTOFF, components={}, policy=POLICY,
             code_revision="git:abcdef0")
-    with pytest.raises(DataQualityError, match="REGIME_ONLY_AVAILABLE_FOR_MARKET_STATE"):
-        build(CompanyStateEngine(), components(
-            COMPANY_COMPONENTS, state_type=StateType.COMPANY), derive_regime=True)
     invalid = components(MARKET_COMPONENTS, values={"growth": "RISK_ON"})
     with pytest.raises(DataQualityError, match="CONTINUOUS_STATE_VALUE_INVALID"):
         build(MarketStateEngine(), invalid)

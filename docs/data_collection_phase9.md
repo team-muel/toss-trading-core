@@ -135,3 +135,132 @@ UNKNOWN 입력은 `ESTIMATE_HISTORY_UNKNOWN`으로 차단한다.
 테스트는 `tests/test_phase9_data_collection.py`에 있으며 각 데이터군의 happy path와
 누락, 시간 역행, unknown history, schema/source conflict, API 오류, 잘못된 수집 순서,
 계좌 DB 의존 금지와 가격 context 계보를 포함한다.
+
+
+## Captured Tiingo response Bronze ingress (AMA-30)
+
+`asset_management.data.tiingo_ingress.admit_captured_tiingo_response` consumes an
+existing content-addressed `unadmitted-http-responses` record in the same store.
+It requires classified credentials, a Tiingo daily-price GET request, RESEARCH
+mode, HTTP 200, a nonempty JSON object array, matching decoded body SHA-256,
+aware receipt time and actual HTTP Date no later than receipt. The caller supplies
+the applicable structured license and exact Git revision. Missing or conflicting
+evidence fails before Bronze publication; time is never clamped or backdated.
+Credentials echoed inside encoded JSON are rejected before publishing.
+
+The request catalog preserves the captured request after credential redaction.
+Bronze retains decoded rows and the source response catalog ID. Identical inputs
+deduplicate. This helper does not fetch data or assert permissions, market close,
+adjustment semantics, historical availability, session coverage, action PIT,
+reference authority, Silver/Gold acceptance or OOS maturity. HTTP Date is transport
+metadata only. Price publication still requires Phase9 normalization and context.
+
+## Official calendar publication Bronze ingress (AMA-30)
+
+`calendar_ingress.admit_calendar_publication` admits a captured HTTPS response
+from an explicit NYSE/Nasdaq/ICE host to `calendar-publication` Bronze only.
+Credential classification is mandatory, including for public binary documents.
+Request URL, final URL, HTTP200, decoded body hash, PDF/HTML envelope and aware
+transport timestamps are checked. The caller must supply the applicable
+structured license and Git revision; this helper grants no source rights.
+Known credential byte echoes and recognizable token patterns are rejected.
+It is not a PDF content sanitizer or a review of embedded document rights.
+
+Later reads and receipt audits follow the captured response dependency and
+revalidate request/body/timestamp equality. Source loss fails closed. Availability
+remains actual receipt time. HTTP Date is transport metadata, not publication
+time. The helper derives no sessions, weekday lists, exceptional-closure coverage,
+market close, historical availability, Silver/Gold acceptance or OOS maturity.
+
+## AMA-30: ALFRED USD Treasury observation inputs (2026-10-11)
+
+The approved FRED series registry and canonical ALFRED observation ingress now
+include DGS1MO, DGS3MO, DGS6MO and DGS1. Their official series pages identify
+Federal Reserve H.15 investment-basis yields in percent, daily frequency and
+public-domain attribution requirements:
+[DGS1MO](https://fred.stlouisfed.org/series/DGS1MO),
+[DGS3MO](https://fred.stlouisfed.org/series/DGS3MO),
+[DGS6MO](https://fred.stlouisfed.org/series/DGS6MO),
+[DGS1](https://fred.stlouisfed.org/series/DGS1).
+
+These are observation inputs for the existing four-tenor USD curve contract.
+The registry expansion also adds them to the research FRED collector's default
+approved-series acquisition; it does not change credential or service-term gates.
+Canonical ingress keeps provider percent strings, missing-value tombstones,
+date-only vintage bounds, raw lineage and actual retrieval availability.
+The macro-state model still requires its original five series. DTB3 remains a
+separate discount-basis cash-hurdle source; it is not a substitute for DGS3MO.
+No complete curve, intraday publication time, return conversion, runtime evidence
+or OOS acceptance is produced by this observation-ingress change.
+
+## AMA-30: canonical Treasury quote snapshot
+
+`data.treasury_snapshot.persist_treasury_quote_snapshot` derives a RESEARCH Gold
+quote snapshot from exactly four canonical ALFRED Silver parents. Shared ALFRED
+replay checks the raw schema, request series/output type/units and normalized
+rows. Reads of the snapshot repeat the reconstruction, including source parents,
+request identity, metadata and convention fields. Lost or altered lineage blocks
+the snapshot; no manually assembled Bronze curve is created.
+
+The caller supplies an explicit observation date, vintage date and AsOfContext.
+The date-only research selection rule uses America/Chicago with a one-day lag
+and a seven-calendar-day observation age limit. It is a conservative selection
+rule, not proof of economic publication time. No latest-date fallback fills a
+missing observation or expired vintage. Missing-value tombstones remain MISSING.
+Treasury parents must use default/daily frequency without aggregation options;
+weekly/monthly aggregates cannot authorize daily quotes. Macro-state continues
+to use its existing monthly-series contracts.
+Snapshot vintages must also lie within explicitly captured realtime_start/end
+and any finite vintage_dates constraint. The vintage day must have ended before
+the raw receipt's America/Chicago local date. Querying an open/future end or
+normalizing the final revision to9999-12-31 cannot establish uncaptured revisions.
+Gold VALID describes verified storage, not a valid investment return.
+
+Quotes retain percent units, calendar-month tenors, bond-equivalent simple annual
+basis, semiannual coupons and actual365/366 source day count. Official publication
+time remains UNKNOWN. The existing macro-state required inputs and behavior are
+preserved through the shared replay helper.
+[Treasury FAQ](https://home.treasury.gov/policy-issues/financing-the-government/interest-rate-statistics/interest-rates-frequently-asked-questions)
+distinguishes these par yields from effective annual yields and zero-coupon rates.
+This snapshot performs no return conversion, maturity-to-business-day conversion
+or pricing/runtime activation. A separate governed methodology is still required.
+
+## AMA-30: captured ALFRED response lineage
+
+`ingest_captured_alfred_response` consumes a preserved `unadmitted-http-responses`
+catalog identity for the exact official observations API, GET, RESEARCH, HTTP200.
+It verifies decoded-byte SHA256, JSON request/response output type and linear units,
+classified credentials, and aware HTTP Date/actual receipt timestamps. Duplicate
+JSON keys, sensitive response fields, conflicting identity or missing metadata
+are rejected before admission. An incomplete page remains raw and cannot create
+Silver. No request receipt or historical availability is synthesized.
+Request/response realtime and observation ranges, pagination, file type, units,
+output type and sort order must agree, including the documented observation/page
+defaults. Real-time request bounds must be explicit. Optional transformations or
+vintage-date parameters require an identical response echo; absent echoes fail
+closed. Unknown query parameters are unsupported. Query rules follow the
+[official observations API contract](https://fred.stlouisfed.org/docs/api/fred/series_observations.html).
+
+The existing ProviderDatasetAdapter emits version `alfred-captured-vintages-v1`,
+whose Bronze binds the original response receipt and whose Silver preserves the
+existing row semantics and mapping. Every Bronze/Silver read revalidates captured
+bytes, the request and transport times; Silver also recomputes normalized rows.
+Missing or corrupted source receipts block descendants and receipt audits.
+Macro-state and Treasury snapshots consume this version through their existing
+shared replay helper. Their required inputs, date-selection policies, tombstones
+and authority boundaries remain unchanged.
+Captured consumers must supply the selected vintage date. Macro-state uses its
+existing lag policy to select that date; shared replay checks explicit query and
+response coverage and requires the vintage day to have closed before receipt.
+An open final row interval cannot authorize dates beyond the captured envelope.
+Output-type3 vintage columns must lie within that envelope; output-type1 intervals
+must intersect it, and observations must lie within its observation range. Raw
+intervals are preserved, never silently extended or relabeled as new revisions.
+
+The older `alfred-vintages-v1` decoded-batch contract remains readable under its
+original semantics; it does not carry this transport dependency and is not
+retroactively relabeled as captured evidence. New real-response admission uses
+the captured contract. Both versions remain research inputs: HTTP Date is
+transport metadata, not an economic publication instant. There is no pricing,
+runtime, maturity/OOS, source-rights or live promotion. Reverting this ingress and
+read dispatch stops new captured admission; preserve all immutable source data.

@@ -105,8 +105,10 @@ sudo systemctl status toss-research-automation@daily.service --no-pager
 [`docs/30_multi_direction_quant_research.md`](docs/30_multi_direction_quant_research.md)에 정리되어 있습니다.
 Fast Expression DSL과 거래 세션 기준 delay/decay 의미론은
 [`docs/32_fast_expression_history.md`](docs/32_fast_expression_history.md)에 정리되어 있습니다.
-ALFRED 빈티지 기반 거시경제 레짐 연구와 미래정보 방지 규칙은
-[`docs/31_alfred_point_in_time_macro_regime.md`](docs/31_alfred_point_in_time_macro_regime.md)에 정리되어 있습니다.
+ALFRED 빈티지 기반의 과거 거시경제 레짐 백테스트와 미래정보 방지 규칙은
+[`docs/31_alfred_point_in_time_macro_regime.md`](docs/31_alfred_point_in_time_macro_regime.md)에 보존되어 있습니다.
+AMA-180 이후 이 직접 risk-on/defensive 배분 경로는 historical replay 전용이며,
+현재 canonical macro-state 및 후속 레짐 연구는 `asset_management` evidence 경계를 사용합니다.
 
 광범위 주식 연구는 ETF baseline과 분리합니다. 미국 보통주 약 2,500개를 고정된
 유동성·momentum·저변동성·trend 규칙으로 평가해 집중연구 후보를 만들고, 시장

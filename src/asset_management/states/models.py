@@ -15,7 +15,7 @@ from asset_management.features.models import FeatureSnapshot
 from asset_management.quality.models import BLOCKING_QUALITY, QualityStatus
 
 
-STATE_SNAPSHOT_SCHEMA_VERSION = "state-snapshot-v2"
+STATE_SNAPSHOT_SCHEMA_VERSION = "state-snapshot-v3"
 _HASH = re.compile(r"[0-9a-f]{64}")
 _COMPONENT_ID = re.compile(r"[a-z][a-z0-9_.-]*")
 _SEMANTIC = re.compile(r"[A-Z][A-Z0-9_]*")
@@ -260,7 +260,6 @@ class StateSnapshot:
     code_revision: str
     operational_state: OperationalState
     risk_multiplier: str
-    regime_label: str | None = None
     schema_version: str = STATE_SNAPSHOT_SCHEMA_VERSION
 
     def payload(self) -> dict[str, object]:
@@ -285,13 +284,12 @@ class StateSnapshot:
             "code_revision": self.code_revision,
             "operational_state": self.operational_state.value,
             "risk_multiplier": self.risk_multiplier,
-            "regime_label": self.regime_label,
         }
 
 
 def state_identity(*, state_type: StateType, as_of: datetime, information_cutoff: datetime,
                    components: Mapping[str, StateComponent], policy: StatePolicy,
-                   code_revision: str, regime_label: str | None) -> str:
+                   code_revision: str) -> str:
     body = {
         "schema_version": STATE_SNAPSHOT_SCHEMA_VERSION,
         "state_type": state_type.value,
@@ -303,7 +301,6 @@ def state_identity(*, state_type: StateType, as_of: datetime, information_cutoff
                    "caution_risk_multiplier": str(policy.caution_risk_multiplier),
                    "reduced_risk_multiplier": str(policy.reduced_risk_multiplier)},
         "code_revision": code_revision,
-        "regime_label": regime_label,
     }
     return digest(canonical(body))
 

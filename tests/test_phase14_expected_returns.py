@@ -1,5 +1,6 @@
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from dataclasses import replace
 import pytest
 from asset_management.domain.errors import DataQualityError
 from asset_management.domain.horizon import DecayProfile, SignalValidity
@@ -58,6 +59,18 @@ def test_uncertainty_is_conservative_without_correlation_matrix():
 def required(rate=D(".02")):
     beta=BetaEstimate(D(0),D(0),D(".001"),252,252,D(1),NOW,QualityStatus.VALID,D(1))
     return capm_required_return(instrument_id="X",risk_free_rate=rate,beta=beta,market_risk_premium=D(".05"),horizon=252,as_of=NOW,validity=VALIDITY,model_registry_evidence=CAPM_EVIDENCE,runtime_authorization=CAPM_AUTH)
+
+
+@pytest.mark.parametrize("horizon", [252.0, D(252), "252", True, None])
+def test_typed_model_outputs_reject_value_equal_non_integer_horizons(horizon):
+    component = next(iter(components(AssetClass.CASH).values()))
+    estimate = expected_return(instrument_id="X", asset_class=AssetClass.CASH,
+        components=components(AssetClass.CASH), horizon=252, as_of=NOW)
+    pricing = required()
+    alpha = calculate_alpha(estimate, pricing, as_of=NOW)
+    for output in (component, estimate, pricing, alpha):
+        with pytest.raises(ValueError):
+            replace(output, horizon=horizon)
 
 def test_alpha_keeps_inputs_separate():
     exp=expected_return(instrument_id="X",asset_class=AssetClass.CASH,components=components(AssetClass.CASH),horizon=252,as_of=NOW)
