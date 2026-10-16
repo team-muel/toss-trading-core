@@ -46,15 +46,21 @@ VM, or changing a resource:
 the available authority. It does not mean the operational acceptance passed,
 the resource never existed, or deletion was correctly performed.
 
-## Current authoritative acceptance
+## Acceptance restatement — approval evidence pending
 
-The current Linear descriptions for AMA-168 and AMA-169 authoritatively
-supersede the former requirement to prove a normal operational VM or GCP
-retirement. The former environment is classified as a failed historical
-environment that was abandoned and is no longer authoritative; this record does
-not claim that a formal retirement procedure occurred.
+Linear owns scope. The AMA-168 and AMA-169 descriptions observed on 2026-10-16
+describe canonical exclusivity after historical-environment abandonment. This
+document has no independently approved, version-bound Linear supersession event
+or durable acceptance artifact. The restatement below is therefore pending
+approval evidence, not authority to waive the merged PR #104 readiness contract.
+Before applying a supersession, bind the exact Linear issue revision/content
+hash, approving authority, explicit decision, decision time and durable approval
+reference to the reviewed repository revision. Until then, retain the existing
+readiness safeguards and blocked acceptance; an editable description or author
+assertion cannot replace that evidence. Historical abandonment remains an
+owner-provided disposition, not proof of a formal retirement procedure.
 
-The active acceptance requires all of the following:
+The pending restatement lists all of the following:
 
 1. Identify the current canonical Google Cloud account/project and its governed
    operational runtime.
@@ -74,11 +80,12 @@ The active acceptance requires all of the following:
    repository-owned approved bucket identity. A non-empty caller value is
    insufficient.
 7. Authorize no retirement command unless a newly identified concrete target,
-   reviewed manifest, explicit approver, and rollback evidence exist.
+   reviewed manifest, durable approval decision bound to that manifest and exact
+   command revision, and rollback evidence exist.
 8. Do not reactivate, contact, or delete the historical environment under this
    acceptance.
 
-This document does not claim that the active acceptance is satisfied. Current
+This document does not claim that either acceptance contract is satisfied. Current
 evidence identifies the approved project and records a scoped read-only
 observation, but does not establish the canonical environment's governed runtime
 or deployed-state evidence. AMA-168/169 acceptance therefore remains
@@ -94,14 +101,25 @@ identify a concrete resource in every field below:
 | --- | --- |
 | Exact project resource ID and owner | Prevent retirement in a guessed or display-name-only project. |
 | Resource type, name/ID, region/zone, observed status | Define the target precisely. |
+| Read-only source command/API, access scope, UTC observation timestamp, and non-secret evidence hash/reference | Make each observation attributable; inaccessible or unverifiable values remain `UNKNOWN` and block execution. |
+| Deployment SHA or release target, owner and observed timer/service state | Bind discovery to the actual deployment; do not infer deployment from repository defaults. |
 | VM release target, unit hashes, timer/service state, and non-secret environment metadata | Establish a systemd rollback path. |
 | Data retention owner and evidence location | Prevent accidental removal of research or audit evidence. |
-| Explicit retirement approver and rollback-window end | Separate authorization from discovery. |
+| Durable explicit APPROVE decision by an authorized approver, decision UTC time, scope, immutable target-manifest hash, exact command revision/hash, validity end and rollback-window end | An approver's name or a review request is not an authorization decision. Missing, expired, revoked, conflicting or unverifiable approval blocks execution. |
 
-## Approved future execution shape
+The reviewed manifest must define an approved freshness limit for each observation;
+no default age or historical absence assertion authorizes execution. Immediately
+before execution, repeat the approved read-only observations and preserve their
+UTC times and evidence hashes in an execution record. Confirm target identity,
+ownership, deployment and timer/service state against the approved manifest and
+freshness limits. Stale, inaccessible, conflicting or changed preconditions block
+execution and require a new reviewed manifest and approval. Fresh verification
+does not rewrite the approved immutable manifest or broaden its command scope.
 
-Only a later reviewed revision may add commands, and it must proceed in this
-order:
+## Proposed future execution shape — not authorized
+
+Only a later independently reviewed revision with the durable approval evidence
+above may add commands, and it must proceed in this order:
 
 1. Preserve the rollback artifacts listed above.
 2. Disable only named timers first; do not delete unit files or releases.
