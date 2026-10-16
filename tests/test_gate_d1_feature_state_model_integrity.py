@@ -245,6 +245,39 @@ def test_ignored_native_extension_cannot_shadow_tracked_python(tmp_path, suffix)
     assert verifier.verify(revision) is None
 
 
+@pytest.mark.parametrize("suffix", (".py", ".pyc", *EXTENSION_SUFFIXES))
+def test_ignored_package_cannot_shadow_tracked_python(tmp_path, suffix):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repository), *args], check=True,
+                              capture_output=True, text=True)
+
+    git("init", "--quiet")
+    git("config", "user.name", "test")
+    git("config", "user.email", "test@example.invalid")
+    source = repository / "source.py"
+    source.write_bytes(b"value = 1\n")
+    git("add", ".")
+    git("commit", "--quiet", "-m", "source")
+    revision, tree = _revision_and_tree(repository)
+    verifier = FeatureStateModelSourceRevisionVerifier(repository)
+    package = repository / "source"
+    package.mkdir()
+    (repository / ".git/info/exclude").write_text("source/\n", encoding="utf-8")
+    # An empty namespace directory does not take precedence over source.py.
+    assert verifier.verify(revision) == (revision, tree)
+    (package / ("__init__" + suffix)).write_bytes(b"value = 9\n")
+    assert not git("status", "--porcelain=v1", "--untracked-files=all").stdout
+    if suffix == ".py":
+        import sys
+        result = subprocess.run([sys.executable, "-c", "import source; print(source.value)"],
+                                cwd=repository, capture_output=True, text=True, check=True)
+        assert result.stdout.strip() == "9"
+    assert verifier.verify(revision) is None
+
+
 @pytest.mark.parametrize("malicious", (False, True))
 def test_ignored_timestamp_valid_bytecode_must_match_tracked_source(tmp_path, malicious):
     import importlib.util

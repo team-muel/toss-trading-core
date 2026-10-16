@@ -184,6 +184,14 @@ class FeatureStateModelSourceRevisionVerifier:
                 candidate = source.with_name(source.stem + suffix)
                 if candidate.exists() or candidate.is_symlink():
                     return False
+            package = source.with_suffix("")
+            if package.is_symlink():
+                return False
+            if package.is_dir():
+                for suffix in (".py", ".pyc", *suffixes):
+                    initializer = package / ("__init__" + suffix)
+                    if initializer.exists() or initializer.is_symlink():
+                        return False
             if source.with_suffix(".pyc").exists() or source.with_suffix(".pyo").exists():
                 return False
             seen: set[Path] = set()
