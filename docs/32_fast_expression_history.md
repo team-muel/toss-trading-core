@@ -39,8 +39,11 @@ transform.
 
 Position decay computes normalized linear coefficients before multiplying base
 weights, avoiding an overflowing weighted numerator when the mean is finite.
+It uses accurate summation and falls back to exact binary-float ratios if the
+rounded products overflow during summation, including constant maximum floats.
 Any non-finite decayed result is rejected before publishing positions, including
-runs without attached return metrics. This numerical change can alter floating
+runs without attached return metrics and decay-disabled/one-period passthrough.
+This numerical change can alter floating
 rounding at the last bits; bind new outputs to their new code revision. Keep
 historical immutable receipts intact and do not claim cross-revision hash identity.
 

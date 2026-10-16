@@ -411,6 +411,32 @@ def test_position_decay_rejects_nonfinite_output(invalid):
         _decayed_weights([{"a": 1.0}, {"a": invalid}], ("a",), 2)
 
 
+@pytest.mark.parametrize("sign", (1, -1))
+def test_history_decay_constant_float_maximum_remains_representable(sign):
+    from dataclasses import replace
+    import sys
+
+    settings = replace(history_settings(decay=25), book_size=sys.float_info.max)
+    result = simulate_history(
+        compile_expression("sign(close)", data_fields={"close"}),
+        sessions([{"a": sign}] * 25), settings,
+    )
+    assert result.position_panel["a"][:24] == [None] * 24
+    assert result.position_panel["a"][-1] == sign * sys.float_info.max
+    assert result.metrics is None
+
+
+@pytest.mark.parametrize("decay", (0, 1))
+@pytest.mark.parametrize("invalid", (float("inf"), float("nan")))
+def test_history_passthrough_rejects_nonfinite_position(decay, invalid):
+    from dataclasses import replace
+
+    settings = replace(history_settings(decay=decay), book_size=invalid)
+    with pytest.raises(ValueError, match="finite"):
+        simulate_history(compile_expression("sign(close)", data_fields={"close"}),
+                         sessions([{"a": 1}]), settings)
+
+
 def test_expression_decay_and_simulation_decay_are_independent():
     expression = compile_expression("ts_decay_linear(close, 2)", data_fields={"close"})
     feature = expression.evaluate(Resolver({"close": {"a": [1, 2, 3]}}))

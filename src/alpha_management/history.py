@@ -11,7 +11,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from hashlib import sha256
-from math import isfinite
+from fractions import Fraction
+from math import fsum, isfinite
 from types import MappingProxyType
 
 from asset_management.time.asof import AsOfContext, require_as_of_context
@@ -140,22 +141,34 @@ def _decayed_weights(
 ) -> dict[str, float | None]:
     if decay <= 1:
         current = base_history[-1]
-        return {instrument_id: current.get(instrument_id) for instrument_id in instruments}
+        result = {instrument_id: current.get(instrument_id) for instrument_id in instruments}
+        if any(value is not None and not isfinite(value) for value in result.values()):
+            raise ValueError("decayed position weights must be finite")
+        return result
     if len(base_history) < decay:
         return {instrument_id: None for instrument_id in instruments}
     window = base_history[-decay:]
-    denominator = decay * (decay + 1) / 2
+    denominator = decay * (decay + 1) // 2
     result: dict[str, float | None] = {}
     for instrument_id in instruments:
         values = [weights.get(instrument_id) for weights in window]
-        result[instrument_id] = (
-            None
-            if any(value is None for value in values)
-            else sum(((index + 1) / denominator) * float(value)
-                     for index, value in enumerate(values))
-        )
-        if result[instrument_id] is not None and not isfinite(result[instrument_id]):
+        if any(value is not None and not isfinite(value) for value in values):
             raise ValueError("decayed position weights must be finite")
+        if any(value is None for value in values):
+            result[instrument_id] = None
+            continue
+        try:
+            weight = fsum(((index + 1) / denominator) * float(value)
+                          for index, value in enumerate(values))
+        except OverflowError:
+            # Rounded products can exceed float max even for a finite convex
+            # mean. Only this exceptional path needs exact binary-float ratios.
+            numerator = sum(Fraction.from_float(float(value)) * (index + 1)
+                            for index, value in enumerate(values))
+            weight = float(numerator / denominator)
+        if not isfinite(weight):
+            raise ValueError("decayed position weights must be finite")
+        result[instrument_id] = weight
     return result
 
 
