@@ -8,7 +8,7 @@ from asset_management.domain.errors import DataQualityError
 from asset_management.domain.horizon import DecayProfile, SignalValidity
 from asset_management.features import company, market
 from asset_management.features.leakage import DatedValue, cross_sectional_winsorize, historical_zscore
-from asset_management.features.models import FeatureContext, FeatureDefinition, FeatureInput
+from asset_management.features.models import FeatureContext, FeatureDefinition, FeatureInput, FeatureSnapshot
 from asset_management.features.registry import FeatureRegistry, builtin_definitions
 from asset_management.features.store import FeatureStore
 from asset_management.quality.models import QualityGate, QualityStatus
@@ -55,6 +55,13 @@ def context(prices, universe):
 
 def input_value(value, *, available=NOW - timedelta(minutes=1), event=NOW - timedelta(days=1)):
     return FeatureInput({"value": value}, available, event)
+
+
+@pytest.mark.parametrize("validity", [None, VALIDITY.payload(), object()])
+def test_feature_snapshot_requires_a_typed_complete_validity_contract(validity):
+    with pytest.raises(ValueError, match="FEATURE_SIGNAL_VALIDITY_MISSING"):
+        FeatureSnapshot("run@1", "SPY", "market.return_1m", NOW.isoformat(), NOW.isoformat(),
+            ".01", "VALID", ("a"*64,), "parameters@1", None, "git:abcdef0", validity)
 
 
 def test_builtin_registry_contains_every_required_market_and_company_feature():

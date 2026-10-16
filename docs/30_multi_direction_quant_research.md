@@ -60,12 +60,14 @@ AI가 기존 이중 모멘텀의 숫자만 바꾸는 대신 서로 다른 경제
 
 AI 설명은 이 검증 사실을 이해하기 쉽게 풀어쓰는 역할이며, 숫자 자체를 변경할 수 없다.
 
-## 새로 포함된 거시경제 연구
+## 역사적 거시경제 연구
 
-`macro_regime` 계열은 ALFRED 빈티지에 1일의 보수적 공개 지연을 적용해
-월간 레짐을 연구한다. 전체 규칙은
-[`31_alfred_point_in_time_macro_regime.md`](31_alfred_point_in_time_macro_regime.md)를
-따른다.
+기존 `macro_regime` 계열은 ALFRED 빈티지에 보수적 공개 지연을 적용한
+월간 risk-on/defensive 배분 연구였다. AMA-180에서 이 계열은 active autonomous
+research에서 퇴역했으며, 신규 가설 생성이나 candidate evaluation에는 들어가지 않는다.
+과거 산출물 재현을 위한 규칙은
+[`31_alfred_point_in_time_macro_regime.md`](31_alfred_point_in_time_macro_regime.md)에
+보존한다.
 
 옵션, 주문장, 장중 반전 전략은 현재 일봉 자료로 검증하지 않는다. 데이터 빈도를
 무시한 전략 확장은 거짓 발견을 늘리므로 금지한다.

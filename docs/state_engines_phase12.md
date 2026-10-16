@@ -4,14 +4,16 @@ Phase 12 keeps market, company, portfolio, and system state as separate contract
 is a versioned snapshot of components with uncertainty and lineage. It is not an order or
 investment signal.
 
-## State snapshot v2
+## State snapshot v3
 
-`state-snapshot-v2` strengthens the State boundary so a future regime model cannot infer
+`state-snapshot-v3` strengthens the State boundary so a future regime model cannot infer
 meaning from an untyped number. Every snapshot records both `as_of` and
 `information_cutoff`; every component must use exactly the same temporal context as the
 snapshot. The state identity is a deterministic SHA-256 over the complete component
-semantics and lineage, the state policy, times, code revision, and the still-temporary
-optional regime field.
+semantics and lineage, the state policy, times, and code revision. AMA-177 removed regime
+derivation from generic State identity, and AMA-180 removes the legacy `regime_label`
+field from the canonical snapshot entirely. Historical v2 artifacts remain historical data;
+canonical writers emit v3 and do not reproduce the retired label.
 
 Every `StateComponent` records:
 
@@ -106,10 +108,12 @@ No regime model is approved or selected by this Phase 12 contract.
 
 The existing State policy still records stale age and two confidence boundaries. Low
 confidence maps to REDUCED_RISK, intermediate confidence to CAUTION, and blocking/stale
-components to NO_NEW_TRADES; System BLOCKED/HALTED can produce HALTED. These outputs are
-retained for compatibility while AMA-173 separately audits the boundary between descriptive
-State and the authority-bearing `RiskGovernor`. Their existence does not allow State or a
-future regime representation to mint portfolio targets, orders, or approved risk decisions.
+components to NO_NEW_TRADES; System BLOCKED/HALTED can produce HALTED. The accompanying
+`risk_multiplier` is retained as a **state-local operational/quality scalar**. Repository
+inspection for AMA-180 found no consumer outside `asset_management.states`; it is not a
+RiskGovernor approval, portfolio multiplier, target-weight authority, or order authority.
+AMA-179 remains the only reviewed bridge from regime uncertainty into the existing
+authority-bearing `RiskGovernor`.
 
 ## Determinism and lineage
 
@@ -119,7 +123,7 @@ Changing semantic metadata or an unavailable `reason_code` changes that identity
 other fields are unchanged.
 
 FeatureStore already verifies its own source manifests against the information cutoff. State
-v2 retains the referenced FeatureSnapshot, its claimed publishing manifest, and the
+v3 retains the referenced FeatureSnapshot, its claimed publishing manifest, and the
 FeatureSnapshot's source-manifest coordinates instead of collapsing provenance to a feature
 name. AMA-173/02 verifies those references against the immutable store while constructing
 canonical MarketState components. Where a `CalculationLineageGraph` exists, a component can
@@ -140,3 +144,37 @@ does not falsely claim that a graph exists when one has not been materialized.
 - every component remains visible; there is no single opaque state score
 - identical semantic inputs reproduce the same state hash
 - no actual regime classifier or new trading authority is introduced by this contract
+
+
+## AMA-177 regime inference boundary
+
+Generic State construction no longer derives a market regime. AMA-180 removes
+the legacy `regime_label` field from the canonical State schema and payload.
+Historical v2 snapshots may still contain that field, but replay/migration code must
+treat it as historical data rather than a writable canonical contract.
+
+Future regime inference uses a separate typed contract:
+
+- `RegimeModelSpec` binds the model/version, source State type, consumed State
+  components, opaque latent-state IDs, parameter set, and purpose.
+- `RegimeSnapshot` binds one source State identity, model-spec identity,
+  `as_of`, `information_cutoff`, probability simplex, entropy, confidence,
+  evidence lineage, and code revision.
+- `FILTERED_CAUSAL` means the output is intended to be knowable from
+  information available at the snapshot cutoff.
+- `SMOOTHED_RETROSPECTIVE` means the output may use later observations and is
+  research evidence only. The two semantics have different content identities.
+- Latent state IDs are intentionally opaque. Economic names such as
+  `EXPANSION` or `CONTRACTION` are not canonical model outputs at this
+  boundary.
+- The regime payload contains no forecast, expected return, risk multiplier,
+  target weight, order intent, or broker-write authority.
+
+The model may later be registered under the existing
+`ModelScope.STATE_INFERENCE`, but registry authorization does not turn the
+RegimeSnapshot itself into trading authority. Forecast/Risk consumer policy is
+owned separately by AMA-179.
+
+`alpha_management` Fast Expression is not a required runtime dependency of
+this contract. Research-language outputs may enter only after explicit
+materialization into canonical Feature/State evidence through an outer bridge.

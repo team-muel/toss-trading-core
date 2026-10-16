@@ -10,6 +10,7 @@ from asset_management.governance import (
 )
 from .confidence import shrink_estimate
 from .models import AlphaEstimate, ExpectedReturnEstimate, ModelRelativeAlphaAssessment
+from asset_management.domain.horizon import SignalValidity
 
 def calculate_alpha(expected: ExpectedReturnEstimate, required: PricingResult, *,
                     as_of: datetime, model_conflict: bool = False, event_risk: bool = False,
@@ -54,6 +55,7 @@ def assess_model_relative_alpha(*, net_forecast: EconomicValue,
                                 uncertainty_threshold: Decimal,
                                 formula_version: str, model_key: str,
                                 as_of: datetime,
+                                validity: SignalValidity,
                                 model_registry_evidence: RuntimeModelRegistryEvidenceRepository,
                                 runtime_authorization: RuntimeModelAuthorization
                                 ) -> ModelRelativeAlphaAssessment:
@@ -62,6 +64,10 @@ def assess_model_relative_alpha(*, net_forecast: EconomicValue,
     Confidence shrinks the net forecast toward ``baseline + prior`` before the
     residual is computed, preserving the model-relative-alpha identity.
     """
+    if (not isinstance(validity, SignalValidity) or as_of.tzinfo is None or
+            as_of.utcoffset() is None or validity.valid_until <= as_of or
+            validity.forecast_horizon != net_forecast.forecast_horizon):
+        raise DataQualityError("MODEL_RELATIVE_ALPHA_VALIDITY_INVALID")
     if (len(combined_signal_forecast_id) != 64 or
             any(char not in "0123456789abcdef" for char in combined_signal_forecast_id) or
             any(not value.is_finite() for value in (confidence, prior, forecast_uncertainty,
@@ -91,4 +97,4 @@ def assess_model_relative_alpha(*, net_forecast: EconomicValue,
         reasons.append("MODEL_RELATIVE_ALPHA_UNCERTAINTY_HIGH")
     return ModelRelativeAlphaAssessment(value, raw.value, lower, upper, confidence, prior,
         raw.value - value.value, combined_signal_forecast_id,
-        "ABSTAIN" if reasons else "ELIGIBLE", tuple(reasons))
+        "ABSTAIN" if reasons else "ELIGIBLE", tuple(reasons), as_of, validity)

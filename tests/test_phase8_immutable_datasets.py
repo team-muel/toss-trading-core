@@ -55,6 +55,12 @@ def test_raw_first_lineage_utc_secrets_and_dedup(tmp_path):
     assert len(list((tmp_path / "bronze").glob("*.json"))) == 1
     assert "secret-password" not in "".join(p.read_text() for p in tmp_path.rglob("*.json"))
     assert list((tmp_path / "catalog" / "schemas").glob("*.json"))
+    receipt = store.read_catalog("requests", bronze.request_hash)
+    assert receipt == {"source": "provider", "dataset": "prices",
+                       "endpoint": "/api/v1/prices", "http_method": "GET",
+                       "request": {"authorization": "***REDACTED***", "symbol": "A"}}
+    assert silver.request_hash == bronze.request_hash
+    assert len(list((tmp_path / "catalog" / "requests").glob("*.json"))) == 1
 
 
 @pytest.mark.parametrize("changes,reason", [
@@ -257,3 +263,30 @@ def test_toss_adapter_connects_verified_raw_response_to_dataset_lineage(tmp_path
     with pytest.raises(ValueError, match="CREDENTIALS_NOT_REGISTERED"):
         TossDatasetAdapter(Client(), ProviderDatasetAdapter(incomplete))
 
+
+
+def test_request_receipt_publication_failure_blocks_ingestion(tmp_path, monkeypatch):
+    store = ImmutableDatasetStore(tmp_path, secrets=("secret-password",), credentials_classified=True)
+    original = store.catalog
+
+    def unavailable(kind, value):
+        if kind == "requests":
+            raise OSError("private-provider-detail")
+        return original(kind, value)
+
+    monkeypatch.setattr(store, "catalog", unavailable)
+    result = ProviderDatasetAdapter(store).ingest(**kwargs())
+    assert result.status == "NO_TRADE"
+    assert result.reason_code == "RAW_STORAGE_FAILED"
+    assert result.bronze_manifest_id is None and result.silver_manifest_id is None
+    assert "private-provider-detail" not in "".join(p.read_text() for p in tmp_path.rglob("*.json"))
+
+
+@pytest.mark.parametrize("request_value", [None, [], "symbol=A", 123, True])
+def test_invalid_request_shape_cannot_publish_unverifiable_data(tmp_path, request_value):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    result = ProviderDatasetAdapter(store).ingest(**(kwargs() | {"request": request_value}))
+    assert result.status == "NO_TRADE"
+    assert result.reason_code == "INVALID_REQUEST_IDENTITY"
+    assert result.bronze_manifest_id is None and result.silver_manifest_id is None
+    assert not list((tmp_path / "catalog" / "requests").glob("*.json"))

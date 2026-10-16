@@ -196,6 +196,8 @@ def test_direct_binding_reverifies_published_feature_and_keeps_other_dimensions_
     assert breadth.input_features == (item,)
     assert item.manifest_id in breadth.input_evidence_ids
     assert result.spec_catalog_id in breadth.input_evidence_ids
+    definition_id = digest(canonical(asdict(feature_registry.get("market.breadth"))))
+    assert definition_id in breadth.input_evidence_ids
     assert result.snapshot.input_feature_ids == ("market.breadth",)
     assert set(result.snapshot.input_data_manifest_ids) == set(item.snapshot.input_manifest_ids)
     assert result.snapshot.operational_state is OperationalState.NO_NEW_TRADES

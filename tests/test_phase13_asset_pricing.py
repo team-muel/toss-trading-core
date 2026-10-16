@@ -43,6 +43,27 @@ def test_horizons_and_compounding():
     assert abs(annual_to_horizon(D("0.21"), 63) - ((D("1.21").sqrt().sqrt()) - 1)) < D("1e-26")
     with pytest.raises(DataQualityError): annual_to_horizon(D("0.1"), 30)
 
+
+@pytest.mark.parametrize("horizon", [21.0, D(21), "21", True, None])
+def test_conversion_and_curve_selection_do_not_coerce_horizons(horizon):
+    with pytest.raises(DataQualityError, match="HORIZON_CONVERSION_INPUT_INVALID"):
+        annual_to_horizon(D("0.05"), horizon)
+    points = [RiskFreePoint(NOW, NOW, h, D("0.03"), "treasury", "a"*64, QualityStatus.VALID)
+              for h in HORIZONS]
+    curve = RiskFreeCurve(points)
+    with pytest.raises(DataQualityError, match="RISK_FREE_HORIZON_MISSING"):
+        curve.rate(horizon=horizon, information_cutoff=NOW)
+    with pytest.raises(DataQualityError, match="RISK_FREE_HORIZON_MISSING"):
+        curve.return_for(currency="USD", horizon=horizon, information_cutoff=NOW)
+    with pytest.raises(ValueError, match="RISK_FREE_POINT_INVALID"):
+        replace(points[0], horizon=horizon)
+    output = curve.return_for(currency="USD", horizon=21, information_cutoff=NOW)
+    with pytest.raises(DataQualityError, match="RISK_FREE_RETURN_INVALID"):
+        replace(output, forecast_horizon=horizon)
+    with pytest.raises(DataQualityError, match="RISK_FREE_HORIZON_MISMATCH"):
+        require_risk_free_alignment(risk_free=output, currency="USD", forecast_horizon=horizon,
+                                    information_cutoff=NOW)
+
 def test_risk_free_curve_is_complete_point_in_time_and_availability_bound():
     points = [RiskFreePoint(NOW, NOW, h, D("0.03"), "treasury", "a"*64, QualityStatus.VALID) for h in HORIZONS]
     curve = RiskFreeCurve(points)
