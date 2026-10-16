@@ -23,7 +23,7 @@ from .dsl import (
 )
 from .expression import AlphaSimulationSettings
 from .history import HistoricalSession, HistoryPoint, HistorySimulationResult, simulate_history, _last_cross_section
-from .input_journal import InputJournal, iter_snapshots
+from .input_journal import InputJournal, iter_snapshots, require_journal_budget
 from asset_management.domain.errors import DataQualityError
 
 
@@ -388,6 +388,12 @@ class ResearchRun:
             raise ValueError("research evidence is not valid JSON") from exc
         if not isinstance(payload, dict) or payload.get("schema_version") != "expression-research-run-v2":
             raise ValueError("unsupported research receipt version")
+        deltas = payload.get("session_input_deltas")
+        hashes = payload.get("session_input_hashes")
+        if (not isinstance(deltas, list) or not isinstance(hashes, list) or
+                len(deltas) != len(points) or len(hashes) != len(points)):
+            raise ValueError("research input evidence is incomplete")
+        require_journal_budget(deltas)
         if payload.get("validation_scope") != "MECHANISM_ONLY":
             raise ValueError("research receipt scope must remain MECHANISM_ONLY")
         history = _history_payload(result)

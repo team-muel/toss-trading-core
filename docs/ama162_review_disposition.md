@@ -1,5 +1,16 @@
 # AMA-162 / PR #78 review disposition
 
+## Imported receipt follow-up — 2026-10-16
+
+ResearchRun construction requires one input delta and hash for every result point;
+jointly truncating both arrays cannot leave unreplayable trailing results. Imported
+receipts and direct replay enforce the same cumulative encoded-delta budget as the
+writer before replay deep-copies snapshots. Chunked encoding avoids materializing
+the entire serialized journal just to measure that budget. This is a delta budget,
+not a bound on the complete receipt JSON parser or reconstructed snapshot memory.
+Exact-limit and one-byte-over cases retain the writer's encoding convention.
+Receipts remain MECHANISM_ONLY; these checks add no semantic/OOS acceptance.
+
 The original reviewed head is `197a7ae8d9e6e4629b43cfbba4def31ed1a59872`.
 This record describes the two Codex P2 findings and their regression evidence;
 it is not a substitute for final-head review or protected merge-queue checks.

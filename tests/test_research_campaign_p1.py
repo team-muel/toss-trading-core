@@ -135,3 +135,50 @@ def test_mutated_delta_cannot_replay_as_original_input(tmp_path):
     forged = ResearchRun(run.result, json.dumps(payload))
     with pytest.raises(ValueError, match="hash mismatch"):
         list(forged.iter_session_inputs())
+
+
+@pytest.mark.parametrize("retained", (0, -1))
+def test_imported_receipt_requires_inputs_for_every_result_point(tmp_path, retained):
+    import json
+    from alpha_management.campaign import ResearchRun
+    research_spec = spec()
+    _, sessions = repository_sessions(tmp_path, research_spec)
+    run = run_expression_research(research_spec, sessions)
+    payload = run.payload()
+    payload["session_input_deltas"] = payload["session_input_deltas"][:retained]
+    payload["session_input_hashes"] = payload["session_input_hashes"][:retained]
+    with pytest.raises(ValueError, match="incomplete"):
+        ResearchRun(run.result, json.dumps(payload))
+
+
+def test_imported_receipt_and_direct_replay_obey_writer_budget(tmp_path, monkeypatch):
+    from alpha_management import input_journal
+    from alpha_management.campaign import ResearchRun
+    research_spec = spec()
+    _, sessions = repository_sessions(tmp_path, research_spec)
+    run = run_expression_research(research_spec, sessions)
+    monkeypatch.setattr(input_journal, "MAX_JOURNAL_BYTES", 10)
+    with pytest.raises(ValueError, match="budget"):
+        ResearchRun(run.result, run.evidence_json)
+    with pytest.raises(ValueError, match="budget"):
+        list(input_journal.iter_snapshots(run.payload()["session_input_deltas"]))
+
+
+@pytest.mark.parametrize("extra", (0, -1))
+def test_writer_reader_encoded_budget_boundary_agrees(monkeypatch, extra):
+    import json
+    from alpha_management import input_journal
+    snapshots = [{"value": "금", "items": [1, None]}, {"value": "금", "items": [1, 2]}]
+    journal = input_journal.InputJournal()
+    for snapshot in snapshots:
+        journal.append(snapshot)
+    deltas = journal.finish()
+    expected = sum(len(json.dumps(delta, allow_nan=False, separators=(",", ":")).encode())
+                   for delta in deltas)
+    assert journal.encoded_bytes == expected
+    monkeypatch.setattr(input_journal, "MAX_JOURNAL_BYTES", expected + extra)
+    if extra < 0:
+        with pytest.raises(ValueError, match="budget"):
+            list(input_journal.iter_snapshots(deltas))
+    else:
+        assert list(input_journal.iter_snapshots(deltas)) == snapshots

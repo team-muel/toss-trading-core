@@ -6,6 +6,20 @@ import json
 MAX_JOURNAL_BYTES = 256 * 1024 * 1024
 
 
+def require_journal_budget(deltas) -> int:
+    """Measure the writer's encoded delta budget before replay copies inputs."""
+    if not isinstance(deltas, list):
+        raise ValueError("input journal must be a list")
+    total = 0
+    encoder = json.JSONEncoder(allow_nan=False, separators=(",", ":"))
+    for delta in deltas:
+        for chunk in encoder.iterencode(delta):
+            total += len(chunk.encode("utf-8"))
+            if total > MAX_JOURNAL_BYTES:
+                raise ValueError("research input journal exceeds bounded evidence budget")
+    return total
+
+
 def _changes(old, new, path=()):
     if isinstance(old, dict) and isinstance(new, dict):
         for key in sorted(old.keys() - new.keys()):
@@ -35,9 +49,10 @@ class InputJournal:
 
     def append(self, snapshot):
         delta = list(_changes(self.previous, snapshot))
-        self.encoded_bytes += len(json.dumps(delta, allow_nan=False, separators=(",", ":")).encode())
-        if self.encoded_bytes > MAX_JOURNAL_BYTES:
+        encoded_bytes = self.encoded_bytes + require_journal_budget([delta])
+        if encoded_bytes > MAX_JOURNAL_BYTES:
             raise ValueError("research input journal exceeds bounded evidence budget")
+        self.encoded_bytes = encoded_bytes
         self.deltas.append(delta)
         self.previous = snapshot
 
@@ -48,6 +63,7 @@ class InputJournal:
 
 def iter_snapshots(deltas) -> Iterator[dict]:
     """Replay independent snapshots without retaining the complete history."""
+    require_journal_budget(deltas)
     current = {}
     for delta in deltas:
         if not isinstance(delta, list):
