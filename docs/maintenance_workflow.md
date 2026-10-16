@@ -98,7 +98,10 @@ and a scope disposition must not be described as an independent no-findings revi
 
 For a review outage, inventory affected PRs from actual outage/review records, including
 records before the tracking issue was created. Prioritize open PRs, then merged material
-changes. Record exact-head independent evidence or a justified exemption for each candidate.
+changes. Open PRs require completed exact-head independent review before merge; an exemption
+cannot satisfy their merge gate. For already-merged inventory only, record exact-head
+independent evidence or a documented reason for a retrospective exemption. Such an exemption
+classifies the historical review record; it grants no semantic or operational acceptance.
 Missing bot comments alone do not prove that no separate review occurred; check linked
 review provenance. Keep self-review and any historically authorized fallback identified as
 such. Review merged changes at their merged source head; link defects to targeted remediation
