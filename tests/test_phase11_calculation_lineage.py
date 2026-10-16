@@ -18,7 +18,7 @@ LICENSE = "purpose=internal-research;redistribution=forbidden;retention=perpetua
 
 def bronze(store, body=None):
     return store.write(
-        body or {"instrument_id": "SPY", "close": "100"},
+        {"instrument_id": "SPY", "close": "100"} if body is None else body,
         layer="bronze", source="provider", dataset="prices-raw", schema_version="raw-v1",
         retrieved_at=NOW, available_at=NOW, provider_timestamp=NOW,
         license_tag=LICENSE, code_revision="git:abcdef0", request_hash="a" * 64,
@@ -34,9 +34,9 @@ def derived(kind, parents, formula, intermediate, output):
     )
 
 
-def graph(store):
+def graph(store, raw_body=None):
     raw = CalculationNode.from_raw_manifest(
-        store, bronze(store).manifest_id, parameter_set_id="parameters-v1")
+        store, bronze(store, raw_body).manifest_id, parameter_set_id="parameters-v1")
     feature = derived(CalculationNodeType.FEATURE, (raw,), "return@1",
                       {"start": "90", "end": "100"}, {"return": "0.1111111111"})
     intermediate = derived(CalculationNodeType.INTERMEDIATE_CALCULATION, (feature,),
@@ -70,6 +70,62 @@ def test_same_inputs_formula_parameters_and_values_are_deterministic(tmp_path):
     assert first.publish(store) == second.publish(store)
     with pytest.raises(TypeError):
         first.trace()[0].output_value["close"] = "999"
+
+
+@pytest.mark.parametrize("fault", ["missing", "conflicting", "not_bronze"])
+def test_publication_reverifies_unreachable_raw_nodes_before_catalog_write(tmp_path, fault):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    valid = graph(store)
+    manifest_id = "0" * 64
+    body = {"instrument_id": "QQQ", "close": "999"}
+    if fault == "conflicting":
+        manifest_id = bronze(store, {"instrument_id": "QQQ", "close": "100"}).manifest_id
+    elif fault == "not_bronze":
+        parent = bronze(store)
+        manifest_id = store.write(body, layer="silver", source="provider", dataset="prices",
+            schema_version="silver-v1", retrieved_at=NOW, available_at=NOW, provider_timestamp=NOW,
+            license_tag=LICENSE, code_revision="git:abcdef0", request_hash="b"*64,
+            parent_manifest_ids=(parent.manifest_id,)).manifest_id
+    orphan = CalculationNode.create(node_type=CalculationNodeType.RAW_DATA,
+        formula_version="raw-schema:raw-v1", parameter_set_id="parameters-v1", input_ids=(),
+        intermediate_values={"source": "provider", "dataset": "prices-raw"},
+        output_value=body, raw_manifest_id=manifest_id)
+    candidate = CalculationLineageGraph(valid.final_node_id, dict(valid.nodes) | {orphan.node_id: orphan})
+    assert orphan.node_id not in {node.node_id for node in candidate.trace()}
+    before = set((tmp_path / "catalog" / "calculation-lineage").glob("*.json"))
+    with pytest.raises(DataQualityError):
+        candidate.publish(store)
+    assert set((tmp_path / "catalog" / "calculation-lineage").glob("*.json")) == before
+
+
+def test_verified_unreachable_raw_node_is_published_with_deterministic_identity(tmp_path):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    valid = graph(store)
+    orphan = CalculationNode.from_raw_manifest(store,
+        bronze(store, {"instrument_id": "QQQ", "close": "100"}).manifest_id,
+        parameter_set_id="parameters-v1")
+    nodes = dict(valid.nodes) | {orphan.node_id: orphan}
+    first = CalculationLineageGraph(valid.final_node_id, nodes)
+    second = CalculationLineageGraph(valid.final_node_id, dict(reversed(tuple(nodes.items()))))
+    assert first.trace() == valid.trace()
+    assert first.graph_hash == second.graph_hash
+    assert first.publish(store) == second.publish(store)
+
+
+@pytest.mark.parametrize("body", [
+    [],
+    [{"instrument_id": "SPY", "close": "100"}],
+    {"results": [{"instrument_id": "SPY", "values": [1, 2, 3]}]},
+])
+def test_verified_json_arrays_match_immutable_node_values_without_mutation(tmp_path, body):
+    store = ImmutableDatasetStore(tmp_path, credentials_classified=True)
+    lineage = graph(store, body)
+    original = json.loads(json.dumps(body))
+    lineage.verify_raw_manifests(store)
+    first = lineage.publish(store)
+    assert lineage.publish(store) == first
+    assert body == original
+    assert lineage.trace()[0].payload()["output_value"] == body
 
 
 def test_missing_parent_and_layer_skip_fail_closed(tmp_path):

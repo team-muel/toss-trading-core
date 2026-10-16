@@ -254,16 +254,20 @@ class TossReadOnlyAdapter:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             method="POST",
         )
+        # Issuing a new token can invalidate the previous one at the provider.
+        # Never retain cached credentials after a failed refresh attempt.
+        self._access_token = None
+        self._access_token_expires_at = 0.0
         result = self._send(request, endpoint, request_payload={"grant_type": "client_credentials"})
         token = result.body.get("access_token") if isinstance(result.body, dict) else None
-        if not token:
-            raise RuntimeError("Toss token response did not include access_token")
-        self._access_token = str(token)
         expires_in = result.body.get("expires_in") if isinstance(result.body, dict) else None
-        try:
-            self._access_token_expires_at = time.monotonic() + max(0, int(expires_in) - 30)
-        except (TypeError, ValueError):
-            self._access_token_expires_at = time.monotonic()
+        if (not isinstance(token, str) or not token or not token.isascii()
+                or any(ord(char) <= 32 or ord(char) == 127 for char in token)
+                or result.body.get("token_type") != "Bearer"
+                or type(expires_in) is not int or not 0 < expires_in <= 2**63 - 1):
+            raise RuntimeError("Toss token response violates OAuth contract")
+        self._access_token = token
+        self._access_token_expires_at = time.monotonic() + max(0, expires_in - 30)
         return result
 
     def get_accounts(self) -> TossApiResult:

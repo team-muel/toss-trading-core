@@ -1,0 +1,621 @@
+{
+  "scope": "DOCUMENTED_SYNTHETIC_EXAMPLES_ONLY",
+  "source_sha256": "7e753c21dc4b938d8f9610ce3efd6542783018977cb030e39db5a006f5b59d40",
+  "version": "1.2.24",
+  "cases": [
+    {
+      "endpoint": "/api/v1/accounts",
+      "name": "brokerageAccount",
+      "body": {
+        "result": [
+          {
+            "accountNo": "12345678901",
+            "accountSeq": "documented-example-id",
+            "accountType": "BROKERAGE"
+          }
+        ]
+      }
+    },
+    {
+      "endpoint": "/api/v1/accounts",
+      "name": "emptyAccounts",
+      "body": {
+        "result": []
+      }
+    },
+    {
+      "endpoint": "/api/v1/holdings",
+      "name": "withHoldings",
+      "body": {
+        "result": {
+          "totalPurchaseAmount": {
+            "krw": "6500000",
+            "usd": "1553"
+          },
+          "marketValue": {
+            "amount": {
+              "krw": "7200000",
+              "usd": "1785"
+            },
+            "amountAfterCost": {
+              "krw": "7050000",
+              "usd": "1771.43"
+            }
+          },
+          "profitLoss": {
+            "amount": {
+              "krw": "700000",
+              "usd": "232"
+            },
+            "amountAfterCost": {
+              "krw": "550000",
+              "usd": "218.43"
+            },
+            "rate": "0.1179",
+            "rateAfterCost": "0.0983"
+          },
+          "dailyProfitLoss": {
+            "amount": {
+              "krw": "100000",
+              "usd": "25"
+            },
+            "rate": "0.0141"
+          },
+          "items": [
+            {
+              "symbol": "005930",
+              "name": "삼성전자",
+              "marketCountry": "KR",
+              "currency": "KRW",
+              "quantity": "100",
+              "lastPrice": "72000",
+              "averagePurchasePrice": "65000",
+              "marketValue": {
+                "purchaseAmount": "6500000",
+                "amount": "7200000",
+                "amountAfterCost": "7050000"
+              },
+              "profitLoss": {
+                "amount": "700000",
+                "amountAfterCost": "550000",
+                "rate": "0.1077",
+                "rateAfterCost": "0.0846"
+              },
+              "dailyProfitLoss": {
+                "amount": "100000",
+                "rate": "0.0141"
+              },
+              "cost": {
+                "commission": "14400",
+                "tax": "135600"
+              }
+            },
+            {
+              "symbol": "AAPL",
+              "name": "Apple Inc.",
+              "marketCountry": "US",
+              "currency": "USD",
+              "quantity": "10",
+              "lastPrice": "178.5",
+              "averagePurchasePrice": "155.3",
+              "marketValue": {
+                "purchaseAmount": "1553",
+                "amount": "1785",
+                "amountAfterCost": "1771.43"
+              },
+              "profitLoss": {
+                "amount": "232",
+                "amountAfterCost": "218.43",
+                "rate": "0.1494",
+                "rateAfterCost": "0.1406"
+              },
+              "dailyProfitLoss": {
+                "amount": "25",
+                "rate": "0.0142"
+              },
+              "cost": {
+                "commission": "3.57",
+                "tax": "10"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/holdings",
+      "name": "filteredBySymbol",
+      "body": {
+        "result": {
+          "totalPurchaseAmount": {
+            "krw": "6500000",
+            "usd": null
+          },
+          "marketValue": {
+            "amount": {
+              "krw": "7200000",
+              "usd": null
+            },
+            "amountAfterCost": {
+              "krw": "7050000",
+              "usd": null
+            }
+          },
+          "profitLoss": {
+            "amount": {
+              "krw": "700000",
+              "usd": null
+            },
+            "amountAfterCost": {
+              "krw": "550000",
+              "usd": null
+            },
+            "rate": "0.1077",
+            "rateAfterCost": "0.0846"
+          },
+          "dailyProfitLoss": {
+            "amount": {
+              "krw": "100000",
+              "usd": null
+            },
+            "rate": "0.0141"
+          },
+          "items": [
+            {
+              "symbol": "005930",
+              "name": "삼성전자",
+              "marketCountry": "KR",
+              "currency": "KRW",
+              "quantity": "100",
+              "lastPrice": "72000",
+              "averagePurchasePrice": "65000",
+              "marketValue": {
+                "purchaseAmount": "6500000",
+                "amount": "7200000",
+                "amountAfterCost": "7050000"
+              },
+              "profitLoss": {
+                "amount": "700000",
+                "amountAfterCost": "550000",
+                "rate": "0.1077",
+                "rateAfterCost": "0.0846"
+              },
+              "dailyProfitLoss": {
+                "amount": "100000",
+                "rate": "0.0141"
+              },
+              "cost": {
+                "commission": "14400",
+                "tax": "135600"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/holdings",
+      "name": "filteredByUsSymbol",
+      "body": {
+        "result": {
+          "totalPurchaseAmount": {
+            "krw": "0",
+            "usd": "1500.00"
+          },
+          "marketValue": {
+            "amount": {
+              "krw": "0",
+              "usd": "1700.00"
+            },
+            "amountAfterCost": {
+              "krw": "0",
+              "usd": "1650.00"
+            }
+          },
+          "profitLoss": {
+            "amount": {
+              "krw": "0",
+              "usd": "200.00"
+            },
+            "amountAfterCost": {
+              "krw": "0",
+              "usd": "150.00"
+            },
+            "rate": "0.1333",
+            "rateAfterCost": "0.1000"
+          },
+          "dailyProfitLoss": {
+            "amount": {
+              "krw": "0",
+              "usd": "20.00"
+            },
+            "rate": "0.0119"
+          },
+          "items": [
+            {
+              "symbol": "AAPL",
+              "name": "Apple Inc.",
+              "marketCountry": "US",
+              "currency": "USD",
+              "quantity": "10",
+              "lastPrice": "170.00",
+              "averagePurchasePrice": "150.00",
+              "marketValue": {
+                "purchaseAmount": "1500.00",
+                "amount": "1700.00",
+                "amountAfterCost": "1650.00"
+              },
+              "profitLoss": {
+                "amount": "200.00",
+                "amountAfterCost": "150.00",
+                "rate": "0.1333",
+                "rateAfterCost": "0.10"
+              },
+              "dailyProfitLoss": {
+                "amount": "20.00",
+                "rate": "0.012"
+              },
+              "cost": {
+                "commission": "2.15",
+                "tax": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/holdings",
+      "name": "filteredBySymbolNotFound",
+      "body": {
+        "result": {
+          "totalPurchaseAmount": {
+            "krw": "0",
+            "usd": null
+          },
+          "marketValue": {
+            "amount": {
+              "krw": "0",
+              "usd": null
+            },
+            "amountAfterCost": {
+              "krw": "0",
+              "usd": null
+            }
+          },
+          "profitLoss": {
+            "amount": {
+              "krw": "0",
+              "usd": null
+            },
+            "amountAfterCost": {
+              "krw": "0",
+              "usd": null
+            },
+            "rate": "0",
+            "rateAfterCost": "0"
+          },
+          "dailyProfitLoss": {
+            "amount": {
+              "krw": "0",
+              "usd": null
+            },
+            "rate": "0"
+          },
+          "items": []
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/holdings",
+      "name": "emptyHoldings",
+      "body": {
+        "result": {
+          "totalPurchaseAmount": {
+            "krw": "0",
+            "usd": null
+          },
+          "marketValue": {
+            "amount": {
+              "krw": "0",
+              "usd": null
+            },
+            "amountAfterCost": {
+              "krw": "0",
+              "usd": null
+            }
+          },
+          "profitLoss": {
+            "amount": {
+              "krw": "0",
+              "usd": null
+            },
+            "amountAfterCost": {
+              "krw": "0",
+              "usd": null
+            },
+            "rate": "0",
+            "rateAfterCost": "0"
+          },
+          "dailyProfitLoss": {
+            "amount": {
+              "krw": "0",
+              "usd": null
+            },
+            "rate": "0"
+          },
+          "items": []
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/orders",
+      "name": "pendingMixed",
+      "body": {
+        "result": {
+          "orders": [
+            {
+              "orderId": "documented-example-id",
+              "symbol": "005930",
+              "side": "BUY",
+              "orderType": "LIMIT",
+              "timeInForce": "DAY",
+              "status": "PENDING",
+              "price": "70000",
+              "quantity": "10",
+              "orderAmount": null,
+              "currency": "KRW",
+              "orderedAt": "2026-03-29T09:30:00+09:00",
+              "canceledAt": null,
+              "execution": {
+                "filledQuantity": "0",
+                "averageFilledPrice": null,
+                "filledAmount": null,
+                "commission": null,
+                "tax": null,
+                "filledAt": null,
+                "settlementDate": null
+              }
+            },
+            {
+              "orderId": "documented-example-id",
+              "symbol": "AAPL",
+              "side": "SELL",
+              "orderType": "LIMIT",
+              "timeInForce": "DAY",
+              "status": "PARTIAL_FILLED",
+              "price": "185.5",
+              "quantity": "5",
+              "orderAmount": null,
+              "currency": "USD",
+              "orderedAt": "2026-03-29T10:00:00+09:00",
+              "canceledAt": null,
+              "execution": {
+                "filledQuantity": "2",
+                "averageFilledPrice": "185.25",
+                "filledAmount": "370.5",
+                "commission": "0.66",
+                "tax": "0",
+                "filledAt": "2026-03-29T10:00:05+09:00",
+                "settlementDate": null
+              }
+            }
+          ],
+          "nextCursor": null,
+          "hasNext": false
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/orders",
+      "name": "completedWithNextPage",
+      "body": {
+        "result": {
+          "orders": [
+            {
+              "orderId": "documented-example-id",
+              "symbol": "005930",
+              "side": "BUY",
+              "orderType": "LIMIT",
+              "timeInForce": "DAY",
+              "status": "FILLED",
+              "price": "70000",
+              "quantity": "10",
+              "orderAmount": null,
+              "currency": "KRW",
+              "orderedAt": "2026-03-28T09:30:00+09:00",
+              "canceledAt": null,
+              "execution": {
+                "filledQuantity": "10",
+                "averageFilledPrice": "70000",
+                "filledAmount": "700000",
+                "commission": "1400",
+                "tax": "0",
+                "filledAt": "2026-03-28T09:31:15+09:00",
+                "settlementDate": "2026-03-30"
+              }
+            }
+          ],
+          "nextCursor": "eyJvcmRlcmVkQXQiOiIyMDI2LTAzLTI4VDA5OjMwOjAwKzA5OjAwIiwib3JkZXJJZCI6Ik9SRDIwMjYwMzI4MDAxIn0=",
+          "hasNext": true
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/orders",
+      "name": "empty",
+      "body": {
+        "result": {
+          "orders": [],
+          "nextCursor": null,
+          "hasNext": false
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/orders/{orderId}",
+      "name": "krLimitFilled",
+      "body": {
+        "result": {
+          "orderId": "documented-example-id",
+          "symbol": "005930",
+          "side": "BUY",
+          "orderType": "LIMIT",
+          "timeInForce": "DAY",
+          "status": "FILLED",
+          "price": "70000",
+          "quantity": "10",
+          "orderAmount": null,
+          "currency": "KRW",
+          "orderedAt": "2026-03-28T09:30:00+09:00",
+          "canceledAt": null,
+          "execution": {
+            "filledQuantity": "10",
+            "averageFilledPrice": "70000",
+            "filledAmount": "700000",
+            "commission": "1400",
+            "tax": "0",
+            "filledAt": "2026-03-28T09:31:15+09:00",
+            "settlementDate": "2026-03-30"
+          }
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/orders/{orderId}",
+      "name": "usMarketPartialFilled",
+      "body": {
+        "result": {
+          "orderId": "documented-example-id",
+          "symbol": "AAPL",
+          "side": "BUY",
+          "orderType": "MARKET",
+          "timeInForce": "DAY",
+          "status": "PARTIAL_FILLED",
+          "price": null,
+          "quantity": "5",
+          "orderAmount": null,
+          "currency": "USD",
+          "orderedAt": "2026-03-28T23:30:00+09:00",
+          "canceledAt": null,
+          "execution": {
+            "filledQuantity": "3",
+            "averageFilledPrice": "185.25",
+            "filledAmount": "555.75",
+            "commission": "0.99",
+            "tax": "0",
+            "filledAt": "2026-03-28T23:30:05+09:00",
+            "settlementDate": null
+          }
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/orders/{orderId}",
+      "name": "rejected",
+      "body": {
+        "result": {
+          "orderId": "documented-example-id",
+          "symbol": "AAPL",
+          "side": "BUY",
+          "orderType": "MARKET",
+          "timeInForce": "DAY",
+          "status": "REJECTED",
+          "price": null,
+          "quantity": "0.5",
+          "orderAmount": null,
+          "currency": "USD",
+          "orderedAt": "2026-03-28T23:30:00+09:00",
+          "canceledAt": null,
+          "execution": {
+            "filledQuantity": "0",
+            "averageFilledPrice": null,
+            "filledAmount": null,
+            "commission": null,
+            "tax": null,
+            "filledAt": null,
+            "settlementDate": null
+          }
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/buying-power",
+      "name": "krw",
+      "body": {
+        "result": {
+          "currency": "KRW",
+          "cashBuyingPower": "5000000"
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/buying-power",
+      "name": "usd",
+      "body": {
+        "result": {
+          "currency": "USD",
+          "cashBuyingPower": "3500.5"
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/sellable-quantity",
+      "name": "kr",
+      "body": {
+        "result": {
+          "sellableQuantity": "100"
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/sellable-quantity",
+      "name": "us",
+      "body": {
+        "result": {
+          "sellableQuantity": "5.5"
+        }
+      }
+    },
+    {
+      "endpoint": "/api/v1/commissions",
+      "name": "standard",
+      "body": {
+        "result": [
+          {
+            "marketCountry": "KR",
+            "commissionRate": "0.00015",
+            "startDate": "2026-01-01",
+            "endDate": "2026-12-31"
+          },
+          {
+            "marketCountry": "US",
+            "commissionRate": "0.001",
+            "startDate": null,
+            "endDate": "2026-06-30"
+          }
+        ]
+      }
+    },
+    {
+      "endpoint": "/api/v1/commissions",
+      "name": "unlimited",
+      "body": {
+        "result": [
+          {
+            "marketCountry": "KR",
+            "commissionRate": "0.00015",
+            "startDate": "2026-01-01",
+            "endDate": null
+          },
+          {
+            "marketCountry": "US",
+            "commissionRate": "0.0025",
+            "startDate": null,
+            "endDate": null
+          }
+        ]
+      }
+    }
+  ]
+}
