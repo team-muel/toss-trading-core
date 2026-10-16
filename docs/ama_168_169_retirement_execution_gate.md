@@ -7,6 +7,12 @@ Status: **BLOCKED — no concrete retirement target is authorized.**
 
 ## Observed scope
 
+Cloud observations in this document summarize the historical PR #104 discovery
+record; this revision performs no cloud query and does not refresh that record.
+Use the original observation timestamps and evidence references, not this
+document's commit time. Missing provenance remains `UNKNOWN`; historical absence
+does not establish current absence or satisfy execution freshness.
+
 The approved read-only discovery of
 `toss-trading-core-lab-508411` found no Compute VM, disk, static IP, Cloud
 Scheduler job, research service account, bucket, BigQuery dataset, logging
