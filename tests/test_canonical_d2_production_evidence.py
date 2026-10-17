@@ -340,7 +340,8 @@ def test_canonical_evidence_replays_only_a_complete_persisted_bundle(monkeypatch
     # The test constructs temporary persisted records; the production entry point
     # accepts none of these economic values from its caller.
     now = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(hours=3)
-    conn = sqlite3.connect(":memory:")
+    database = tmp_path / "persisted.sqlite"
+    conn = sqlite3.connect(database)
     _schema(conn, now)
     conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
                  ("canonical-run@1", now.isoformat(), now.isoformat(), "git:canonical", (now - timedelta(hours=5)).isoformat()))
@@ -357,6 +358,20 @@ def test_canonical_evidence_replays_only_a_complete_persisted_bundle(monkeypatch
     assert "external_attestor_registry" in json.loads(conn.execute(
         "SELECT payload_json FROM am_canonical_d2_production_evidence").fetchone()[0])
     assert repository.replay(runtime_run_id="canonical-run@1", store=store) == recorded
+    conn.commit()
+    from scripts.check_application_runtime_deployment_evidence import replay_persisted_d2
+    before_database = database.read_bytes()
+    before_store = {str(path.relative_to(store.layout.root)): path.read_bytes()
+                    for path in store.layout.root.rglob("*") if path.is_file()}
+    replayed, lineage, migrations, operations = replay_persisted_d2(database, store.layout.root, "canonical-run@1")
+    assert operations == {}
+    assert migrations == tuple(item.version for item in load_migration_catalog(ROOT / "schemas"))
+    assert replayed == recorded
+    assert lineage == {"runtime_run_id": "canonical-run@1", "as_of_utc": now.isoformat(),
+                       "information_cutoff_utc": now.isoformat(), "code_revision": "git:canonical"}
+    assert database.read_bytes() == before_database
+    assert {str(path.relative_to(store.layout.root)): path.read_bytes()
+            for path in store.layout.root.rglob("*") if path.is_file()} == before_store
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
         conn.execute("UPDATE am_canonical_d2_production_evidence SET content_hash='0'")
     with pytest.raises(sqlite3.IntegrityError, match="append-only"):
@@ -611,3 +626,261 @@ def test_provider_statement_cannot_be_rebound_to_another_runtime(monkeypatch, tm
         conn.execute("INSERT INTO am_provider_accounting_snapshot VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                      ("provider-accounting:other-run:reused", "other-run", row[0], row[1], "account-2",
                       now.isoformat(), "{}", "f" * 64, now.isoformat()))
+
+
+@pytest.mark.parametrize("failure", [None, "unattested", "hash", "time", "project", "endpoint", "source", "stale", "future", "pagination"])
+def test_operations_observations_require_existing_signed_complete_fresh_exports(monkeypatch, failure):
+    from scripts.check_application_runtime_deployment_evidence import verify_operations_observations
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    runtime_cutoff = now - timedelta(minutes=30)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", runtime_cutoff.isoformat(), runtime_cutoff.isoformat(), "git:test", (now - timedelta(hours=5)).isoformat()))
+    attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
+    project = "toss-trading-core-lab-508411"
+    observations = {}
+    for name, endpoint, method, collection in (
+        ("iam_policy_observation", "https://cloudasset.googleapis.com/v1/projects/347216292745:searchAllIamPolicies", "GET", "results"),
+        ("api_state_observation", "https://serviceusage.googleapis.com/v1/projects/347216292745/services?filter=state%3AENABLED", "GET", "services"),
+    ):
+        received = now
+        if failure == "stale":
+            received -= timedelta(hours=2)
+        elif failure == "future":
+            received += timedelta(seconds=1)
+        body = {collection: []}
+        if failure == "pagination":
+            body["nextPageToken"] = "uncollected"
+        raw_store = SQLiteRawResponseStore(conn)
+        raw_id = raw_store.append(source="untrusted" if failure == "source" else "gcp-operations",
+            endpoint=endpoint + "/wrong" if failure == "endpoint" else endpoint,
+            http_method=method, request_payload={}, status_code=200, body=body,
+            requested_at=received, received_at=received, account_id=None,
+            schema_version="gcp-operation-export@1")
+        if failure != "unattested":
+            _attest(conn, raw_id, attestor, received)
+        response = raw_store.verified(raw_id)
+        observations[name] = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + response.response_hash,
+                              "source_reference": endpoint, "project_id": project,
+                              "observed_at": received.isoformat()}
+    if failure == "hash":
+        observations["iam_policy_observation"]["artifact_sha256"] = "sha256:" + "0" * 64
+    elif failure == "time":
+        observations["iam_policy_observation"]["observed_at"] = (now - timedelta(seconds=1)).isoformat()
+    elif failure == "project":
+        observations["iam_policy_observation"]["project_id"] = "wrong-project"
+    conn.commit()
+    before = conn.total_changes
+    if failure is None:
+        assert verify_operations_observations(conn, "canonical-run@1", observations, clock=FrozenClock(now)) == observations
+    else:
+        with pytest.raises((ValueError, DataQualityError, InvariantViolation)):
+            verify_operations_observations(conn, "canonical-run@1", observations, clock=FrozenClock(now))
+    assert conn.total_changes == before
+    conn.close()
+
+
+@pytest.mark.parametrize("failure", [None, "unattested", "resources", "scope", "instance", "hash", "stale"])
+def test_absence_inventory_consumes_signed_contents(monkeypatch, failure):
+    from scripts.check_application_runtime_deployment_evidence import verify_absence_inventories
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    cutoff = now - timedelta(minutes=30)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", cutoff.isoformat(), cutoff.isoformat(), "git:test", (now - timedelta(hours=5)).isoformat()))
+    attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
+    project = "toss-trading-core-lab-508411"
+    instance = f"projects/{project}/zones/asia-northeast3-a/instances/runtime-01"
+    inventories = {}
+    mappings = {
+        "scheduler_inventory": {"cloud_scheduler_jobs": "active_scheduled_job_count", "vm_systemd_timers": "active_vm_timer_count"},
+        "ingress_inventory": {"project_firewall_rules": "inbound_firewall_rule_count", "vm_network_interfaces": "external_ip_count", "vm_listening_sockets": "listening_socket_count"},
+    }
+    for name, mapping in mappings.items():
+        received = now - timedelta(hours=2) if failure == "stale" else now
+        body = {"project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance,
+                "coverage": "COMPLETE_PROJECT_AND_INSTANCE", "surfaces": {surface: [] for surface in mapping}}
+        if failure == "resources":
+            body["surfaces"][next(iter(mapping))] = ["active-resource"]
+        elif failure == "scope":
+            body["coverage"] = "PARTIAL"
+        elif failure == "instance":
+            body["instance_resource_id"] = instance + "-other"
+        endpoint = f"inventory://{instance}/{name}"
+        raw = SQLiteRawResponseStore(conn)
+        raw_id = raw.append(source="canonical-operations-inventory", endpoint=endpoint, http_method="GET",
+                            request_payload={}, status_code=200, body=body, requested_at=received,
+                            received_at=received, account_id=None, schema_version="canonical-absence-inventory@1")
+        if failure != "unattested":
+            _attest(conn, raw_id, attestor, received)
+        inventories[name] = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + raw.verified(raw_id).response_hash,
+                            "source_reference": endpoint, "project_id": project, "observed_at": received.isoformat(),
+                            "inspected_surfaces": list(mapping), **{count: 0 for count in mapping.values()}}
+        if failure == "hash":
+            inventories[name]["artifact_sha256"] = "sha256:" + "0" * 64
+    conn.commit()
+    before = conn.total_changes
+    if failure is None:
+        assert verify_absence_inventories(conn, "canonical-run@1", inventories, instance, clock=FrozenClock(now)) == inventories
+    else:
+        with pytest.raises((ValueError, DataQualityError, InvariantViolation)):
+            verify_absence_inventories(conn, "canonical-run@1", inventories, instance, clock=FrozenClock(now))
+    assert conn.total_changes == before
+    conn.close()
+
+
+@pytest.mark.parametrize("failure", [None, "unattested", "report_hash", "snapshot", "disk", "retention", "failed_restore", "signed_integer_success"])
+def test_recovery_observation_requires_signed_bound_snapshot_and_restore(monkeypatch, failure):
+    from scripts.check_application_runtime_deployment_evidence import verify_recovery_observation
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    cutoff = now - timedelta(minutes=30)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", cutoff.isoformat(), cutoff.isoformat(), "git:test", (now - timedelta(hours=5)).isoformat()))
+    attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
+    project = "toss-trading-core-lab-508411"
+    disk_id = f"projects/{project}/zones/asia-northeast3-a/disks/evidence-01"
+    snapshot_id = f"projects/{project}/global/snapshots/evidence-01"
+    report = {"verified_at": now.isoformat(), "restored_snapshot_resource_id": snapshot_id,
+              "restore_succeeded": failure != "failed_restore", "database_integrity_check": "ok"}
+    restore = {**report, "evidence_sha256": "sha256:" + digest(canonical(report)),
+               "evidence_reference": "https://evidence.example/restore/report.json"}
+    snapshot = {"resource_id": snapshot_id, "source_disk_resource_id": disk_id,
+                "retention_policy": {"minimum_retention_days": 30, "immutable_until": (now + timedelta(days=30)).isoformat()},
+                "restore_test": restore}
+    instance = {"resource_id": f"projects/{project}/zones/asia-northeast3-a/instances/runtime-01",
+                "attached_evidence_disk": {"resource_id": disk_id, "backup_snapshot": snapshot}}
+    body = {"project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance["resource_id"],
+            "source_disk_resource_id": disk_id, "snapshot": {key: value for key, value in snapshot.items() if key != "restore_test"},
+            "restore_report": dict(report), "restore_reference": restore["evidence_reference"]}
+    if failure == "signed_integer_success":
+        body["restore_report"]["restore_succeeded"] = 1
+    raw = SQLiteRawResponseStore(conn)
+    endpoint = f"recovery://{disk_id}"
+    raw_id = raw.append(source="canonical-operations-recovery", endpoint=endpoint, http_method="GET",
+                        request_payload={}, status_code=200, body=body, requested_at=now, received_at=now,
+                        account_id=None, schema_version="canonical-recovery-export@1")
+    if failure != "unattested":
+        _attest(conn, raw_id, attestor, now)
+    observation = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + raw.verified(raw_id).response_hash,
+                   "source_reference": endpoint, "project_id": project, "observed_at": now.isoformat()}
+    if failure == "report_hash":
+        restore["evidence_sha256"] = "sha256:" + "0" * 64
+    elif failure == "snapshot":
+        snapshot["resource_id"] += "-other"
+    elif failure == "disk":
+        instance["attached_evidence_disk"]["resource_id"] += "-other"
+    elif failure == "retention":
+        snapshot["retention_policy"]["minimum_retention_days"] = 1
+    conn.commit()
+    before = conn.total_changes
+    if failure is None:
+        assert verify_recovery_observation(conn, "canonical-run@1", observation, instance, clock=FrozenClock(now)) == {"recovery_observation": observation}
+    else:
+        with pytest.raises((ValueError, DataQualityError, InvariantViolation)):
+            verify_recovery_observation(conn, "canonical-run@1", observation, instance, clock=FrozenClock(now))
+    assert conn.total_changes == before
+    conn.close()
+
+
+@pytest.mark.parametrize("failure", [None, "unattested", "image_claim", "manifest_claim", "image_bytes", "manifest_bytes", "source", "manifest_mode", "typed_live", "duplicate", "observability_claim", "observability_bytes", "observability_binding", "observability_manifest", "actor_claim", "approval_claim", "approval_bytes", "approval_status", "approval_scope", "approval_future", "approval_duplicate"])
+def test_artifact_observation_binds_captured_bytes_and_deployment(monkeypatch, failure):
+    from scripts.check_application_runtime_deployment_evidence import verify_artifact_observation
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    conn = sqlite3.connect(":memory:")
+    _schema(conn, now)
+    cutoff = now - timedelta(minutes=30)
+    conn.execute("INSERT INTO am_runtime_run VALUES (?, ?, ?, ?, ?)",
+                 ("canonical-run@1", cutoff.isoformat(), cutoff.isoformat(), "a" * 40, (now - timedelta(hours=5)).isoformat()))
+    attestor = _attestor(monkeypatch, conn, now - timedelta(hours=5))
+    project = "toss-trading-core-lab-508411"
+    instance = {"resource_id": f"projects/{project}/zones/asia-northeast3-a/instances/runtime-01",
+                "attached_evidence_disk": {"resource_id": f"projects/{project}/zones/asia-northeast3-a/disks/evidence-01"},
+                "attached_service_account": {"resource_id": f"projects/{project}/serviceAccounts/runtime@{project}.iam.gserviceaccount.com"}}
+    observability_bytes = b'{"test_only":true,"logging":"enabled"}'
+    observability_hash = "sha256:" + sha256(observability_bytes).hexdigest()
+    image_bytes = b'{"schemaVersion":2,"test_only":true}'
+    image_hash = "sha256:" + sha256(image_bytes).hexdigest()
+    manifest = {"schema_version": "canonical-application-runtime-applied-manifest@1", "project_id": project,
+                "project_number": "347216292745", "instance_resource_id": instance["resource_id"],
+                "disk_resource_id": instance["attached_evidence_disk"]["resource_id"],
+                "service_account_resource_id": instance["attached_service_account"]["resource_id"],
+                "source_sha": "a" * 40, "image_digest": image_hash, "runtime_mode": "READ_ONLY", "live_trading_enabled": False,
+                "observability_config_hash": observability_hash}
+    if failure == "manifest_mode":
+        manifest["runtime_mode"] = "LIVE"
+    elif failure == "typed_live":
+        manifest["live_trading_enabled"] = 0
+    if failure == "observability_manifest":
+        manifest["observability_config_hash"] = "sha256:" + "0" * 64
+    manifest_bytes = canonical(manifest)
+    if failure == "duplicate":
+        manifest_bytes = manifest_bytes[:-1] + b',"source_sha":"override"}'
+    manifest_hash = "sha256:" + sha256(manifest_bytes).hexdigest()
+    body = {"project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance["resource_id"],
+            "source_sha": "a" * 40, "deployed_image_digest": image_hash, "applied_manifest_hash": manifest_hash,
+            "image_descriptor_bytes_base64": b64encode(image_bytes).decode(),
+            "applied_manifest_bytes_base64": b64encode(manifest_bytes).decode(),
+            "observability_config_bytes_base64": b64encode(observability_bytes).decode(),
+            "observability_config_hash": observability_hash}
+    if failure == "image_bytes":
+        body["image_descriptor_bytes_base64"] = b64encode(b"different").decode()
+    elif failure == "manifest_bytes":
+        body["applied_manifest_bytes_base64"] = b64encode(manifest_bytes + b" ").decode()
+    if failure == "observability_bytes":
+        body["observability_config_bytes_base64"] = b64encode(b"different").decode()
+    elif failure == "observability_binding":
+        body["observability_config_hash"] = "sha256:" + "0" * 64
+    approval = {"schema_version": "canonical-application-runtime-deployment-approval@1",
+                "status": "APPROVED", "actor": "test-reviewer", "approval_reference": "review://test-only",
+                "project_id": project, "runtime_run_id": "canonical-run@1", "instance_resource_id": instance["resource_id"],
+                "source_sha": "a" * 40, "image_digest": image_hash, "manifest_hash": manifest_hash,
+                "observability_config_hash": observability_hash, "runtime_mode": "READ_ONLY", "live_trading_enabled": False,
+                "approved_at": (now - timedelta(minutes=1)).isoformat()}
+    if failure == "approval_status":
+        approval["status"] = "REVOKED"
+    elif failure == "approval_scope":
+        approval["runtime_run_id"] = "different-run"
+    elif failure == "approval_future":
+        approval["approved_at"] = (now + timedelta(seconds=1)).isoformat()
+    approval_bytes = canonical(approval)
+    if failure == "approval_duplicate":
+        approval_bytes = approval_bytes[:-1] + b',"actor":"override"}'
+    body["approval_record_hash"] = "sha256:" + sha256(approval_bytes).hexdigest()
+    body["approval_record_bytes_base64"] = b64encode(approval_bytes if failure != "approval_bytes" else b"different").decode()
+    endpoint = f"artifact://{instance['resource_id']}"
+    raw = SQLiteRawResponseStore(conn)
+    raw_id = raw.append(source="canonical-operations-artifact", endpoint=endpoint, http_method="GET",
+                        request_payload={}, status_code=200, body=body, requested_at=now, received_at=now,
+                        account_id=None, schema_version="canonical-deployed-artifact-export@1")
+    if failure != "unattested":
+        _attest(conn, raw_id, attestor, now)
+    observation = {"raw_response_id": raw_id, "artifact_sha256": "sha256:" + raw.verified(raw_id).response_hash,
+                   "source_reference": endpoint, "project_id": project, "observed_at": now.isoformat()}
+    evidence = {"runtime_topology": {"instance": instance}, "project": {"project_id": project, "project_number": "347216292745"},
+                "source_sha": "a" * 40, "image_digest": image_hash, "manifest_hash": manifest_hash,
+                "observability_config_hash": observability_hash, "actor": "test-reviewer", "approval_reference": "review://test-only"}
+    if failure == "actor_claim":
+        evidence["actor"] = "invented-reviewer"
+    elif failure == "approval_claim":
+        evidence["approval_reference"] = "review://invented"
+    if failure == "observability_claim":
+        evidence["observability_config_hash"] = "sha256:" + "0" * 64
+    if failure == "image_claim":
+        evidence["image_digest"] = "sha256:" + "0" * 64
+    elif failure == "manifest_claim":
+        evidence["manifest_hash"] = "sha256:" + "0" * 64
+    elif failure == "source":
+        evidence["source_sha"] = "b" * 40
+    conn.commit()
+    before = conn.total_changes
+    if failure is None:
+        assert verify_artifact_observation(conn, "canonical-run@1", observation, evidence, clock=FrozenClock(now)) == {"artifact_observation": observation}
+    else:
+        with pytest.raises((ValueError, DataQualityError, InvariantViolation)):
+            verify_artifact_observation(conn, "canonical-run@1", observation, evidence, clock=FrozenClock(now))
+    assert conn.total_changes == before
+    conn.close()

@@ -1,0 +1,438 @@
+from copy import deepcopy
+import json
+from pathlib import Path
+from types import SimpleNamespace
+from datetime import datetime, timezone
+from asset_management.time.clock import FrozenClock
+from asset_management.config.migrations import load_migration_catalog
+
+import pytest
+from jsonschema import Draft202012Validator, FormatChecker
+
+from scripts.check_application_runtime_deployment_evidence import main as check_deployment_evidence
+from scripts.check_application_runtime_deployment_evidence import replay_persisted_d2
+from scripts.check_application_runtime_deployment_evidence import validate_evidence
+from scripts.check_application_runtime_preflight import validate_manifest
+
+ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = json.loads((ROOT / "deploy/preflight/application_runtime_manifest.json").read_text(encoding="utf-8"))
+SCHEMA = json.loads((ROOT / "schemas/application_runtime_preflight.schema.json").read_text(encoding="utf-8"))
+IDENTITY = json.loads((ROOT / "config/research_operations_identity.json").read_text(encoding="utf-8"))
+BUCKETS = json.loads((ROOT / "config/research_operations_bucket_registry.json").read_text(encoding="utf-8"))
+EVIDENCE_SCHEMA = json.loads((ROOT / "schemas/application_runtime_deployment_evidence.schema.json").read_text(encoding="utf-8"))
+
+
+def errors(manifest=MANIFEST, identity=IDENTITY, buckets=BUCKETS):
+    return validate_manifest(manifest, identity, buckets, SCHEMA)
+
+
+def test_plan_manifest_and_future_evidence_schema_are_valid_contracts():
+    Draft202012Validator.check_schema(SCHEMA)
+    Draft202012Validator.check_schema(EVIDENCE_SCHEMA)
+    Draft202012Validator(SCHEMA, format_checker=FormatChecker()).validate(MANIFEST)
+    assert errors() == []
+    assert MANIFEST["preflight"]["status"] == "BLOCKED"
+    assert MANIFEST["authority"]["deployment_executed"] is False
+    assert EVIDENCE_SCHEMA["$defs"]["observedProject"]["properties"]["project_id"]["const"] == IDENTITY["approved_project_id"]
+    assert EVIDENCE_SCHEMA["$defs"]["observedProject"]["properties"]["project_number"]["const"] == IDENTITY["approved_project_number"]
+    assert EVIDENCE_SCHEMA["$defs"]["resourceObservation"]["properties"]["project_id"]["const"] == IDENTITY["approved_project_id"]
+
+
+def valid_deployment_evidence():
+    observation = "2026-09-24T00:00:00Z"
+    project_id = IDENTITY["approved_project_id"]
+    zone = "asia-northeast3-a"
+    disk_id = f"projects/{project_id}/zones/{zone}/disks/runtime-evidence-01"
+    snapshot_id = f"projects/{project_id}/global/snapshots/runtime-evidence-20260924"
+    runtime_lineage = {
+        "runtime_run_id": "runtime-run-20260924-001",
+        "as_of_utc": "2026-09-23T23:59:00Z",
+        "information_cutoff_utc": "2026-09-23T23:58:00Z",
+        "code_revision": "a" * 40,
+    }
+    d2_replay = {
+        "runtime_run_id": runtime_lineage["runtime_run_id"],
+        "canonical_evidence_hash": "1" * 64,
+        "model_registry_snapshot_id": "model-registry-snapshot-001",
+        "model_registry_binding_hash": "2" * 64,
+        "factor_risk_calculation_id": "3" * 64,
+        "risk_free_manifest_id": "4" * 64,
+        "risk_free_curve_hash": "5" * 64,
+        "accounting_snapshot_id": "accounting-snapshot-001",
+        "observed_at": "2026-09-24T00:01:00Z",
+        "evidence_reference": "https://evidence.example/d2/replay.json",
+    }
+
+    return {
+        "schema_version": "canonical-application-runtime-deployment-evidence@1",
+        "source_sha": "a" * 40,
+        "image_digest": "sha256:" + "b" * 64,
+        "manifest_hash": "sha256:" + "c" * 64,
+        "project": {
+            "resource_type": "google_project",
+            "resource_id": project_id,
+            "project_id": project_id,
+            "project_number": IDENTITY["approved_project_number"],
+            "observed_at": observation,
+            "source_reference": "https://evidence.example/observations/project.json",
+        },
+        "runtime_topology": {
+            "instance": {
+                "resource_type": "google_compute_instance",
+                "resource_id": f"projects/{project_id}/zones/{zone}/instances/asset-runtime-01",
+                "project_id": project_id,
+                "observed_at": observation,
+                "source_reference": "https://evidence.example/observations/instance.json",
+                "attached_evidence_disk": {
+                    "resource_type": "google_compute_disk",
+                    "resource_id": disk_id,
+                    "project_id": project_id,
+                    "observed_at": observation,
+                    "source_reference": "https://evidence.example/observations/disk.json",
+                    "mount_path": "/var/lib/asset-management/runtime",
+                    "backup_snapshot": {
+                        "resource_type": "google_compute_snapshot",
+                        "resource_id": snapshot_id,
+                        "project_id": project_id,
+                        "source_disk_resource_id": disk_id,
+                        "observed_at": observation,
+                        "source_reference": "https://evidence.example/observations/snapshot.json",
+                        "retention_policy": {
+                            "policy_reference": "https://evidence.example/retention/runtime-policy.json",
+                            "minimum_retention_days": 30,
+                            "immutable_until": "2026-10-24T00:00:00Z",
+                        },
+                        "restore_test": {
+                            "evidence_sha256": "sha256:" + "f" * 64,
+                            "evidence_reference": "https://evidence.example/restore-tests/runtime.json",
+                            "verified_at": "2026-09-24T00:00:30Z",
+                            "restored_snapshot_resource_id": snapshot_id,
+                            "restore_succeeded": True,
+                            "database_integrity_check": "ok",
+                        },
+                    },
+                },
+                "attached_service_account": {
+                    "resource_type": "google_iam_service_account",
+                    "resource_id": f"projects/{project_id}/serviceAccounts/asset-runtime@{project_id}.iam.gserviceaccount.com",
+                    "project_id": project_id,
+                    "observed_at": observation,
+                    "source_reference": "https://evidence.example/observations/service-account.json",
+                },
+            }
+        },
+        "runtime_lineage": {
+            **runtime_lineage,
+            "evidence_reference": "https://evidence.example/runtime/lineage.json",
+        },
+        "d2_replay": d2_replay,
+        "iam_policy_observation": {"raw_response_id": "iam@1", "artifact_sha256": "sha256:" + "d" * 64,
+                                   "source_reference": "https://cloudasset.googleapis.com/v1/projects/347216292745:searchAllIamPolicies",
+                                   "project_id": project_id, "observed_at": observation},
+        "api_state_observation": {"raw_response_id": "api@1", "artifact_sha256": "sha256:" + "e" * 64,
+                                  "source_reference": "https://serviceusage.googleapis.com/v1/projects/347216292745/services?filter=state%3AENABLED",
+                                  "project_id": project_id, "observed_at": observation},
+        "recovery_observation": {"raw_response_id": "recovery@1", "artifact_sha256": "sha256:" + "a" * 64,
+                                 "source_reference": f"recovery://{disk_id}", "project_id": project_id, "observed_at": observation},
+        "artifact_observation": {"raw_response_id": "artifact@1", "artifact_sha256": "sha256:" + "b" * 64,
+                                 "source_reference": f"artifact://projects/{project_id}/zones/{zone}/instances/asset-runtime-01", "project_id": project_id, "observed_at": observation},
+        "runtime_mode": "READ_ONLY",
+        "live_trading_enabled": False,
+        "migration_versions": [item.version for item in load_migration_catalog(ROOT / "schemas")],
+        "observability_config_hash": "sha256:" + "1" * 64,
+        "scheduler_inventory": {
+            "artifact_sha256": "sha256:" + "2" * 64,
+            "raw_response_id": "scheduler@1",
+            "source_reference": f"inventory://projects/{project_id}/zones/{zone}/instances/asset-runtime-01/scheduler_inventory",
+            "project_id": project_id,
+            "observed_at": observation,
+            "inspected_surfaces": ["cloud_scheduler_jobs", "vm_systemd_timers"],
+            "active_scheduled_job_count": 0,
+            "active_vm_timer_count": 0,
+        },
+        "ingress_inventory": {
+            "artifact_sha256": "sha256:" + "3" * 64,
+            "raw_response_id": "ingress@1",
+            "source_reference": f"inventory://projects/{project_id}/zones/{zone}/instances/asset-runtime-01/ingress_inventory",
+            "project_id": project_id,
+            "observed_at": observation,
+            "inspected_surfaces": ["project_firewall_rules", "vm_network_interfaces", "vm_listening_sockets"],
+            "inbound_firewall_rule_count": 0,
+            "external_ip_count": 0,
+            "listening_socket_count": 0,
+        },
+        "observed_at": "2026-09-24T00:02:00Z",
+        "actor": "operator@example.com",
+        "approval_reference": "https://evidence.example/approvals/deployment.json",
+    }
+
+
+def persisted_d2_fixture():
+    return SimpleNamespace(
+        runtime_run_id="runtime-run-20260924-001",
+        content_hash="1" * 64,
+        model_registry_snapshot_id="model-registry-snapshot-001",
+        model_registry_binding_hash="2" * 64,
+        factor_risk_calculation_id="3" * 64,
+        risk_free_manifest_id="4" * 64,
+        risk_free_curve_hash="5" * 64,
+        accounting_snapshot_id="accounting-snapshot-001",
+    )
+
+
+def persisted_lineage_fixture():
+    return {
+        "runtime_run_id": "runtime-run-20260924-001",
+        "as_of_utc": "2026-09-23T23:59:00Z",
+        "information_cutoff_utc": "2026-09-23T23:58:00Z",
+        "code_revision": "a" * 40,
+    }
+
+
+def validate_future_evidence(evidence, *, clock=None):
+    return validate_evidence(
+        evidence, EVIDENCE_SCHEMA, IDENTITY,
+        persisted_d2=persisted_d2_fixture(),
+        persisted_lineage=persisted_lineage_fixture(),
+        persisted_migrations=tuple(item.version for item in load_migration_catalog(ROOT / "schemas")),
+        persisted_operations={name: evidence[name] for name in ("iam_policy_observation", "api_state_observation", "scheduler_inventory", "ingress_inventory", "recovery_observation", "artifact_observation")},
+        clock=clock or FrozenClock(datetime(2026, 9, 24, 0, 2, tzinfo=timezone.utc)),
+    )
+
+
+def test_future_deployment_evidence_is_bound_to_approved_project_and_topology():
+    validator = Draft202012Validator(EVIDENCE_SCHEMA, format_checker=FormatChecker())
+    evidence = valid_deployment_evidence()
+    validator.validate(evidence)
+    assert validate_future_evidence(evidence) == []
+
+    evidence["project"]["project_number"] = "1"
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["project_id"] = "unapproved-project"
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_topology"]["instance"]["resource_id"] = "runtime-vm"
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_topology"]["instance"]["attached_service_account"]["resource_id"] = "runtime-service-account"
+    assert list(validator.iter_errors(evidence))
+
+    assert validate_evidence([], EVIDENCE_SCHEMA, IDENTITY)
+
+
+def test_future_deployment_evidence_requires_absence_and_durable_restore_proof():
+    validator = Draft202012Validator(EVIDENCE_SCHEMA, format_checker=FormatChecker())
+    evidence = valid_deployment_evidence()
+    evidence["scheduler_inventory"]["active_scheduled_job_count"] = 1
+    evidence["ingress_inventory"]["listening_socket_count"] = 1
+    evidence["scheduler_inventory"]["project_id"] = "unapproved-project"
+    evidence["ingress_inventory"]["inspected_surfaces"].remove("vm_network_interfaces")
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    restore = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]["restore_test"]
+    restore["restore_succeeded"] = False
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    snapshot = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]
+    snapshot["project_id"] = "unapproved-project"
+    assert list(validator.iter_errors(evidence))
+
+    evidence = valid_deployment_evidence()
+    snapshot = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]
+    snapshot["source_disk_resource_id"] = f"projects/{IDENTITY['approved_project_id']}/zones/asia-northeast3-a/disks/unrelated-disk"
+    assert validate_future_evidence(evidence)
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]["restore_test"]["restored_snapshot_resource_id"] = "projects/toss-trading-core-lab-508411/global/snapshots/unrelated-snapshot"
+    assert validate_future_evidence(evidence)
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_lineage"]["information_cutoff_utc"] = "2026-09-24T00:01:00Z"
+    evidence["d2_replay"]["runtime_run_id"] = "different-runtime-run"
+    evidence["runtime_lineage"]["code_revision"] = "b" * 40
+    assert validate_future_evidence(evidence)
+
+    evidence = valid_deployment_evidence()
+    evidence["d2_replay"]["canonical_evidence_hash"] = "9" * 64
+    assert validate_future_evidence(evidence)
+
+    evidence = valid_deployment_evidence()
+    evidence["runtime_topology"] = "unknown"
+    assert validate_future_evidence(evidence)
+
+
+def test_future_deployment_evidence_requires_authoritative_persisted_d2_verification():
+    evidence = valid_deployment_evidence()
+    assert "canonical D2 replay against the persisted evidence store is required" in validate_evidence(
+        evidence, EVIDENCE_SCHEMA, IDENTITY)
+
+
+def test_evidence_checker_reports_structural_errors_without_traceback(tmp_path, capsys):
+    evidence_path = tmp_path / "invalid-deployment-evidence.json"
+    evidence_path.write_text(json.dumps({"runtime_topology": "unknown"}), encoding="utf-8")
+    result = check_deployment_evidence([
+        str(evidence_path), "--database", str(tmp_path / "unused.sqlite"),
+        "--immutable-store", str(tmp_path / "unused-store"),
+    ])
+    output = json.loads(capsys.readouterr().out)
+    assert result == 2
+    assert output["deployment_authorized"] is False
+    assert output["evidence_contract_valid"] is False
+    assert output["errors"]
+
+
+def test_persisted_replay_requires_an_existing_database_without_creating_one(tmp_path):
+    missing = tmp_path / "missing-evidence.sqlite"
+    with pytest.raises(ValueError, match="CANONICAL_D2_EVIDENCE_DATABASE_MISSING"):
+        replay_persisted_d2(missing, tmp_path / "immutable", "run@1")
+    assert not missing.exists()
+
+
+@pytest.mark.parametrize("claimed", [[20], [999], [1], list(range(1, 21)) + [20]])
+def test_claimed_migrations_must_match_applied_inventory(claimed):
+    evidence = valid_deployment_evidence()
+    evidence["migration_versions"] = claimed
+    assert "migration_versions must match the authoritative applied migration inventory" in validate_future_evidence(evidence)
+
+
+@pytest.mark.parametrize(("now", "message"), [
+    (datetime(2026, 9, 23, tzinfo=timezone.utc), "evidence contains observations later than verification time"),
+    (datetime(2026, 9, 24, 2, tzinfo=timezone.utc), "current state observations exceed the one-hour freshness limit"),
+    (datetime(2026, 10, 25, tzinfo=timezone.utc), "snapshot retention has expired at verification time"),
+])
+def test_evidence_freshness_and_retention_use_verifier_clock(now, message):
+    assert message in validate_future_evidence(valid_deployment_evidence(), clock=FrozenClock(now))
+
+
+@pytest.mark.parametrize("error", [KeyError("manifest_id"), TypeError("malformed"), AttributeError("malformed"), IndexError("malformed"), RecursionError("nested evidence")])
+def test_corrupt_persisted_evidence_returns_blocked_json(tmp_path, monkeypatch, capsys, error):
+    import scripts.check_application_runtime_deployment_evidence as checker
+    def corrupt(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(checker, "replay_persisted_d2", corrupt)
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(valid_deployment_evidence()), encoding="utf-8")
+    assert checker.main([str(evidence_path), "--database", str(tmp_path / "existing.sqlite"),
+                         "--immutable-store", str(tmp_path / "store")]) == 2
+    output = json.loads(capsys.readouterr().out)
+    assert output["evidence_contract_valid"] is False
+    assert output["deployment_authorized"] is False
+    assert "failed closed" in output["errors"][0]
+
+
+@pytest.mark.parametrize("option", ["--schema", "--identity"])
+def test_cli_rejects_caller_selected_authority_contracts(tmp_path, option):
+    with pytest.raises(SystemExit):
+        check_deployment_evidence([str(tmp_path / "evidence.json"), "--database", str(tmp_path / "db"),
+                                   "--immutable-store", str(tmp_path / "store"), option, str(tmp_path / "override.json")])
+
+
+def test_direct_validator_rejects_relaxed_repository_contract():
+    candidate = deepcopy(EVIDENCE_SCHEMA)
+    candidate["properties"]["live_trading_enabled"] = {"type": "boolean"}
+    assert validate_evidence(valid_deployment_evidence(), candidate, IDENTITY) == [
+        "evidence contract and identity must match the repository-controlled definitions"]
+
+
+def test_recursive_input_json_returns_blocked_result(tmp_path, capsys):
+    path = tmp_path / "recursive.json"
+    path.write_text("[" * 2000 + "0" + "]" * 2000, encoding="utf-8")
+    assert check_deployment_evidence([str(path), "--database", str(tmp_path / "db"),
+                                    "--immutable-store", str(tmp_path / "store")]) == 2
+    assert json.loads(capsys.readouterr().out)["evidence_contract_valid"] is False
+
+
+@pytest.mark.parametrize(("mutation", "message"), [
+    (lambda e: e["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"].update(observed_at="2026-09-24T00:01:00Z"), "restore verification must be observed at or after its snapshot"),
+    (lambda e: e["d2_replay"].update(observed_at="2026-09-23T23:58:00Z"), "canonical D2 replay observation must be at or after runtime as_of_utc"),
+    (lambda e: e.update(observed_at="2026-09-24T00:00:30Z"), "deployment evidence observed_at precedes one of its evidence observations"),
+    (lambda e: e["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]["retention_policy"].update(immutable_until="2026-10-01T00:00:00Z"), "snapshot immutable_until does not satisfy its minimum retention period"),
+])
+def test_future_deployment_evidence_rejects_contradictory_observation_times(mutation, message):
+    evidence = valid_deployment_evidence()
+    mutation(evidence)
+    assert message in validate_future_evidence(evidence)
+
+
+@pytest.mark.parametrize("observed_at", ["2026-10-24T00:00:00Z", "2026-10-25T00:00:00Z"])
+def test_future_deployment_evidence_rejects_expired_snapshot_retention(observed_at):
+    evidence = valid_deployment_evidence()
+    evidence["observed_at"] = observed_at
+    assert "snapshot retention must remain active at deployment evidence observed_at" in validate_future_evidence(evidence)
+
+
+def test_future_deployment_evidence_rejects_unrepresentable_retention_duration():
+    evidence = valid_deployment_evidence()
+    snapshot = evidence["runtime_topology"]["instance"]["attached_evidence_disk"]["backup_snapshot"]
+    snapshot["retention_policy"]["minimum_retention_days"] = 10**100
+    assert "deployment evidence timestamps or retention duration cannot be verified" in validate_future_evidence(evidence)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda m: m["target"].update(project_id="toss-trading-core-lab"),
+    lambda m: m["authority"].update(deployment_executed=True),
+    lambda m: m["runtime"].update(scheduler_enabled=True),
+    lambda m: m["runtime"].update(inbound_network_listener=True),
+    lambda m: m["runtime"].update(live_trading_enabled=True),
+    lambda m: m["runtime"]["deployer_service_account"].update(
+        proposed_email=m["runtime"]["service_account"]["proposed_email"]),
+    lambda m: m["apis"].append({"name": "cloudscheduler.googleapis.com", "purpose": "timer", "state": "NOT_ENABLED_BY_THIS_CHANGE"}),
+    lambda m: m["storage"].update(approved_data_buckets=["gs://unregistered-bucket"]),
+    lambda m: m["preflight"].update(blockers=[]),
+    lambda m: m["artifact"].update(image_digest="sha256:" + "a" * 64),
+])
+def test_preflight_rejects_authority_or_unverified_identity_drift(mutation):
+    candidate = deepcopy(MANIFEST)
+    mutation(candidate)
+    assert errors(candidate)
+
+
+def test_repository_identity_and_bucket_registry_must_agree():
+    other_identity = deepcopy(IDENTITY)
+    other_identity["approved_project_number"] = "1"
+    assert any("approved_project_number" in error for error in errors(identity=other_identity))
+
+    other_buckets = deepcopy(BUCKETS)
+    other_buckets["approved_project_id"] = "another-project"
+    assert any("bucket registry" in error for error in errors(buckets=other_buckets))
+
+
+def test_approved_bucket_object_records_match_manifest_names():
+    candidate = deepcopy(MANIFEST)
+    candidate["storage"].update(approved_data_buckets=["test-approved-data"], backup_bucket="test-approved-backup")
+    candidate["preflight"]["blockers"].remove("NO_APPROVED_DATA_OR_BACKUP_BUCKET")
+    registry = deepcopy(BUCKETS)
+    registry["approved_buckets"] = [
+        {"bucket_name": name, "project_id": IDENTITY["approved_project_id"], "approval_evidence_id": "test-only-approval"}
+        for name in ("test-approved-data", "test-approved-backup")
+    ]
+    assert errors(candidate, buckets=registry) == []
+    candidate["storage"]["backup_bucket"] = "unregistered-backup"
+    assert any("backup bucket absent" in error for error in errors(candidate, buckets=registry))
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda r: r["approved_buckets"].append("test-approved-data"),
+    lambda r: r["approved_buckets"].append({"bucket_name": "test-approved-data", "project_id": "wrong-project", "approval_evidence_id": "test"}),
+    lambda r: r["approved_buckets"].append({"bucket_name": "test-approved-data", "project_id": IDENTITY["approved_project_id"], "approval_evidence_id": ""}),
+])
+def test_malformed_bucket_registry_records_are_rejected(mutation):
+    registry = deepcopy(BUCKETS)
+    mutation(registry)
+    assert any("bucket registry invalid" in error for error in errors(buckets=registry))
+
+
+def test_unknown_or_extra_api_is_not_implicitly_allowed():
+    candidate = deepcopy(MANIFEST)
+    candidate["apis"][0]["state"] = "ENABLED"
+    assert errors(candidate)
+
+    candidate = deepcopy(MANIFEST)
+    candidate["apis"].append({"name": "cloudscheduler.googleapis.com", "purpose": "new scheduler", "state": "NOT_ENABLED_BY_THIS_CHANGE"})
+    assert errors(candidate)

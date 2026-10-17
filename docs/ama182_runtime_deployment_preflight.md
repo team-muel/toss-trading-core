@@ -1,0 +1,208 @@
+# AMA-182 — canonical ApplicationRuntime deployment preflight
+
+## Purpose and authority
+
+This is a plan-only deployment manifest for one future, canonical
+`ApplicationRuntime.boot → PipelineEvidenceRepository → DecisionKernel`
+workload. The manifest and its validator are offline review artifacts. They do
+not enable APIs, create identities or resources, deploy code, create a
+scheduler, change secrets, or grant execution authority.
+
+The checked-in manifest is deliberately `NOT_READY`. Its project identity is
+copied from `config/research_operations_identity.json`; the 2026-09-15
+resource-discovery record is scoped historical evidence, not a current cloud
+observation. In particular, the empty approved bucket registry is binding:
+no artifact or data destination is approved. No bucket, service account,
+registry, image digest, backup policy, IAM grant, or resource is invented here.
+
+## One proposed workload model
+
+Use one operator-invoked Compute Engine VM for the canonical application, with
+one attached zonal Persistent Disk for the SQLite evidence database. Run the
+application as a single systemd service with no inbound network listener and
+no timer, Cloud Scheduler job, or other automated invocation. Do not co-host
+legacy research, stock-recommendation, paper-broker, or Foundation units. Any
+future activation mode beyond `READ_ONLY` requires its own explicit authority
+and acceptance; this manifest does not grant it.
+
+The VM and data disk do not exist as an approved/current deployment target.
+Project, zone, machine shape, disk identity, image URI/digest, bucket, and
+backup destination therefore remain unresolved. Compute Engine Persistent
+Disk is a durable block-device option for the proposed SQLite file, but this
+plan does not claim that a disk or backup exists. See the official
+[Persistent Disk overview](https://docs.cloud.google.com/compute/docs/disks/persistent-disks).
+
+Runtime and deployer service-account *names* are proposed separately in the
+manifest; their existence and grants are `NOT_OBSERVED`. The runtime identity
+must be user-managed, attached only to this workload, and receive resource-
+scoped minimum grants after the actual artifact, secrets, and logging targets
+are approved. The deployer identity must be separate and must not be available
+to the runtime. For a VM, use the `cloud-platform` OAuth scope and constrain
+effective access with IAM grants on the narrowest applicable resources, as
+described by Google's [service-account guidance](https://docs.cloud.google.com/compute/docs/access/service-accounts).
+No role binding is requested or applied by this change.
+
+## API and data boundaries
+
+The manifest lists a proposed API allowlist only. All entries are marked
+`NOT_ENABLED_BY_THIS_CHANGE`. APIs outside the list are not implied. Cloud
+Scheduler, Cloud Build and broker-write APIs are excluded from this workload
+plan. No API is enabled by running the local preflight command.
+
+The intended SQLite file path is on the future data disk. Local VM storage is
+not an evidence backup. A concrete backup destination, retention, restore test,
+and rollback owner are required before deployment; until then the preflight
+blocks. `config/research_operations_bucket_registry.json` has no approved
+buckets and must remain fail-closed. Secret names/versions are also unresolved;
+the manifest stores no values and never reads secrets.
+
+## Preflight and failure behavior
+
+Run `python scripts/check_application_runtime_preflight.py`. It validates the
+manifest schema, pins the project ID/number to the repository-owned identity,
+rejects the prohibited display-name-as-project-ID, checks runtime/deployer
+separation, enforces read-only/no-ingress/no-scheduler/no-deploy declarations,
+compares bucket identities to the approved registry, and reports unresolved
+deployment evidence. It performs local file reads only.
+
+The expected result today is `BLOCKED` with missing approved artifact registry
+and immutable image digest, no approved data/backup bucket, unobserved service
+accounts and target resources, and no backup/restore evidence. A missing,
+stale, conflicting, or unverifiable value remains blocked; a caller-supplied
+non-empty resource name is not approval. The validator has no mode that creates
+or updates cloud resources.
+
+## Future operator remediation and post-deployment evidence
+
+After this plan is reviewed, a separately authorized operator may prepare a
+concrete change that supplies observed project/zone/resource IDs, approved
+artifact digest and bucket registry entry, named service accounts and scoped
+grants, secret-version references, backup/restore plan, and rollback image/data
+snapshot. A different review and explicit deployment approval are required
+before any API enablement or resource mutation. This document is not that
+approval.
+
+If a future separately approved deployment occurs, its evidence record must
+bind source SHA, image digest, manifest hash, exact project and resource IDs,
+IAM policy export, API state, runtime mode, migration versions, evidence-store
+identity, backup/restore result, logging/monitoring configuration, scheduler
+inventory, observation timestamps and the actor/approval. It must distinguish
+current-project observations from unobservable historical environments. It
+also requires runtime run/as-of/information-cutoff/code-revision lineage and a
+canonical D2 evidence bundle with its persisted component IDs and hashes. The
+evidence validator must verify those values by invoking the existing
+`CanonicalD2ProductionEvidenceRepository.replay` against the supplied local
+SQLite evidence store and immutable source store. That repository replay
+consumes the existing external provenance/attestor boundary and is read-only;
+the validator rejects caller-supplied D2 IDs or timestamps that disagree with
+the persisted result and runtime row. The evidence contract records no D2
+PASS or gate status. This preflight does not run that replay or generate D2
+evidence.
+
+The evidence schema pins the observed project ID and number to the approved
+repository identity and represents one VM with its attached service account
+and evidence disk nested under the VM observation. The disk contains the
+snapshot and restore evidence, so the recovery proof belongs to the same
+attached SQLite storage object. Scheduler and ingress inventories each bind a
+hash and source reference to the approved project, enumerate the inspected
+surfaces, and require zero active jobs, timers, inbound rules, external IPs,
+and listening sockets. Restore evidence requires a successful restore and an
+`ok` database integrity result. The project and bucket constants in the
+evidence contract must be updated alongside their repository registries; the
+empty approved-bucket registry still blocks this plan.
+
+Validate a future evidence file with
+`python scripts/check_application_runtime_deployment_evidence.py <evidence.json> --database <existing.sqlite> --immutable-store <existing-store>`.
+This checker opens only the supplied local evidence stores and calls the
+canonical repository's read-only replay. It also enforces snapshot-to-disk
+and restore-to-snapshot ID equality, runtime lineage/replay identity, source
+revision equality, observation-time ordering, and retention duration. It
+checks schema constants against the repository project registry and always
+reports `deployment_authorized: false`. It does not create evidence, fetch
+references, query GCP, or approve a deployment.
+
+Snapshot retention must still be active at the evidence observation time,
+including when its original minimum retention duration has elapsed. An expiry
+equal to the observation time is expired. Unrepresentable retention durations
+or timestamps fail closed rather than skipping the relationship checks.
+
+Verification uses the CLI system clock, with no caller-selected timestamp.
+All observations must have occurred by verification time, snapshot retention
+must remain active then, and current resource, scheduler/ingress inventory,
+replay, and top-level observations must be at most one hour old. This conservative
+preflight freshness limit is not an approved runtime monitoring policy.
+The complete applied migration number/name/SQL-hash inventory must equal the
+repository catalog, and the evidence's version list must match it exactly.
+The SQLite read transaction spans migration checks, replay, and lineage reads.
+Malformed persisted artifact structure returns blocked JSON without a traceback.
+The verifier pins its schema and project identity to the repository-controlled
+files. The CLI accepts no schema or identity override. Recursive JSON failures
+in both input evidence and persisted replay also return blocked JSON.
+
+IAM/API state is represented by timestamped observations referencing existing
+raw response IDs, export hashes, and official project-scoped endpoints. The
+same SQLite read transaction verifies each raw response and its pre-existing
+external attestation against the runtime's governed attestor registry. Actual
+received time must match the observation; request and received times are bound
+by the signed receipt and must be current. Missing signatures, wrong project,
+source, endpoint, hash, schema or method, and uncollected response pages block
+validation. These exports verify provenance and freshness, not least-privilege
+approval or effective inherited IAM access.
+
+The IAM observation uses the official read-only Cloud Asset Inventory
+[`searchAllIamPolicies` GET endpoint](https://docs.cloud.google.com/asset-inventory/docs/reference/rest/v1/TopLevel/searchAllIamPolicies)
+at the approved project number, without query filters that narrow its scope.
+It is an IAM search export rather than the POST Resource Manager getIamPolicy
+response. The API-state observation uses Service Usage's enabled-services GET
+listing for that same project number. Any future collection requires separately
+approved access and complete results; this plan enables no API and performs no
+cloud call. Runtime API allowlists and IAM approval remain separate blockers.
+Tests construct signed temporary exports only; they are not real GCP evidence.
+
+Scheduler/ingress absence also requires existing externally attested collector
+exports in the raw store. `inventory://<instance-resource-id>/<inventory-kind>`
+is an internal export descriptor, not an HTTP endpoint or a cloud request.
+The signed body binds project, runtime, exact instance, complete project/instance
+coverage and every required surface's entries. Counts are derived from those
+entries, rather than accepted from a caller's zero assertion. Any nonempty
+surface, partial coverage, wrong instance, missing receipt, mismatched hash or
+stale export blocks. The existing attestor governance boundary authenticates
+the collector's observation; this checker does not itself inspect the cloud
+or VM. No producer or actual absence proof is created by this plan.
+
+Recovery likewise requires an existing signed raw export identified by
+`recovery://<attached-disk-resource-id>`, an internal collector descriptor.
+Its authenticated body binds project/runtime/instance/disk, snapshot identity
+and retention metadata, and the full restore report. The restore report hash
+is recomputed from its verified-at time, restored snapshot ID, success and
+database integrity fields. A caller's snapshot/reference/hash/success assertion
+without this matching persisted signed content blocks. This verifies the
+governed collector's recovery evidence, not a restore performed by this checker.
+
+Artifact evidence also consumes a pre-existing externally attested raw export
+under `artifact://<instance-resource-id>`, an internal collector descriptor.
+The export includes original image-descriptor, observability-configuration and applied-manifest bytes in
+base64 plus the observed deployed-image digest/applied-manifest hash and
+project/runtime/instance/source-revision binding. All three digests are recomputed
+from the original bytes, without normalizing their formatting. The applied
+manifest must bind the same source SHA, project ID/number, instance, disk,
+service account, image digest, observability configuration hash and READ_ONLY/live-disabled policy. Duplicate
+JSON keys and JSON type coercion are rejected. The signed collector record
+attests deployment association; bytes or hashes supplied without that record
+cannot substitute for it. This checker performs no registry pull or deployment
+and does not approve an artifact, registry, bucket, IAM grant or live authority.
+
+The same externally attested artifact export must include original approval
+record bytes and their SHA-256. The authenticated record must identify an
+APPROVED review, actor and reference, the exact project/runtime/instance,
+source SHA, image/manifest/observability hashes and READ_ONLY/live-disabled
+scope. Its approval time cannot follow the captured deployment request.
+Caller-invented actor/reference values, revoked reviews, duplicate keys,
+altered bytes and different deployment scopes block. The existing governed
+collector/attestor boundary authenticates this review record; the checker
+does not create a review, authorize a reviewer or grant deployment authority.
+
+Rollback is a reviewed revert to the previous immutable image plus a verified
+pre-change data snapshot. Never restore or activate a legacy second runtime as
+an automatic rollback. No retirement command or physical deletion is part of
+this preflight.
